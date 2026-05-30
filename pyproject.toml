@@ -1,0 +1,69 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pwatch"
+version = "1.0.0"
+description = "Lightweight cryptocurrency futures price monitor with Telegram alerts"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [
+  { name = "Xeron", email = "xeron2333@gmail.com" },
+]
+dependencies = [
+    "ccxt>=4.1.80",
+    "pyyaml>=6.0.1",
+    "expiringdict>=1.2.1",
+    "pytz>=2024.1",
+    "websockets>=11.0.3",
+    "psutil>=7.0.0",
+    "python-dotenv>=1.0.0",
+    "websocket-client>=1.8.0",
+    "python-telegram-bot[rate-limiter]>=21.4",
+    "numpy>=1.24.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/Xeron2000/pwatch"
+Issues = "https://github.com/Xeron2000/pwatch/issues"
+
+[project.scripts]
+pwatch = "pwatch.app.cli:main"
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.6.0",
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+    "pytest-mock>=3.11.1",
+    "pytest-asyncio>=0.21.1",
+    "bandit>=1.7.5",
+    "safety>=3.0.0",
+    "pip-audit>=2.7.3",
+    "mypy>=1.14.1",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pwatch"]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.6.0",
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+    "pytest-mock>=3.11.1",
+    "pytest-asyncio>=0.21.1",
+    "bandit>=1.7.5",
+    "safety>=3.0.0",
+    "pip-audit>=2.7.3",
+    "mypy>=1.14.1",
+]
