@@ -2,7 +2,7 @@
 name: kairos-scanner
 description: 选币扫描 - 基于kairos选币策略的标的筛选
 version: 1.0.0
-author: pwatch
+author: kairos
 license: MIT
 metadata:
   hermes:
@@ -32,7 +32,7 @@ kairos选币公式：
 
 ```bash
 # 扫描潜在标的
-pwatch scan --exchange okx --min-volume 80000000
+kairos scan --exchange okx --min-volume 80000000
 
 # 输出示例
 # 🔍 Scanning okx for potential symbols...
@@ -88,7 +88,7 @@ pwatch scan --exchange okx --min-volume 80000000
 ## LLM分析流程
 
 hermes agent使用此skill时：
-1. 调用 `pwatch scan` 获取候选池
+1. 调用 `kairos scan` 获取候选池
 2. 分析每个币种的日线结构
 3. 检查上方是否有压力
 4. 评估与大盘的相关性

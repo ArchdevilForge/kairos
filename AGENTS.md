@@ -4,7 +4,7 @@
 
 ## Project Overview
 
-pwatch is a cryptocurrency futures price monitor & trading system with Hermes Agent integration.
+kairos is a cryptocurrency futures price monitor & trading system with Hermes Agent integration.
 
 ## Core Principles
 
@@ -25,7 +25,7 @@ pwatch is a cryptocurrency futures price monitor & trading system with Hermes Ag
 ## Trading System
 
 ### Architecture
-- **pwatch (CLI)**: Data fetching, technical analysis, trade execution, risk control
+- **kairos (CLI)**: Data fetching, technical analysis, trade execution, risk control
 - **hermes agent**: Reads skills, calls CLI, LLM judgment, learning & review
 
 ### Skills
@@ -39,15 +39,15 @@ pwatch is a cryptocurrency futures price monitor & trading system with Hermes Ag
 
 ### CLI Commands
 ```bash
-pwatch cycle                    # Market cycle phase
-pwatch scan                     # Scan for symbols
-pwatch box-detect --symbol BTC/USDT  # Box pattern detection
-pwatch signal --symbol BTC/USDT      # Trading signals
-pwatch sr --symbol BTC/USDT          # Support/resistance levels
-pwatch position status          # Current positions
-pwatch risk status              # Risk status
-pwatch history                  # Trade history
-pwatch stats                    # Trading statistics
+kairos cycle                    # Market cycle phase
+kairos scan                     # Scan for symbols
+kairos box-detect --symbol BTC/USDT  # Box pattern detection
+kairos signal --symbol BTC/USDT      # Trading signals
+kairos sr --symbol BTC/USDT          # Support/resistance levels
+kairos position status          # Current positions
+kairos risk status              # Risk status
+kairos history                  # Trade history
+kairos stats                    # Trading statistics
 ```
 
 ### Risk Constraints

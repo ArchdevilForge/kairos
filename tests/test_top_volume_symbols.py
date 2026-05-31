@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 
-from pwatch.utils.top_volume_symbols import fetch_top_volume_symbols
+from kairos.utils.top_volume_symbols import fetch_top_volume_symbols
 
 
 class FakeExchange:
@@ -59,8 +59,8 @@ class FakeExchange:
 
 def test_fetch_top_volume_symbols_applies_quality_filters(monkeypatch):
     fake_exchange = FakeExchange()
-    monkeypatch.setattr("pwatch.utils.top_volume_symbols._create_exchange", lambda exchange_name: fake_exchange)
-    monkeypatch.setattr("pwatch.utils.top_volume_symbols.clear_cache", lambda: None)
+    monkeypatch.setattr("kairos.utils.top_volume_symbols._create_exchange", lambda exchange_name: fake_exchange)
+    monkeypatch.setattr("kairos.utils.top_volume_symbols.clear_cache", lambda: None)
 
     result = fetch_top_volume_symbols(
         "okx",
@@ -78,8 +78,8 @@ def test_fetch_top_volume_symbols_applies_quality_filters(monkeypatch):
 
 def test_fetch_top_volume_symbols_excludes_missing_quality_data(monkeypatch):
     fake_exchange = FakeExchange()
-    monkeypatch.setattr("pwatch.utils.top_volume_symbols._create_exchange", lambda exchange_name: fake_exchange)
-    monkeypatch.setattr("pwatch.utils.top_volume_symbols.clear_cache", lambda: None)
+    monkeypatch.setattr("kairos.utils.top_volume_symbols._create_exchange", lambda exchange_name: fake_exchange)
+    monkeypatch.setattr("kairos.utils.top_volume_symbols.clear_cache", lambda: None)
 
     result = fetch_top_volume_symbols(
         "okx",

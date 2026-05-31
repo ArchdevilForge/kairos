@@ -15,7 +15,7 @@
 
 ### Summary
 
-完成pwatch交易系统改造，创建模块化Hermes Agent skill，更新风险约束，填充backend规范文件
+完成kairos交易系统改造，创建模块化Hermes Agent skill，更新风险约束，填充backend规范文件
 
 ### Main Changes
 

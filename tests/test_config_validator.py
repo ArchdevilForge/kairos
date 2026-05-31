@@ -5,7 +5,7 @@ Test cases for configuration validation system.
 import os
 import tempfile
 
-from pwatch.utils.config_validator import ValidationResult, config_validator
+from kairos.utils.config_validator import ValidationResult, config_validator
 
 
 class TestConfigValidator:

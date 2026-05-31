@@ -4,7 +4,7 @@ import pytest
 from websockets.exceptions import ConnectionClosedError
 from websockets.frames import Close
 
-from pwatch.exchanges.okx import OkxExchange
+from kairos.exchanges.okx import OkxExchange
 
 
 def test_extract_price_prefers_last_field():
@@ -21,10 +21,10 @@ def test_extract_price_falls_back_to_last_price_field():
 
 @pytest.mark.asyncio
 async def test_ws_connect_uses_explicit_keepalive_settings():
-    with patch("pwatch.exchanges.base.ccxt.exchanges", ["okx"]), patch(
-        "pwatch.exchanges.base.ccxt.okx"
-    ), patch("pwatch.exchanges.okx.logging"), patch(
-        "pwatch.exchanges.okx.websockets.connect"
+    with patch("kairos.exchanges.base.ccxt.exchanges", ["okx"]), patch(
+        "kairos.exchanges.base.ccxt.okx"
+    ), patch("kairos.exchanges.okx.logging"), patch(
+        "kairos.exchanges.okx.websockets.connect"
     ) as mock_connect:
         mock_websocket = AsyncMock()
         mock_websocket.recv.side_effect = [
@@ -46,10 +46,10 @@ async def test_ws_connect_uses_explicit_keepalive_settings():
 
 @pytest.mark.asyncio
 async def test_ws_connect_does_not_log_establish_failure_after_later_disconnect():
-    with patch("pwatch.exchanges.base.ccxt.exchanges", ["okx"]), patch(
-        "pwatch.exchanges.base.ccxt.okx"
-    ), patch("pwatch.exchanges.okx.logging") as mock_logging, patch(
-        "pwatch.exchanges.okx.websockets.connect"
+    with patch("kairos.exchanges.base.ccxt.exchanges", ["okx"]), patch(
+        "kairos.exchanges.base.ccxt.okx"
+    ), patch("kairos.exchanges.okx.logging") as mock_logging, patch(
+        "kairos.exchanges.okx.websockets.connect"
     ) as mock_connect:
         mock_websocket = AsyncMock()
         mock_websocket.recv.side_effect = [

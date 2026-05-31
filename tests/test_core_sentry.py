@@ -6,8 +6,8 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from pwatch.core.sentry import PriceSentry
-from pwatch.detectors.base import AnomalyEvent
+from kairos.core.sentry import PriceSentry
+from kairos.detectors.base import AnomalyEvent
 
 
 class _StopLoop(Exception):
@@ -19,11 +19,11 @@ class TestPriceSentry:
 
     def test_init_basic(self, sample_config, mock_exchange, mock_notifier):
         """Test basic initialization of PriceSentry."""
-        with patch("pwatch.core.sentry.load_config", return_value=sample_config), patch(
-            "pwatch.core.sentry.get_exchange", return_value=mock_exchange
-        ), patch("pwatch.core.sentry.Notifier", return_value=mock_notifier), patch(
-            "pwatch.core.sentry.load_usdt_contracts", return_value=["BTC/USDT:USDT"]
-        ), patch("pwatch.core.sentry.parse_timeframe", return_value=5):
+        with patch("kairos.core.sentry.load_config", return_value=sample_config), patch(
+            "kairos.core.sentry.get_exchange", return_value=mock_exchange
+        ), patch("kairos.core.sentry.Notifier", return_value=mock_notifier), patch(
+            "kairos.core.sentry.load_usdt_contracts", return_value=["BTC/USDT:USDT"]
+        ), patch("kairos.core.sentry.parse_timeframe", return_value=5):
             sentry = PriceSentry()
 
             assert sentry.config == sample_config
@@ -37,12 +37,12 @@ class TestPriceSentry:
         self, sample_config, mock_exchange, mock_notifier
     ):
         """Test initialization when no symbols are matched."""
-        with patch("pwatch.core.sentry.load_config", return_value=sample_config), patch(
-            "pwatch.core.sentry.get_exchange", return_value=mock_exchange
-        ), patch("pwatch.core.sentry.Notifier", return_value=mock_notifier), patch(
-            "pwatch.core.sentry.load_usdt_contracts", return_value=[]
-        ), patch("pwatch.core.sentry.parse_timeframe", return_value=5):
-            with patch("pwatch.core.sentry.logging") as mock_logging:
+        with patch("kairos.core.sentry.load_config", return_value=sample_config), patch(
+            "kairos.core.sentry.get_exchange", return_value=mock_exchange
+        ), patch("kairos.core.sentry.Notifier", return_value=mock_notifier), patch(
+            "kairos.core.sentry.load_usdt_contracts", return_value=[]
+        ), patch("kairos.core.sentry.parse_timeframe", return_value=5):
+            with patch("kairos.core.sentry.logging") as mock_logging:
                 sentry = PriceSentry()
 
                 assert sentry.matched_symbols == []
@@ -68,11 +68,11 @@ class TestPriceSentry:
             },
         }
 
-        with patch("pwatch.core.sentry.load_config", return_value=custom_config), patch(
-            "pwatch.core.sentry.get_exchange", return_value=mock_exchange
-        ), patch("pwatch.core.sentry.Notifier", return_value=mock_notifier), patch(
-            "pwatch.core.sentry.load_usdt_contracts", return_value=["ETH/USDT:USDT"]
-        ), patch("pwatch.core.sentry.parse_timeframe", return_value=15):
+        with patch("kairos.core.sentry.load_config", return_value=custom_config), patch(
+            "kairos.core.sentry.get_exchange", return_value=mock_exchange
+        ), patch("kairos.core.sentry.Notifier", return_value=mock_notifier), patch(
+            "kairos.core.sentry.load_usdt_contracts", return_value=["ETH/USDT:USDT"]
+        ), patch("kairos.core.sentry.parse_timeframe", return_value=15):
             sentry = PriceSentry()
 
             assert sentry.minutes == 15
@@ -88,13 +88,13 @@ class TestPriceSentry:
             "DOGE/USDT:USDT",
         ]
 
-        with patch("pwatch.core.sentry.load_config", return_value=scoped_config), patch(
-            "pwatch.core.sentry.get_exchange", return_value=mock_exchange
-        ), patch("pwatch.core.sentry.Notifier", return_value=mock_notifier), patch(
-            "pwatch.core.sentry.load_usdt_contracts",
+        with patch("kairos.core.sentry.load_config", return_value=scoped_config), patch(
+            "kairos.core.sentry.get_exchange", return_value=mock_exchange
+        ), patch("kairos.core.sentry.Notifier", return_value=mock_notifier), patch(
+            "kairos.core.sentry.load_usdt_contracts",
             return_value=["BTC/USDT:USDT", "ETH/USDT:USDT"],
-        ), patch("pwatch.core.sentry.parse_timeframe", return_value=5), patch(
-            "pwatch.core.sentry.logging"
+        ), patch("kairos.core.sentry.parse_timeframe", return_value=5), patch(
+            "kairos.core.sentry.logging"
         ) as mock_logging:
             sentry = PriceSentry()
 
@@ -112,13 +112,13 @@ class TestPriceSentry:
         config["notificationSymbols"] = "auto"
         config["autoModeLimit"] = 2
 
-        with patch("pwatch.core.sentry.load_config", return_value=config), patch(
-            "pwatch.core.sentry.get_exchange", return_value=mock_exchange
-        ), patch("pwatch.core.sentry.Notifier", return_value=mock_notifier), patch(
-            "pwatch.core.sentry.fetch_top_volume_symbols",
+        with patch("kairos.core.sentry.load_config", return_value=config), patch(
+            "kairos.core.sentry.get_exchange", return_value=mock_exchange
+        ), patch("kairos.core.sentry.Notifier", return_value=mock_notifier), patch(
+            "kairos.core.sentry.fetch_top_volume_symbols",
             return_value=["BTC/USDT:USDT", "ETH/USDT:USDT"],
-        ), patch("pwatch.core.sentry.parse_timeframe", return_value=5), patch(
-            "pwatch.core.sentry.logging"
+        ), patch("kairos.core.sentry.parse_timeframe", return_value=5), patch(
+            "kairos.core.sentry.logging"
         ) as mock_logging:
             sentry = PriceSentry()
 
@@ -133,7 +133,7 @@ class TestPriceSentry:
         sentry.config = {"notificationSymbols": "auto"}
         sentry.matched_symbols = ["BTC/USDT:USDT"]
 
-        with patch("pwatch.core.sentry.logging") as mock_logging:
+        with patch("kairos.core.sentry.logging") as mock_logging:
             sentry._rebuild_notification_filter_locked()
 
         assert sentry.notification_symbols is None
@@ -156,12 +156,12 @@ class TestPriceSentry:
             "LTC/USDT:USDT",
         ]
 
-        with patch("pwatch.core.sentry.load_config", return_value=scoped_config), patch(
-            "pwatch.core.sentry.get_exchange", return_value=mock_exchange
-        ), patch("pwatch.core.sentry.Notifier", return_value=mock_notifier), patch(
-            "pwatch.core.sentry.load_usdt_contracts", return_value=["BTC/USDT:USDT"]
-        ), patch("pwatch.core.sentry.parse_timeframe", return_value=5), patch(
-            "pwatch.core.sentry.logging"
+        with patch("kairos.core.sentry.load_config", return_value=scoped_config), patch(
+            "kairos.core.sentry.get_exchange", return_value=mock_exchange
+        ), patch("kairos.core.sentry.Notifier", return_value=mock_notifier), patch(
+            "kairos.core.sentry.load_usdt_contracts", return_value=["BTC/USDT:USDT"]
+        ), patch("kairos.core.sentry.parse_timeframe", return_value=5), patch(
+            "kairos.core.sentry.logging"
         ) as mock_logging:
             sentry = PriceSentry()
 
@@ -177,11 +177,11 @@ class TestPriceSentry:
         self, sample_config, mock_exchange, mock_notifier
     ):
         """Test run method when no symbols are matched."""
-        with patch("pwatch.core.sentry.load_config", return_value=sample_config), patch(
-            "pwatch.core.sentry.get_exchange", return_value=mock_exchange
-        ), patch("pwatch.core.sentry.Notifier", return_value=mock_notifier), patch(
-            "pwatch.core.sentry.load_usdt_contracts", return_value=[]
-        ), patch("pwatch.core.sentry.parse_timeframe", return_value=5):
+        with patch("kairos.core.sentry.load_config", return_value=sample_config), patch(
+            "kairos.core.sentry.get_exchange", return_value=mock_exchange
+        ), patch("kairos.core.sentry.Notifier", return_value=mock_notifier), patch(
+            "kairos.core.sentry.load_usdt_contracts", return_value=[]
+        ), patch("kairos.core.sentry.parse_timeframe", return_value=5):
             sentry = PriceSentry()
             result = await sentry.run()
 
@@ -193,13 +193,13 @@ class TestPriceSentry:
         self, sample_config, mock_exchange, mock_notifier
     ):
         """Test run method with normal operation."""
-        with patch("pwatch.core.sentry.load_config", return_value=sample_config), patch(
-            "pwatch.core.sentry.get_exchange", return_value=mock_exchange
-        ), patch("pwatch.core.sentry.Notifier", return_value=mock_notifier), patch(
-            "pwatch.core.sentry.load_usdt_contracts", return_value=["BTC/USDT:USDT"]
-        ), patch("pwatch.core.sentry.parse_timeframe", return_value=1), patch(
-            "pwatch.core.sentry.monitor_top_movers"
-        ) as mock_monitor, patch("pwatch.core.sentry.logging"):
+        with patch("kairos.core.sentry.load_config", return_value=sample_config), patch(
+            "kairos.core.sentry.get_exchange", return_value=mock_exchange
+        ), patch("kairos.core.sentry.Notifier", return_value=mock_notifier), patch(
+            "kairos.core.sentry.load_usdt_contracts", return_value=["BTC/USDT:USDT"]
+        ), patch("kairos.core.sentry.parse_timeframe", return_value=1), patch(
+            "kairos.core.sentry.monitor_top_movers"
+        ) as mock_monitor, patch("kairos.core.sentry.logging"):
             # Mock monitor_top_movers to return None (no price movements)
             mock_monitor.return_value = None
 
@@ -226,13 +226,13 @@ class TestPriceSentry:
         self, sample_config, mock_exchange, mock_notifier
     ):
         """Test run method when price movements are detected."""
-        with patch("pwatch.core.sentry.load_config", return_value=sample_config), patch(
-            "pwatch.core.sentry.get_exchange", return_value=mock_exchange
-        ), patch("pwatch.core.sentry.Notifier", return_value=mock_notifier), patch(
-            "pwatch.core.sentry.load_usdt_contracts", return_value=["BTC/USDT:USDT"]
-        ), patch("pwatch.core.sentry.parse_timeframe", return_value=1), patch(
-            "pwatch.core.sentry.monitor_top_movers"
-        ) as mock_monitor, patch("pwatch.core.sentry.logging"):
+        with patch("kairos.core.sentry.load_config", return_value=sample_config), patch(
+            "kairos.core.sentry.get_exchange", return_value=mock_exchange
+        ), patch("kairos.core.sentry.Notifier", return_value=mock_notifier), patch(
+            "kairos.core.sentry.load_usdt_contracts", return_value=["BTC/USDT:USDT"]
+        ), patch("kairos.core.sentry.parse_timeframe", return_value=1), patch(
+            "kairos.core.sentry.monitor_top_movers"
+        ) as mock_monitor, patch("kairos.core.sentry.logging"):
             # Mock monitor_top_movers to return unified fact events
             mock_monitor.return_value = [
                 {
@@ -278,11 +278,11 @@ class TestPriceSentry:
         config["defaultTimeframe"] = "5m"
         config["checkInterval"] = "1m"
 
-        with patch("pwatch.core.sentry.load_config", return_value=config), patch(
-            "pwatch.core.sentry.get_exchange",
+        with patch("kairos.core.sentry.load_config", return_value=config), patch(
+            "kairos.core.sentry.get_exchange",
             return_value=mock_exchange,
-        ), patch("pwatch.core.sentry.Notifier", return_value=mock_notifier), patch(
-            "pwatch.core.sentry.load_usdt_contracts",
+        ), patch("kairos.core.sentry.Notifier", return_value=mock_notifier), patch(
+            "kairos.core.sentry.load_usdt_contracts",
             return_value=["BTC/USDT:USDT"],
         ):
             sentry = PriceSentry()
@@ -305,11 +305,11 @@ class TestPriceSentry:
             },
         }
 
-        with patch("pwatch.core.sentry.load_config", return_value=minimal_config), patch(
-            "pwatch.core.sentry.get_exchange", return_value=mock_exchange
-        ), patch("pwatch.core.sentry.Notifier", return_value=mock_notifier), patch(
-            "pwatch.core.sentry.load_usdt_contracts", return_value=["BTC/USDT:USDT"]
-        ) as mock_load_symbols, patch("pwatch.core.sentry.parse_timeframe", return_value=5):
+        with patch("kairos.core.sentry.load_config", return_value=minimal_config), patch(
+            "kairos.core.sentry.get_exchange", return_value=mock_exchange
+        ), patch("kairos.core.sentry.Notifier", return_value=mock_notifier), patch(
+            "kairos.core.sentry.load_usdt_contracts", return_value=["BTC/USDT:USDT"]
+        ) as mock_load_symbols, patch("kairos.core.sentry.parse_timeframe", return_value=5):
             sentry = PriceSentry()
 
             # Check default values
@@ -323,13 +323,13 @@ class TestPriceSentry:
         self, sample_config, mock_exchange, mock_notifier
     ):
         """Test websocket reconnection logic."""
-        with patch("pwatch.core.sentry.load_config", return_value=sample_config), patch(
-            "pwatch.core.sentry.get_exchange", return_value=mock_exchange
-        ), patch("pwatch.core.sentry.Notifier", return_value=mock_notifier), patch(
-            "pwatch.core.sentry.load_usdt_contracts", return_value=["BTC/USDT:USDT"]
-        ), patch("pwatch.core.sentry.parse_timeframe", return_value=1), patch(
-            "pwatch.core.sentry.monitor_top_movers", return_value=None
-        ), patch("pwatch.core.sentry.logging"):
+        with patch("kairos.core.sentry.load_config", return_value=sample_config), patch(
+            "kairos.core.sentry.get_exchange", return_value=mock_exchange
+        ), patch("kairos.core.sentry.Notifier", return_value=mock_notifier), patch(
+            "kairos.core.sentry.load_usdt_contracts", return_value=["BTC/USDT:USDT"]
+        ), patch("kairos.core.sentry.parse_timeframe", return_value=1), patch(
+            "kairos.core.sentry.monitor_top_movers", return_value=None
+        ), patch("kairos.core.sentry.logging"):
             sentry = PriceSentry()
 
             # Mock websocket to be disconnected
@@ -353,12 +353,12 @@ class TestPriceSentry:
     async def test_run_records_final_cooldown_only_after_success(
         self, sample_config, mock_exchange, mock_notifier
     ):
-        with patch("pwatch.core.sentry.load_config", return_value=sample_config), patch(
-            "pwatch.core.sentry.get_exchange", return_value=mock_exchange
-        ), patch("pwatch.core.sentry.Notifier", return_value=mock_notifier), patch(
-            "pwatch.core.sentry.load_usdt_contracts", return_value=["BTC/USDT:USDT"]
-        ), patch("pwatch.core.sentry.parse_timeframe", return_value=1), patch(
-            "pwatch.core.sentry.monitor_top_movers", new=AsyncMock(return_value=[
+        with patch("kairos.core.sentry.load_config", return_value=sample_config), patch(
+            "kairos.core.sentry.get_exchange", return_value=mock_exchange
+        ), patch("kairos.core.sentry.Notifier", return_value=mock_notifier), patch(
+            "kairos.core.sentry.load_usdt_contracts", return_value=["BTC/USDT:USDT"]
+        ), patch("kairos.core.sentry.parse_timeframe", return_value=1), patch(
+            "kairos.core.sentry.monitor_top_movers", new=AsyncMock(return_value=[
                 {
                     "symbol": "BTC/USDT:USDT",
                     "priority": "HIGH",
@@ -369,8 +369,8 @@ class TestPriceSentry:
                     "price_to": 106.0,
                 }
             ])), patch(
-            "pwatch.core.sentry.notification_cooldown"
-        ) as mock_cooldown, patch("pwatch.core.sentry.logging"):
+            "kairos.core.sentry.notification_cooldown"
+        ) as mock_cooldown, patch("kairos.core.sentry.logging"):
             mock_notifier.send.return_value = {
                 "success": True,
                 "reason": "sent",
@@ -392,12 +392,12 @@ class TestPriceSentry:
     async def test_run_does_not_record_final_cooldown_on_send_failure(
         self, sample_config, mock_exchange, mock_notifier
     ):
-        with patch("pwatch.core.sentry.load_config", return_value=sample_config), patch(
-            "pwatch.core.sentry.get_exchange", return_value=mock_exchange
-        ), patch("pwatch.core.sentry.Notifier", return_value=mock_notifier), patch(
-            "pwatch.core.sentry.load_usdt_contracts", return_value=["BTC/USDT:USDT"]
-        ), patch("pwatch.core.sentry.parse_timeframe", return_value=1), patch(
-            "pwatch.core.sentry.monitor_top_movers", new=AsyncMock(return_value=[
+        with patch("kairos.core.sentry.load_config", return_value=sample_config), patch(
+            "kairos.core.sentry.get_exchange", return_value=mock_exchange
+        ), patch("kairos.core.sentry.Notifier", return_value=mock_notifier), patch(
+            "kairos.core.sentry.load_usdt_contracts", return_value=["BTC/USDT:USDT"]
+        ), patch("kairos.core.sentry.parse_timeframe", return_value=1), patch(
+            "kairos.core.sentry.monitor_top_movers", new=AsyncMock(return_value=[
                 {
                     "symbol": "BTC/USDT:USDT",
                     "priority": "HIGH",
@@ -408,8 +408,8 @@ class TestPriceSentry:
                     "price_to": 106.0,
                 }
             ])), patch(
-            "pwatch.core.sentry.notification_cooldown"
-        ) as mock_cooldown, patch("pwatch.core.sentry.logging"):
+            "kairos.core.sentry.notification_cooldown"
+        ) as mock_cooldown, patch("kairos.core.sentry.logging"):
             mock_notifier.send.return_value = {
                 "success": False,
                 "reason": "timeout",
@@ -432,12 +432,12 @@ class TestPriceSentry:
     async def test_process_anomaly_events_skips_volume_only_alerts(
         self, sample_config, mock_exchange, mock_notifier
     ):
-        with patch("pwatch.core.sentry.load_config", return_value=sample_config), patch(
-            "pwatch.core.sentry.get_exchange", return_value=mock_exchange
-        ), patch("pwatch.core.sentry.Notifier", return_value=mock_notifier), patch(
-            "pwatch.core.sentry.load_usdt_contracts", return_value=["BTC/USDT:USDT"]
-        ), patch("pwatch.core.sentry.parse_timeframe", return_value=5), patch(
-            "pwatch.core.sentry.logging"
+        with patch("kairos.core.sentry.load_config", return_value=sample_config), patch(
+            "kairos.core.sentry.get_exchange", return_value=mock_exchange
+        ), patch("kairos.core.sentry.Notifier", return_value=mock_notifier), patch(
+            "kairos.core.sentry.load_usdt_contracts", return_value=["BTC/USDT:USDT"]
+        ), patch("kairos.core.sentry.parse_timeframe", return_value=5), patch(
+            "kairos.core.sentry.logging"
         ):
             sentry = PriceSentry()
             sentry._anomaly_events.put(
@@ -457,13 +457,13 @@ class TestPriceSentry:
     async def test_process_anomaly_events_keeps_price_volume_confirmation(
         self, sample_config, mock_exchange, mock_notifier
     ):
-        with patch("pwatch.core.sentry.load_config", return_value=sample_config), patch(
-            "pwatch.core.sentry.get_exchange", return_value=mock_exchange
-        ), patch("pwatch.core.sentry.Notifier", return_value=mock_notifier), patch(
-            "pwatch.core.sentry.load_usdt_contracts", return_value=["BTC/USDT:USDT"]
-        ), patch("pwatch.core.sentry.parse_timeframe", return_value=5), patch(
-            "pwatch.core.sentry.notification_cooldown"
-        ) as mock_cooldown, patch("pwatch.core.sentry.logging"):
+        with patch("kairos.core.sentry.load_config", return_value=sample_config), patch(
+            "kairos.core.sentry.get_exchange", return_value=mock_exchange
+        ), patch("kairos.core.sentry.Notifier", return_value=mock_notifier), patch(
+            "kairos.core.sentry.load_usdt_contracts", return_value=["BTC/USDT:USDT"]
+        ), patch("kairos.core.sentry.parse_timeframe", return_value=5), patch(
+            "kairos.core.sentry.notification_cooldown"
+        ) as mock_cooldown, patch("kairos.core.sentry.logging"):
             sentry = PriceSentry()
             mock_cooldown.should_notify.return_value = True
             mock_notifier.send.return_value = {
@@ -505,13 +505,13 @@ class TestPriceSentry:
     async def test_process_anomaly_events_respects_notification_cooldown(
         self, sample_config, mock_exchange, mock_notifier
     ):
-        with patch("pwatch.core.sentry.load_config", return_value=sample_config), patch(
-            "pwatch.core.sentry.get_exchange", return_value=mock_exchange
-        ), patch("pwatch.core.sentry.Notifier", return_value=mock_notifier), patch(
-            "pwatch.core.sentry.load_usdt_contracts", return_value=["BTC/USDT:USDT"]
-        ), patch("pwatch.core.sentry.parse_timeframe", return_value=5), patch(
-            "pwatch.core.sentry.notification_cooldown"
-        ) as mock_cooldown, patch("pwatch.core.sentry.logging"):
+        with patch("kairos.core.sentry.load_config", return_value=sample_config), patch(
+            "kairos.core.sentry.get_exchange", return_value=mock_exchange
+        ), patch("kairos.core.sentry.Notifier", return_value=mock_notifier), patch(
+            "kairos.core.sentry.load_usdt_contracts", return_value=["BTC/USDT:USDT"]
+        ), patch("kairos.core.sentry.parse_timeframe", return_value=5), patch(
+            "kairos.core.sentry.notification_cooldown"
+        ) as mock_cooldown, patch("kairos.core.sentry.logging"):
             sentry = PriceSentry()
             mock_cooldown.should_notify.return_value = False
             sentry._anomaly_events.put(
@@ -537,13 +537,13 @@ class TestPriceSentry:
     async def test_process_anomaly_events_records_cooldown_after_realtime_send(
         self, sample_config, mock_exchange, mock_notifier
     ):
-        with patch("pwatch.core.sentry.load_config", return_value=sample_config), patch(
-            "pwatch.core.sentry.get_exchange", return_value=mock_exchange
-        ), patch("pwatch.core.sentry.Notifier", return_value=mock_notifier), patch(
-            "pwatch.core.sentry.load_usdt_contracts", return_value=["BTC/USDT:USDT"]
-        ), patch("pwatch.core.sentry.parse_timeframe", return_value=5), patch(
-            "pwatch.core.sentry.notification_cooldown"
-        ) as mock_cooldown, patch("pwatch.core.sentry.logging"):
+        with patch("kairos.core.sentry.load_config", return_value=sample_config), patch(
+            "kairos.core.sentry.get_exchange", return_value=mock_exchange
+        ), patch("kairos.core.sentry.Notifier", return_value=mock_notifier), patch(
+            "kairos.core.sentry.load_usdt_contracts", return_value=["BTC/USDT:USDT"]
+        ), patch("kairos.core.sentry.parse_timeframe", return_value=5), patch(
+            "kairos.core.sentry.notification_cooldown"
+        ) as mock_cooldown, patch("kairos.core.sentry.logging"):
             sentry = PriceSentry()
             mock_cooldown.should_notify.return_value = True
             mock_notifier.send.return_value = {

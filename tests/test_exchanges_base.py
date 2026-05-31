@@ -6,7 +6,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from pwatch.exchanges.base import BaseExchange
+from kairos.exchanges.base import BaseExchange
 
 
 class _TestExchangeImpl(BaseExchange):
@@ -31,8 +31,8 @@ class TestBaseExchange:
 
     def test_init_valid_exchange(self):
         """Test initialization with a valid exchange name."""
-        with patch("pwatch.exchanges.base.ccxt.exchanges", ["binance"]), patch(
-            "pwatch.exchanges.base.ccxt.binance"
+        with patch("kairos.exchanges.base.ccxt.exchanges", ["binance"]), patch(
+            "kairos.exchanges.base.ccxt.binance"
         ) as mock_binance:
             mock_exchange = Mock()
             mock_binance.return_value = mock_exchange
@@ -51,7 +51,7 @@ class TestBaseExchange:
 
     def test_init_invalid_exchange(self):
         """Test initialization with an invalid exchange name."""
-        with patch("pwatch.exchanges.base.ccxt.exchanges", ["binance"]):
+        with patch("kairos.exchanges.base.ccxt.exchanges", ["binance"]):
             with pytest.raises(
                 ValueError, match="Exchange invalid not supported by ccxt"
             ):
@@ -59,8 +59,8 @@ class TestBaseExchange:
 
     def test_init_with_price_cache(self):
         """Test that price cache is properly initialized."""
-        with patch("pwatch.exchanges.base.ccxt.exchanges", ["binance"]), patch(
-            "pwatch.exchanges.base.ccxt.binance"
+        with patch("kairos.exchanges.base.ccxt.exchanges", ["binance"]), patch(
+            "kairos.exchanges.base.ccxt.binance"
         ):
             exchange = _TestExchangeImpl("binance")
 
@@ -74,9 +74,9 @@ class TestBaseExchange:
         """
         Test getting current prices when WebSocket is not connected but cache has data.
         """
-        with patch("pwatch.exchanges.base.ccxt.exchanges", ["binance"]), patch(
-            "pwatch.exchanges.base.ccxt.binance"
-        ) as mock_binance, patch("pwatch.exchanges.base.price_cache") as mock_price_cache:
+        with patch("kairos.exchanges.base.ccxt.exchanges", ["binance"]), patch(
+            "kairos.exchanges.base.ccxt.binance"
+        ) as mock_binance, patch("kairos.exchanges.base.price_cache") as mock_price_cache:
             mock_exchange = Mock()
             mock_binance.return_value = mock_exchange
 
@@ -99,10 +99,10 @@ class TestBaseExchange:
         """
         Test getting current prices when WebSocket is not connected and cache is empty.
         """
-        with patch("pwatch.exchanges.base.ccxt.exchanges", ["binance"]), patch(
-            "pwatch.exchanges.base.ccxt.binance"
-        ) as mock_binance, patch("pwatch.exchanges.base.logging"), patch(
-            "pwatch.exchanges.base.price_cache"
+        with patch("kairos.exchanges.base.ccxt.exchanges", ["binance"]), patch(
+            "kairos.exchanges.base.ccxt.binance"
+        ) as mock_binance, patch("kairos.exchanges.base.logging"), patch(
+            "kairos.exchanges.base.price_cache"
         ) as mock_price_cache:
             mock_exchange = Mock()
             mock_binance.return_value = mock_exchange
@@ -130,8 +130,8 @@ class TestBaseExchange:
     @pytest.mark.asyncio
     async def test_get_current_prices_with_websocket(self):
         """Test getting current prices when WebSocket is connected."""
-        with patch("pwatch.exchanges.base.ccxt.exchanges", ["binance"]), patch(
-            "pwatch.exchanges.base.ccxt.binance"
+        with patch("kairos.exchanges.base.ccxt.exchanges", ["binance"]), patch(
+            "kairos.exchanges.base.ccxt.binance"
         ):
             exchange = _TestExchangeImpl("binance")
             exchange.ws_connected = True
@@ -144,8 +144,8 @@ class TestBaseExchange:
     @pytest.mark.asyncio
     async def test_get_current_prices_mixed_sources(self):
         """Test getting prices from mixed sources (WebSocket and API)."""
-        with patch("pwatch.exchanges.base.ccxt.exchanges", ["binance"]), patch(
-            "pwatch.exchanges.base.ccxt.binance"
+        with patch("kairos.exchanges.base.ccxt.exchanges", ["binance"]), patch(
+            "kairos.exchanges.base.ccxt.binance"
         ) as mock_binance:
             mock_exchange = Mock()
             mock_binance.return_value = mock_exchange
@@ -168,8 +168,8 @@ class TestBaseExchange:
     async def test_get_price_minutes_ago_no_websocket(self):
         """Test getting historical prices when WebSocket is not connected."""
 
-        with patch("pwatch.exchanges.base.ccxt.exchanges", ["binance"]), patch(
-            "pwatch.exchanges.base.ccxt.binance"
+        with patch("kairos.exchanges.base.ccxt.exchanges", ["binance"]), patch(
+            "kairos.exchanges.base.ccxt.binance"
         ) as mock_binance, patch("time.time", return_value=1640995200):
             mock_exchange = Mock()
             mock_binance.return_value = mock_exchange
@@ -190,8 +190,8 @@ class TestBaseExchange:
     async def test_get_price_minutes_ago_with_websocket(self):
         """Test getting historical prices when WebSocket is connected."""
 
-        with patch("pwatch.exchanges.base.ccxt.exchanges", ["binance"]), patch(
-            "pwatch.exchanges.base.ccxt.binance"
+        with patch("kairos.exchanges.base.ccxt.exchanges", ["binance"]), patch(
+            "kairos.exchanges.base.ccxt.binance"
         ) as mock_binance, patch("time.time", return_value=1640995200):
             mock_exchange = Mock()
             mock_binance.return_value = mock_exchange
@@ -212,8 +212,8 @@ class TestBaseExchange:
     async def test_get_price_minutes_ago_fallback_to_api(self):
         """Test fallback to API when historical data is too old."""
 
-        with patch("pwatch.exchanges.base.ccxt.exchanges", ["binance"]), patch(
-            "pwatch.exchanges.base.ccxt.binance"
+        with patch("kairos.exchanges.base.ccxt.exchanges", ["binance"]), patch(
+            "kairos.exchanges.base.ccxt.binance"
         ) as mock_binance, patch("time.time", return_value=1640995200):
             mock_exchange = Mock()
             mock_binance.return_value = mock_exchange
@@ -237,8 +237,8 @@ class TestBaseExchange:
 
     def test_close(self):
         """Test closing the exchange connection."""
-        with patch("pwatch.exchanges.base.ccxt.exchanges", ["binance"]), patch(
-            "pwatch.exchanges.base.ccxt.binance"
+        with patch("kairos.exchanges.base.ccxt.exchanges", ["binance"]), patch(
+            "kairos.exchanges.base.ccxt.binance"
         ) as mock_binance:
             mock_exchange = Mock()
             mock_binance.return_value = mock_exchange
@@ -261,9 +261,9 @@ class TestBaseExchange:
 
     def test_check_ws_connection_reconnect_needed(self):
         """Test WebSocket reconnection logic."""
-        with patch("pwatch.exchanges.base.ccxt.exchanges", ["binance"]), patch(
-            "pwatch.exchanges.base.ccxt.binance"
-        ) as mock_binance, patch("pwatch.exchanges.base.logging"):
+        with patch("kairos.exchanges.base.ccxt.exchanges", ["binance"]), patch(
+            "kairos.exchanges.base.ccxt.binance"
+        ) as mock_binance, patch("kairos.exchanges.base.logging"):
             mock_exchange = Mock()
             mock_binance.return_value = mock_exchange
 
@@ -283,9 +283,9 @@ class TestBaseExchange:
 
     def test_check_ws_connection_no_symbols(self):
         """Test WebSocket reconnection when no symbols are available."""
-        with patch("pwatch.exchanges.base.ccxt.exchanges", ["binance"]), patch(
-            "pwatch.exchanges.base.ccxt.binance"
-        ) as mock_binance, patch("pwatch.exchanges.base.logging") as mock_logging:
+        with patch("kairos.exchanges.base.ccxt.exchanges", ["binance"]), patch(
+            "kairos.exchanges.base.ccxt.binance"
+        ) as mock_binance, patch("kairos.exchanges.base.logging") as mock_logging:
             mock_exchange = Mock()
             mock_binance.return_value = mock_exchange
 
@@ -303,8 +303,8 @@ class TestBaseExchange:
 
     def test_check_ws_connection_already_connected(self):
         """Test WebSocket check when already connected."""
-        with patch("pwatch.exchanges.base.ccxt.exchanges", ["binance"]), patch(
-            "pwatch.exchanges.base.ccxt.binance"
+        with patch("kairos.exchanges.base.ccxt.exchanges", ["binance"]), patch(
+            "kairos.exchanges.base.ccxt.binance"
         ):
             exchange = _TestExchangeImpl("binance")
             exchange.ws_connected = True
@@ -317,11 +317,11 @@ class TestBaseExchange:
     @pytest.mark.asyncio
     async def test_start_websocket_success(self):
         """Test successful WebSocket startup."""
-        with patch("pwatch.exchanges.base.ccxt.exchanges", ["binance"]), patch(
-            "pwatch.exchanges.base.ccxt.binance"
-        ), patch("pwatch.exchanges.base.threading.Thread") as mock_thread, patch(
-            "pwatch.exchanges.base.time.sleep"
-        ), patch("pwatch.exchanges.base.logging"):
+        with patch("kairos.exchanges.base.ccxt.exchanges", ["binance"]), patch(
+            "kairos.exchanges.base.ccxt.binance"
+        ), patch("kairos.exchanges.base.threading.Thread") as mock_thread, patch(
+            "kairos.exchanges.base.time.sleep"
+        ), patch("kairos.exchanges.base.logging"):
             exchange = _TestExchangeImpl("binance")
 
             # Mock thread creation
@@ -342,12 +342,12 @@ class TestBaseExchange:
 
     def test_start_websocket_timeout(self):
         """Test WebSocket startup timeout."""
-        with patch("pwatch.exchanges.base.ccxt.exchanges", ["binance"]), patch(
-            "pwatch.exchanges.base.ccxt.binance"
-        ), patch("pwatch.exchanges.base.threading.Thread") as mock_thread, patch(
-            "pwatch.exchanges.base.time.sleep"
-        ), patch("pwatch.exchanges.base.logging"), patch(
-            "pwatch.exchanges.base.time.time", side_effect=[0, 5, 10, 11, 15]
+        with patch("kairos.exchanges.base.ccxt.exchanges", ["binance"]), patch(
+            "kairos.exchanges.base.ccxt.binance"
+        ), patch("kairos.exchanges.base.threading.Thread") as mock_thread, patch(
+            "kairos.exchanges.base.time.sleep"
+        ), patch("kairos.exchanges.base.logging"), patch(
+            "kairos.exchanges.base.time.time", side_effect=[0, 5, 10, 11, 15]
         ):  # Multiple calls for timeout
             exchange = _TestExchangeImpl("binance")
 
@@ -363,9 +363,9 @@ class TestBaseExchange:
 
     def test_stop_websocket(self):
         """Test stopping WebSocket connection."""
-        with patch("pwatch.exchanges.base.ccxt.exchanges", ["binance"]), patch(
-            "pwatch.exchanges.base.ccxt.binance"
-        ), patch("pwatch.exchanges.base.logging"):
+        with patch("kairos.exchanges.base.ccxt.exchanges", ["binance"]), patch(
+            "kairos.exchanges.base.ccxt.binance"
+        ), patch("kairos.exchanges.base.logging"):
             exchange = _TestExchangeImpl("binance")
             exchange.running = True
 
@@ -384,10 +384,10 @@ class TestBaseExchange:
     @pytest.mark.asyncio
     async def test_error_handling_get_current_prices(self):
         """Test error handling in get_current_prices."""
-        with patch("pwatch.exchanges.base.ccxt.exchanges", ["binance"]), patch(
-            "pwatch.exchanges.base.ccxt.binance"
-        ) as mock_binance, patch("pwatch.exchanges.base.logging") as mock_logging, patch(
-            "pwatch.exchanges.base.price_cache"
+        with patch("kairos.exchanges.base.ccxt.exchanges", ["binance"]), patch(
+            "kairos.exchanges.base.ccxt.binance"
+        ) as mock_binance, patch("kairos.exchanges.base.logging") as mock_logging, patch(
+            "kairos.exchanges.base.price_cache"
         ) as mock_price_cache:
             mock_exchange = Mock()
             mock_binance.return_value = mock_exchange
@@ -409,9 +409,9 @@ class TestBaseExchange:
 
     async def test_error_handling_get_historical_prices(self):
         """Test error handling in get_price_minutes_ago."""
-        with patch("pwatch.exchanges.base.ccxt.exchanges", ["binance"]), patch(
-            "pwatch.exchanges.base.ccxt.binance"
-        ) as mock_binance, patch("pwatch.exchanges.base.logging") as mock_logging:
+        with patch("kairos.exchanges.base.ccxt.exchanges", ["binance"]), patch(
+            "kairos.exchanges.base.ccxt.binance"
+        ) as mock_binance, patch("kairos.exchanges.base.logging") as mock_logging:
             mock_exchange = Mock()
             mock_binance.return_value = mock_exchange
 

@@ -6,7 +6,7 @@ from unittest.mock import Mock, patch
 
 import requests
 
-from pwatch.notifications.telegram import send_telegram_message
+from kairos.notifications.telegram import send_telegram_message
 
 
 class TestTelegramNotification:
@@ -14,7 +14,7 @@ class TestTelegramNotification:
 
     def test_send_telegram_message_success(self):
         """Test successful Telegram message sending."""
-        with patch("pwatch.notifications.telegram.requests.post") as mock_post:
+        with patch("kairos.notifications.telegram.requests.post") as mock_post:
             mock_response = Mock()
             mock_response.status_code = 200
             mock_post.return_value = mock_response
@@ -32,7 +32,7 @@ class TestTelegramNotification:
 
     def test_send_telegram_message_missing_token(self):
         """Test Telegram message sending with missing token."""
-        with patch("pwatch.notifications.telegram.requests.post") as mock_post:
+        with patch("kairos.notifications.telegram.requests.post") as mock_post:
             result = send_telegram_message(
                 "Test message",
                 "",
@@ -44,7 +44,7 @@ class TestTelegramNotification:
 
     def test_send_telegram_message_missing_chat_id(self):
         """Test Telegram message sending with missing chat ID."""
-        with patch("pwatch.notifications.telegram.requests.post") as mock_post:
+        with patch("kairos.notifications.telegram.requests.post") as mock_post:
             result = send_telegram_message(
                 "Test message",
                 "test_token",
@@ -56,7 +56,7 @@ class TestTelegramNotification:
 
     def test_send_telegram_message_api_error(self):
         """Test Telegram message sending with API error."""
-        with patch("pwatch.notifications.telegram.requests.post") as mock_post:
+        with patch("kairos.notifications.telegram.requests.post") as mock_post:
             mock_response = Mock()
             mock_response.status_code = 400
             mock_response.text = "Bad Request"
@@ -70,7 +70,7 @@ class TestTelegramNotification:
 
     def test_send_telegram_message_network_error(self):
         """Test Telegram message sending with network error."""
-        with patch("pwatch.notifications.telegram.requests.post") as mock_post:
+        with patch("kairos.notifications.telegram.requests.post") as mock_post:
             mock_post.side_effect = requests.RequestException("Network error")
 
             result = send_telegram_message(
@@ -81,7 +81,7 @@ class TestTelegramNotification:
 
     def test_send_telegram_message_special_characters(self):
         """Test Telegram message sending with special characters."""
-        with patch("pwatch.notifications.telegram.requests.post") as mock_post:
+        with patch("kairos.notifications.telegram.requests.post") as mock_post:
             mock_response = Mock()
             mock_response.status_code = 200
             mock_post.return_value = mock_response
@@ -95,7 +95,7 @@ class TestTelegramNotification:
 
     def test_send_telegram_message_long_text(self):
         """Test Telegram message sending with long text."""
-        with patch("pwatch.notifications.telegram.requests.post") as mock_post:
+        with patch("kairos.notifications.telegram.requests.post") as mock_post:
             mock_response = Mock()
             mock_response.status_code = 200
             mock_post.return_value = mock_response

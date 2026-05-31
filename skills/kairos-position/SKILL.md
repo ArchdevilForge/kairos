@@ -2,7 +2,7 @@
 name: kairos-position
 description: 仓位管理 - 基于kairos仓位管理原则的资金管理
 version: 1.0.0
-author: pwatch
+author: kairos
 license: MIT
 metadata:
   hermes:
@@ -32,16 +32,16 @@ kairos仓位管理：
 
 ```bash
 # 查看仓位状态
-pwatch position status
+kairos position status
 
 # 计算仓位大小
-pwatch position size --capital 10000 --risk-pct 33 --leverage 5
+kairos position size --capital 10000 --risk-pct 33 --leverage 5
 
 # 查看交易历史
-pwatch position history --limit 20
+kairos position history --limit 20
 
 # 查看策略统计
-pwatch position stats --strategy box_breakout
+kairos position stats --strategy box_breakout
 ```
 
 ## 仓位计算
@@ -113,7 +113,7 @@ pwatch position stats --strategy box_breakout
 ## LLM管理流程
 
 hermes agent使用此skill时：
-1. 调用 `pwatch position status` 获取当前持仓
+1. 调用 `kairos position status` 获取当前持仓
 2. 根据风险约束计算仓位大小
 3. 设置止损和止盈目标
 4. 执行交易并记录

@@ -2,7 +2,7 @@
 name: kairos-box
 description: 箱体识别 - 基于kairos箱体理论的市场结构分析
 version: 1.0.0
-author: pwatch
+author: kairos
 license: MIT
 metadata:
   hermes:
@@ -33,7 +33,7 @@ metadata:
 
 ```bash
 # 检测箱体模式
-pwatch box-detect --symbol BTC/USDT --timeframe 15m
+kairos box-detect --symbol BTC/USDT --timeframe 15m
 
 # 输出示例
 # 📦 Box Pattern Detection: BTC/USDT
@@ -100,7 +100,7 @@ pwatch box-detect --symbol BTC/USDT --timeframe 15m
 ## LLM确认流程
 
 hermes agent使用此skill时：
-1. 调用 `pwatch box-detect` 获取算法结果
+1. 调用 `kairos box-detect` 获取算法结果
 2. 确认箱体结构是否有效
 3. 评估收敛程度和突破概率
 4. 制定交易计划（进场、止损、目标）

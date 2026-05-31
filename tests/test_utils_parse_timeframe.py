@@ -4,7 +4,7 @@ Tests for utils/parse_timeframe.py - Timeframe parsing functionality.
 
 import pytest
 
-from pwatch.utils.parse_timeframe import parse_timeframe
+from kairos.utils.parse_timeframe import parse_timeframe
 
 
 class TestParseTimeframe:

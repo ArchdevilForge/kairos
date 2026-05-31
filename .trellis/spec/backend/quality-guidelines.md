@@ -6,7 +6,7 @@
 
 ## Overview
 
-pwatch遵循Python最佳实践，使用ruff进行代码检查，pytest进行测试。
+kairos遵循Python最佳实践，使用ruff进行代码检查，pytest进行测试。
 
 ---
 

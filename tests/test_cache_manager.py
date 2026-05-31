@@ -5,7 +5,7 @@ Test cases for cache management system.
 import time
 from collections import OrderedDict
 
-from pwatch.utils.cache_manager import CacheManager, CacheStrategy, PriceCacheManager
+from kairos.utils.cache_manager import CacheManager, CacheStrategy, PriceCacheManager
 
 
 class TestCacheManager:

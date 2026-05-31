@@ -2,7 +2,7 @@
 name: kairos-signal
 description: 交易信号 - 基于kairos进场策略的信号生成
 version: 1.0.0
-author: pwatch
+author: kairos
 license: MIT
 metadata:
   hermes:
@@ -32,7 +32,7 @@ kairos进场策略：
 
 ```bash
 # 检测交易信号
-pwatch signal --symbol BTC/USDT --strategy box_breakout
+kairos signal --symbol BTC/USDT --strategy box_breakout
 
 # 输出示例
 # 🎯 Trading Signal Detection: BTC/USDT
@@ -101,7 +101,7 @@ pwatch signal --symbol BTC/USDT --strategy box_breakout
 ## LLM判断流程
 
 hermes agent使用此skill时：
-1. 调用 `pwatch signal` 获取算法信号
+1. 调用 `kairos signal` 获取算法信号
 2. 结合大盘周期判断信号有效性
 3. 评估盈亏比和风险
 4. 决定是否执行交易

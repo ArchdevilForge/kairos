@@ -6,9 +6,9 @@ from unittest.mock import patch, MagicMock
 from io import StringIO
 
 # Add src to path
-sys.path.insert(0, "/home/xeron/Coding/pwatch/src")
+sys.path.insert(0, "/home/xeron/Coding/kairos/src")
 
-from pwatch.app.trade_cli import (
+from kairos.app.trade_cli import (
     cmd_cycle,
     cmd_scan,
     cmd_box_detect,
@@ -65,7 +65,7 @@ class TestTradingCLI:
         args.symbol = "BTC/USDT"
         args.strategy = "box_breakout"
         
-        from pwatch.app.trade_cli import cmd_signal
+        from kairos.app.trade_cli import cmd_signal
         cmd_signal(args)
         
         captured = capsys.readouterr()
@@ -111,7 +111,7 @@ class TestTradingAnalysis:
     
     def test_box_detector(self):
         """Test box pattern detection."""
-        from pwatch.analysis.box_pattern import BoxDetector
+        from kairos.analysis.box_pattern import BoxDetector
         import numpy as np
         
         detector = BoxDetector()
@@ -130,7 +130,7 @@ class TestTradingAnalysis:
     
     def test_cycle_detector(self):
         """Test market cycle detection."""
-        from pwatch.analysis.cycle import CycleDetector
+        from kairos.analysis.cycle import CycleDetector
         import numpy as np
         
         detector = CycleDetector()
@@ -146,7 +146,7 @@ class TestTradingAnalysis:
     
     def test_support_resistance(self):
         """Test support/resistance detection."""
-        from pwatch.analysis.support_resistance import SupportResistance
+        from kairos.analysis.support_resistance import SupportResistance
         import numpy as np
         
         sr = SupportResistance()
@@ -169,7 +169,7 @@ class TestTradingModules:
     
     def test_position_manager(self):
         """Test position manager."""
-        from pwatch.trades.position import PositionManager
+        from kairos.trades.position import PositionManager
         
         pm = PositionManager()
         
@@ -192,8 +192,8 @@ class TestTradingModules:
     
     def test_risk_manager(self):
         """Test risk manager."""
-        from pwatch.trades.risk import RiskManager, RiskConfig
-        from pwatch.trades.position import PositionManager
+        from kairos.trades.risk import RiskManager, RiskConfig
+        from kairos.trades.position import PositionManager
         
         pm = PositionManager()
         config = {"risk": {}}

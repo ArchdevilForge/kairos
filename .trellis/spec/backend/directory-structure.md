@@ -6,14 +6,14 @@
 
 ## Overview
 
-pwatch是单仓库Python项目，采用src-layout结构。主要模块包括交易所接口、检测器、通知、交易执行、技术分析等。
+kairos是单仓库Python项目，采用src-layout结构。主要模块包括交易所接口、检测器、通知、交易执行、技术分析等。
 
 ---
 
 ## Directory Layout
 
 ```
-src/pwatch/
+src/kairos/
 ├── __init__.py
 ├── paths.py                    # 路径配置
 ├── app/                        # CLI和应用入口
@@ -95,8 +95,8 @@ src/pwatch/
 ## Examples
 
 **良好示例**：
-- `src/pwatch/exchanges/base.py` - 基础类定义清晰
-- `src/pwatch/detectors/price_velocity.py` - 检测器模块独立
+- `src/kairos/exchanges/base.py` - 基础类定义清晰
+- `src/kairos/detectors/price_velocity.py` - 检测器模块独立
 
 **避免**：
 - 单个文件超过500行

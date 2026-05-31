@@ -2,7 +2,7 @@
 
 from unittest.mock import patch
 
-from pwatch.core.notifier import Notifier
+from kairos.core.notifier import Notifier
 
 
 class TestNotifier:
@@ -24,7 +24,7 @@ class TestNotifier:
         expected = {"success": True, "reason": "sent", "retryable": False}
 
         with patch(
-            "pwatch.core.notifier.send_notifications", return_value=expected
+            "kairos.core.notifier.send_notifications", return_value=expected
         ) as mock_send_notifications:
             notifier = Notifier(sample_config)
             result = notifier.send("Test message")
@@ -37,7 +37,7 @@ class TestNotifier:
             )
 
     def test_send_ignores_empty_messages_with_structured_failure(self, sample_config):
-        with patch("pwatch.core.notifier.send_notifications") as mock_send_notifications:
+        with patch("kairos.core.notifier.send_notifications") as mock_send_notifications:
             notifier = Notifier(sample_config)
 
             assert notifier.send("") == {
@@ -60,7 +60,7 @@ class TestNotifier:
 
     def test_send_handles_exception_with_structured_failure(self, sample_config):
         with patch(
-            "pwatch.core.notifier.send_notifications", side_effect=Exception("Network error")
+            "kairos.core.notifier.send_notifications", side_effect=Exception("Network error")
         ):
             notifier = Notifier(sample_config)
 

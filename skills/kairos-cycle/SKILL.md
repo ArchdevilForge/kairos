@@ -2,7 +2,7 @@
 name: kairos-cycle
 description: 市场周期判断 - 基于kairos春夏秋冬理论的市场阶段分析
 version: 1.0.0
-author: pwatch
+author: kairos
 license: MIT
 metadata:
   hermes:
@@ -33,7 +33,7 @@ kairos将市场分为四个阶段：
 
 ```bash
 # 查看当前市场周期
-pwatch cycle
+kairos cycle
 
 # 输出示例
 # 🔄 Market Cycle Analysis
@@ -98,7 +98,7 @@ pwatch cycle
 ## LLM判断流程
 
 hermes agent使用此skill时：
-1. 调用 `pwatch cycle` 获取量化指标
+1. 调用 `kairos cycle` 获取量化指标
 2. 结合LLM分析市场情绪
 3. 综合判断当前周期阶段
 4. 给出仓位和策略建议

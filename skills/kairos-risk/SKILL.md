@@ -2,7 +2,7 @@
 name: kairos-risk
 description: 风险控制 - 基于kairos风险控制原则的资金保护
 version: 1.0.0
-author: pwatch
+author: kairos
 license: MIT
 metadata:
   hermes:
@@ -32,10 +32,10 @@ kairos风险控制：
 
 ```bash
 # 查看风险状态
-pwatch risk status
+kairos risk status
 
 # 检查交易风险
-pwatch risk check --symbol BTC/USDT --size 5000
+kairos risk check --symbol BTC/USDT --size 5000
 
 # 输出示例
 # ⚠️ Risk Status
@@ -108,7 +108,7 @@ pwatch risk check --symbol BTC/USDT --size 5000
 ## LLM风险判断
 
 hermes agent使用此skill时：
-1. 调用 `pwatch risk status` 获取风险状态
+1. 调用 `kairos risk status` 获取风险状态
 2. 检查是否满足开仓条件
 3. 评估风险收益比
 4. 决定是否执行交易

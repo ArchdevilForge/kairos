@@ -2,7 +2,7 @@ from unittest.mock import patch
 
 import yaml
 
-from pwatch.app.cli import ensure_config_exists, interactive_config
+from kairos.app.cli import ensure_config_exists, interactive_config
 
 
 def test_interactive_config_english_copy_matches_current_auto_mode(capsys):
@@ -26,7 +26,7 @@ def test_interactive_config_english_copy_matches_current_auto_mode(capsys):
     captured = capsys.readouterr().out
 
     assert config["notificationSymbols"] == "auto"
-    assert "Welcome to pwatch setup" in captured
+    assert "Welcome to kairos setup" in captured
     assert "PriceSentry Configuration Wizard" not in captured
     assert "quality-filtered" in captured
     assert "top 20" not in captured
@@ -35,8 +35,8 @@ def test_interactive_config_english_copy_matches_current_auto_mode(capsys):
 def test_ensure_config_exists_uses_bilingual_first_run_message(tmp_path, capsys):
     expected_config = {"exchange": "okx"}
 
-    with patch("pwatch.app.cli.get_config_path", return_value=tmp_path / "config.yaml"), patch(
-        "pwatch.app.cli.interactive_config", return_value=expected_config
+    with patch("kairos.app.cli.get_config_path", return_value=tmp_path / "config.yaml"), patch(
+        "kairos.app.cli.interactive_config", return_value=expected_config
     ):
         config_path = ensure_config_exists()
 

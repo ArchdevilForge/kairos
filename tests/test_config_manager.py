@@ -5,7 +5,7 @@ from pathlib import Path
 
 import yaml
 
-from pwatch.core.config_manager import ConfigManager
+from kairos.core.config_manager import ConfigManager
 
 
 def _create_manager(tmp_path, base_config):
@@ -18,7 +18,7 @@ def _create_manager(tmp_path, base_config):
 def test_update_config_rejects_empty_notification_symbols(tmp_path, sample_config, monkeypatch):
     """Empty notification symbol lists must fail validation."""
     monkeypatch.setattr(
-        "pwatch.core.config_manager.load_usdt_contracts",
+        "kairos.core.config_manager.load_usdt_contracts",
         lambda exchange: ["BTC/USDT:USDT"],
     )
     manager = _create_manager(tmp_path, sample_config)
@@ -40,7 +40,7 @@ def test_update_config_rejects_non_matching_symbols(tmp_path, sample_config, mon
     candidate["notificationSymbols"] = ["DOGE/USDT:USDT"]
 
     monkeypatch.setattr(
-        "pwatch.core.config_manager.load_usdt_contracts",
+        "kairos.core.config_manager.load_usdt_contracts",
         lambda exchange: ["BTC/USDT:USDT"],
     )
 
@@ -63,7 +63,7 @@ def test_default_config_includes_conservative_auto_mode_profile(tmp_path):
 
 def test_update_config_applies_balanced_profile_defaults_when_values_missing(tmp_path, sample_config, monkeypatch):
     monkeypatch.setattr(
-        "pwatch.core.config_manager.load_usdt_contracts",
+        "kairos.core.config_manager.load_usdt_contracts",
         lambda exchange: ["BTC/USDT:USDT"],
     )
     manager = _create_manager(tmp_path, sample_config)

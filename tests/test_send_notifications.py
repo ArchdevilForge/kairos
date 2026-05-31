@@ -1,6 +1,6 @@
 from typing import List
 
-from pwatch.utils.send_notifications import send_notifications
+from kairos.utils.send_notifications import send_notifications
 
 
 def test_send_notifications_with_chat_id(monkeypatch):
@@ -11,7 +11,7 @@ def test_send_notifications_with_chat_id(monkeypatch):
         return True
 
     monkeypatch.setattr(
-        "pwatch.utils.send_notifications.send_telegram_message", fake_send_message
+        "kairos.utils.send_notifications.send_telegram_message", fake_send_message
     )
 
     result = send_notifications(
@@ -34,7 +34,7 @@ def test_send_notifications_missing_chat_id(monkeypatch):
         return True
 
     monkeypatch.setattr(
-        "pwatch.utils.send_notifications.send_telegram_message", fake_send_message
+        "kairos.utils.send_notifications.send_telegram_message", fake_send_message
     )
 
     result = send_notifications(
@@ -59,7 +59,7 @@ def test_send_notifications_missing_token(monkeypatch):
         return True
 
     monkeypatch.setattr(
-        "pwatch.utils.send_notifications.send_telegram_message", fake_send_message
+        "kairos.utils.send_notifications.send_telegram_message", fake_send_message
     )
 
     result = send_notifications(
@@ -81,7 +81,7 @@ def test_send_notifications_telegram_transport_error_is_retryable(monkeypatch):
         raise RuntimeError("boom")
 
     monkeypatch.setattr(
-        "pwatch.utils.send_notifications.send_telegram_message", fake_send_message
+        "kairos.utils.send_notifications.send_telegram_message", fake_send_message
     )
 
     result = send_notifications(

@@ -6,7 +6,7 @@
 
 ## Overview
 
-pwatch使用Python标准logging模块，支持结构化日志和不同级别。
+kairos使用Python标准logging模块，支持结构化日志和不同级别。
 
 ---
 
@@ -43,7 +43,7 @@ pwatch使用Python标准logging模块，支持结构化日志和不同级别。
 
 ### 1. 组件日志
 ```python
-logger = logging.getLogger("pwatch.trades.executor")
+logger = logging.getLogger("kairos.trades.executor")
 logger.info(f"Executing order: {order.symbol} {order.side} {order.amount}")
 ```
 
@@ -111,8 +111,8 @@ def setup_logging(level: str = "INFO", console: bool = True):
 ## Log File Management
 
 ### 日志文件位置
-- 后台运行日志：`~/.config/pwatch/pwatch.log`
-- 交易日志：`~/.config/pwatch/trades.log`
+- 后台运行日志：`~/.config/kairos/kairos.log`
+- 交易日志：`~/.config/kairos/trades.log`
 
 ### 日志轮转
 ```python

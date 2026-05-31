@@ -3,8 +3,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from pwatch.utils.cache_manager import NotificationCooldownManager
-from pwatch.utils.monitor_top_movers import monitor_top_movers
+from kairos.utils.cache_manager import NotificationCooldownManager
+from kairos.utils.monitor_top_movers import monitor_top_movers
 
 
 class TestNotificationCooldownManager:

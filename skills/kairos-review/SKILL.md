@@ -2,7 +2,7 @@
 name: kairos-review
 description: 复盘学习 - 基于kairos复盘方法的交易总结
 version: 1.0.0
-author: pwatch
+author: kairos
 license: MIT
 metadata:
   hermes:
@@ -34,10 +34,10 @@ kairos复盘方法：
 
 ```bash
 # 查看交易历史
-pwatch history --limit 50
+kairos history --limit 50
 
 # 查看策略统计
-pwatch stats --strategy box_breakout
+kairos stats --strategy box_breakout
 
 # 输出示例
 # 📊 Trading Statistics
@@ -101,8 +101,8 @@ pwatch stats --strategy box_breakout
 ## LLM复盘流程
 
 hermes agent使用此skill时：
-1. 调用 `pwatch history` 获取交易历史
-2. 调用 `pwatch stats` 获取策略统计
+1. 调用 `kairos history` 获取交易历史
+2. 调用 `kairos stats` 获取策略统计
 3. 分析盈亏原因和模式
 4. 总结经验教训
 5. 更新skill和策略参数

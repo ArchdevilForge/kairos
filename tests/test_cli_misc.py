@@ -4,11 +4,11 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from pwatch.app import cli
+from kairos.app import cli
 
 
 def test_validators(monkeypatch):
-    monkeypatch.setattr("pwatch.utils.default_symbols.get_prompt", lambda language, key: key)
+    monkeypatch.setattr("kairos.utils.default_symbols.get_prompt", lambda language, key: key)
 
     assert cli.validate_exchange("okx", "en") == (True, "okx")
     assert cli.validate_exchange("bad", "en") == (False, "invalid_exchange")
@@ -24,7 +24,7 @@ def test_validators(monkeypatch):
 
 def test_ask_yes_no_empty_uses_default(monkeypatch):
     """Empty input (Enter key) should return the default value per D-04."""
-    monkeypatch.setattr("pwatch.utils.default_symbols.get_prompt", lambda language, key: key)
+    monkeypatch.setattr("kairos.utils.default_symbols.get_prompt", lambda language, key: key)
 
     # Default=True branch: blank input resolves to True
     monkeypatch.setattr(cli, "get_user_input", lambda prompt, default=None, secret=False: "")
@@ -66,12 +66,12 @@ def test_show_data_info_and_cmd_config_path_print_paths(capsys, monkeypatch, tmp
 
 def test_update_markets_and_ensure_market_data_paths(tmp_path, monkeypatch):
     monkeypatch.setattr(
-        "pwatch.utils.supported_markets.refresh_supported_markets", lambda exchanges: {"okx": ["BTC/USDT"]}
+        "kairos.utils.supported_markets.refresh_supported_markets", lambda exchanges: {"okx": ["BTC/USDT"]}
     )
     config = {"exchange": "okx"}
     assert cli.update_markets(config) is True
 
-    monkeypatch.setattr("pwatch.utils.supported_markets.refresh_supported_markets", lambda exchanges: {})
+    monkeypatch.setattr("kairos.utils.supported_markets.refresh_supported_markets", lambda exchanges: {})
     assert cli.update_markets(config) is False
 
     markets_path = tmp_path / "markets.json"
@@ -101,7 +101,7 @@ def test_load_config_and_validate_telegram_token(tmp_path):
 
 def test_read_pid_file_missing_and_invalid(tmp_path, monkeypatch):
     """_read_pid_file returns None for missing or malformed PID files."""
-    pid_path = tmp_path / "pwatch.pid"
+    pid_path = tmp_path / "kairos.pid"
     monkeypatch.setattr(cli, "get_pid_path", lambda: pid_path)
     assert cli._read_pid_file() is None
 
@@ -111,9 +111,9 @@ def test_read_pid_file_missing_and_invalid(tmp_path, monkeypatch):
 
 def test_get_running_pid_returns_pid_when_running_and_matching(tmp_path, monkeypatch):
     """_get_running_pid returns the PID when both helper checks are positive."""
-    pid_path = tmp_path / "pwatch.pid"
+    pid_path = tmp_path / "kairos.pid"
     monkeypatch.setattr(cli, "get_pid_path", lambda: pid_path)
-    pid_path.write_text("123\npwatch.app.runner\n", encoding="utf-8")
+    pid_path.write_text("123\nkairos.app.runner\n", encoding="utf-8")
     monkeypatch.setattr(cli, "_pid_is_running", lambda pid: True)
     monkeypatch.setattr(cli, "_pid_matches_runner", lambda pid: True)
     assert cli._get_running_pid() == 123
@@ -121,9 +121,9 @@ def test_get_running_pid_returns_pid_when_running_and_matching(tmp_path, monkeyp
 
 def test_get_running_pid_cleans_stale_pid_file(tmp_path, monkeypatch):
     """_get_running_pid removes the PID file and returns None when runner doesn't match."""
-    pid_path = tmp_path / "pwatch.pid"
+    pid_path = tmp_path / "kairos.pid"
     monkeypatch.setattr(cli, "get_pid_path", lambda: pid_path)
-    pid_path.write_text("123\npwatch.app.runner\n", encoding="utf-8")
+    pid_path.write_text("123\nkairos.app.runner\n", encoding="utf-8")
     monkeypatch.setattr(cli, "_pid_matches_runner", lambda pid: False)
     assert cli._get_running_pid() is None
     assert not pid_path.exists()
@@ -145,13 +145,13 @@ def test_cmd_update_markets_uses_config_and_cached_exchanges(monkeypatch):
     monkeypatch.setattr(cli, "load_config", lambda path: {"exchange": "okx", "exchanges": ["binance"]})
     monkeypatch.setattr(cli, "get_config_path", lambda: Path("/tmp/config.yaml"))
     monkeypatch.setattr(Path, "exists", lambda self: True)
-    monkeypatch.setattr("pwatch.utils.supported_markets.list_cached_exchanges", lambda: ["bybit"])
+    monkeypatch.setattr("kairos.utils.supported_markets.list_cached_exchanges", lambda: ["bybit"])
     refreshed_args = []
     monkeypatch.setattr(
-        "pwatch.utils.supported_markets.refresh_supported_markets",
+        "kairos.utils.supported_markets.refresh_supported_markets",
         lambda exchanges: refreshed_args.append(exchanges) or {"okx": []},
     )
-    monkeypatch.setattr("pwatch.utils.setup_logging.setup_logging", lambda *args, **kwargs: None)
+    monkeypatch.setattr("kairos.utils.setup_logging.setup_logging", lambda *args, **kwargs: None)
 
     cli.cmd_update_markets(SimpleNamespace(exchanges=None))
 
@@ -188,9 +188,9 @@ def test_run_start_preflight_exits_on_invalid_telegram_or_market_failure(monkeyp
 async def test_run_monitoring_starts_and_stops_bot_service(monkeypatch):
     sentry = SimpleNamespace(config={"telegram": {"token": "123:abc"}}, run=AsyncMock())
     bot_service = SimpleNamespace(start=AsyncMock(), stop=AsyncMock())
-    monkeypatch.setattr("pwatch.core.sentry.PriceSentry", lambda: sentry)
-    monkeypatch.setattr("pwatch.notifications.telegram_bot_service.TelegramBotService", lambda token: bot_service)
-    monkeypatch.setattr("pwatch.utils.setup_logging.setup_logging", lambda *args, **kwargs: None)
+    monkeypatch.setattr("kairos.core.sentry.PriceSentry", lambda: sentry)
+    monkeypatch.setattr("kairos.notifications.telegram_bot_service.TelegramBotService", lambda token: bot_service)
+    monkeypatch.setattr("kairos.utils.setup_logging.setup_logging", lambda *args, **kwargs: None)
 
     await cli.run_monitoring()
 
@@ -200,7 +200,7 @@ async def test_run_monitoring_starts_and_stops_bot_service(monkeypatch):
 
 
 def test_cmd_run_handles_keyboard_interrupt_and_exception(monkeypatch):
-    monkeypatch.setattr("pwatch.utils.setup_logging.setup_logging", lambda *args, **kwargs: None)
+    monkeypatch.setattr("kairos.utils.setup_logging.setup_logging", lambda *args, **kwargs: None)
     monkeypatch.setattr(cli, "_run_start_preflight", lambda: None)
 
     def raise_keyboard_interrupt(coro):
@@ -220,7 +220,7 @@ def test_cmd_run_handles_keyboard_interrupt_and_exception(monkeypatch):
 
 
 def test_cmd_run_invokes_run_monitoring_once(monkeypatch):
-    monkeypatch.setattr("pwatch.utils.setup_logging.setup_logging", lambda *args, **kwargs: None)
+    monkeypatch.setattr("kairos.utils.setup_logging.setup_logging", lambda *args, **kwargs: None)
     monkeypatch.setattr(cli, "_run_start_preflight", lambda: None)
 
     run_calls = []

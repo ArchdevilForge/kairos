@@ -2,15 +2,15 @@
 
 ## Goal
 
-将pwatch仓库改造成一个完整的交易agent系统，通过Hermes Agent集成，实现Bit浪浪交易哲学的自动化执行。系统提供CLI工具和skill，让hermes agent能够自主分析市场、生成信号、执行交易。
+将kairos仓库改造成一个完整的交易agent系统，通过Hermes Agent集成，实现Bit浪浪交易哲学的自动化执行。系统提供CLI工具和skill，让hermes agent能够自主分析市场、生成信号、执行交易。
 
 ## Requirements
 
 ### 核心需求
-1. **CLI工具扩展**：pwatch扩展为包含交易执行能力的CLI工具
-2. **Hermes Agent Skill**：创建模块化skill，让hermes agent了解如何使用pwatch
-3. **数据输出**：pwatch输出结构化数据，hermes定时拉取
-4. **LLM分离**：pwatch不做LLM调用，hermes负责所有智能判断
+1. **CLI工具扩展**：kairos扩展为包含交易执行能力的CLI工具
+2. **Hermes Agent Skill**：创建模块化skill，让hermes agent了解如何使用kairos
+3. **数据输出**：kairos输出结构化数据，hermes定时拉取
+4. **LLM分离**：kairos不做LLM调用，hermes负责所有智能判断
 
 ### 交易范围
 - **品种**：只做合约（永续合约）
@@ -36,8 +36,8 @@
 
 ## Acceptance Criteria
 
-- [ ] pwatch CLI支持所有交易相关命令
-- [ ] hermes agent可以通过skill了解如何使用pwatch
+- [ ] kairos CLI支持所有交易相关命令
+- [ ] hermes agent可以通过skill了解如何使用kairos
 - [ ] 周期判断、选币、箱体识别算法实现
 - [ ] 风险约束正确实施
 - [ ] 交易执行功能完整
@@ -55,7 +55,7 @@
 
 ### 架构分离
 ```
-pwatch (CLI工具)                    hermes agent
+kairos (CLI工具)                    hermes agent
 ├── 数据获取                        ├── 读取skill
 ├── 技术分析算法                    ├── 调用CLI获取数据
 ├── 交易执行                        ├── LLM判断（周期、选币、信号）
@@ -78,29 +78,29 @@ skills/
 ### CLI命令设计
 ```bash
 # 市场分析
-pwatch cycle                    # 市场周期
-pwatch scan                     # 扫描标的
-pwatch box-detect --symbol BTC/USDT  # 箱体检测
-pwatch signal --symbol BTC/USDT      # 交易信号
-pwatch sr --symbol BTC/USDT          # 支撑阻力
+kairos cycle                    # 市场周期
+kairos scan                     # 扫描标的
+kairos box-detect --symbol BTC/USDT  # 箱体检测
+kairos signal --symbol BTC/USDT      # 交易信号
+kairos sr --symbol BTC/USDT          # 支撑阻力
 
 # 交易执行
-pwatch position status          # 仓位状态
-pwatch order --symbol BTC/USDT --side long --size 1000
-pwatch close --symbol BTC/USDT
+kairos position status          # 仓位状态
+kairos order --symbol BTC/USDT --side long --size 1000
+kairos close --symbol BTC/USDT
 
 # 风险管理
-pwatch risk status              # 风险状态
-pwatch history                  # 交易历史
-pwatch stats                    # 统计数据
+kairos risk status              # 风险状态
+kairos history                  # 交易历史
+kairos stats                    # 统计数据
 ```
 
 ## Decision (ADR-lite)
 
-**Context**: 需要将pwatch从监控系统扩展为交易agent系统
-**Decision**: 采用CLI+Skill架构，pwatch提供工具，hermes提供智能
+**Context**: 需要将kairos从监控系统扩展为交易agent系统
+**Decision**: 采用CLI+Skill架构，kairos提供工具，hermes提供智能
 **Consequences**: 
-- pwatch保持简单，不做LLM调用
+- kairos保持简单，不做LLM调用
 - hermes agent负责所有判断和决策
 - 通过skill传递知识，通过CLI传递数据
 
@@ -114,12 +114,12 @@ pwatch stats                    # 统计数据
 ## Technical Notes
 
 ### 现有代码结构
-- `src/pwatch/exchanges/` - 交易所接口（已有）
-- `src/pwatch/detectors/` - 检测器（已有）
-- `src/pwatch/notifications/` - 通知（已有）
-- `src/pwatch/trades/` - 交易执行（新增）
-- `src/pwatch/analysis/` - 技术分析（新增）
-- `src/pwatch/app/trade_cli.py` - 交易CLI（新增）
+- `src/kairos/exchanges/` - 交易所接口（已有）
+- `src/kairos/detectors/` - 检测器（已有）
+- `src/kairos/notifications/` - 通知（已有）
+- `src/kairos/trades/` - 交易执行（新增）
+- `src/kairos/analysis/` - 技术分析（新增）
+- `src/kairos/app/trade_cli.py` - 交易CLI（新增）
 
 ### 依赖
 - ccxt（已有）
@@ -127,5 +127,5 @@ pwatch stats                    # 统计数据
 - pandas（可选，用于数据分析）
 
 ### 配置
-- `~/.config/pwatch/trading.yaml` - 交易配置
+- `~/.config/kairos/trading.yaml` - 交易配置
 - 环境变量 - 交易所API密钥

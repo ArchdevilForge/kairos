@@ -7,8 +7,8 @@ from unittest.mock import mock_open, patch
 import pytest
 import yaml
 
-from pwatch.paths import get_config_path, get_symbols_path
-from pwatch.utils.load_config import load_config
+from kairos.paths import get_config_path, get_symbols_path
+from kairos.utils.load_config import load_config
 
 EXPECTED_SYMBOLS_PATH = str(get_symbols_path())
 
@@ -27,7 +27,7 @@ class TestLoadConfig:
         }
 
         with patch("builtins.open", mock_open(read_data=yaml.dump(config_data))), patch(
-            "pwatch.utils.load_config.logging"
+            "kairos.utils.load_config.logging"
         ) as mock_logging:
             result = load_config("test_config.yaml")
 
@@ -49,7 +49,7 @@ class TestLoadConfig:
         }
 
         with patch("builtins.open", mock_open(read_data=yaml.dump(config_data))), patch(
-            "pwatch.utils.load_config.logging"
+            "kairos.utils.load_config.logging"
         ):
             with pytest.raises(
                 ValueError, match="Missing required config key: defaultTimeframe"
@@ -67,7 +67,7 @@ class TestLoadConfig:
         }
 
         with patch("builtins.open", mock_open(read_data=yaml.dump(config_data))), patch(
-            "pwatch.utils.load_config.logging"
+            "kairos.utils.load_config.logging"
         ):
             result = load_config("test_config.yaml")
 
@@ -78,7 +78,7 @@ class TestLoadConfig:
         """Test configuration loading when file is not found."""
         with patch(
             "builtins.open", side_effect=FileNotFoundError("File not found")
-        ), patch("pwatch.utils.load_config.logging") as mock_logging:
+        ), patch("kairos.utils.load_config.logging") as mock_logging:
             with pytest.raises(Exception):
                 load_config("nonexistent_config.yaml")
 
@@ -89,7 +89,7 @@ class TestLoadConfig:
         invalid_yaml = "invalid: yaml: content: [unclosed"
 
         with patch("builtins.open", mock_open(read_data=invalid_yaml)), patch(
-            "pwatch.utils.load_config.logging"
+            "kairos.utils.load_config.logging"
         ) as mock_logging:
             with pytest.raises(Exception):
                 load_config("invalid_config.yaml")
@@ -99,7 +99,7 @@ class TestLoadConfig:
     def test_load_config_empty_file(self):
         """Test configuration loading with empty file."""
         with patch("builtins.open", mock_open(read_data="")), patch(
-            "pwatch.utils.load_config.logging"
+            "kairos.utils.load_config.logging"
         ):
             with pytest.raises(
                 ValueError, match="Missing required config key: exchange"
@@ -119,7 +119,7 @@ class TestLoadConfig:
         }
 
         with patch("builtins.open", mock_open(read_data=yaml.dump(config_data))), patch(
-            "pwatch.utils.load_config.logging"
+            "kairos.utils.load_config.logging"
         ):
             result = load_config("test_config.yaml")
 
@@ -147,7 +147,7 @@ class TestLoadConfig:
         }
 
         with patch("builtins.open", mock_open(read_data=yaml.dump(config_data))), patch(
-            "pwatch.utils.load_config.logging"
+            "kairos.utils.load_config.logging"
         ):
             result = load_config("test_config.yaml")
 
@@ -174,7 +174,7 @@ class TestLoadConfig:
         }
 
         mock_file = mock_open(read_data=yaml.dump(config_data))
-        with patch("builtins.open", mock_file), patch("pwatch.utils.load_config.logging"):
+        with patch("builtins.open", mock_file), patch("kairos.utils.load_config.logging"):
             result = load_config()  # No path specified
 
             expected = {
@@ -198,7 +198,7 @@ class TestLoadConfig:
         }
 
         with patch("builtins.open", mock_open(read_data=yaml.dump(config_data))), patch(
-            "pwatch.utils.load_config.logging"
+            "kairos.utils.load_config.logging"
         ):
             result = load_config("test_config.yaml")
 
@@ -216,7 +216,7 @@ class TestLoadConfig:
         }
 
         with patch("builtins.open", mock_open(read_data=yaml.dump(config_data))), patch(
-            "pwatch.utils.load_config.logging"
+            "kairos.utils.load_config.logging"
         ):
             result = load_config("test_config.yaml")
 
@@ -237,7 +237,7 @@ class TestLoadConfig:
         }
 
         with patch("builtins.open", mock_open(read_data=yaml.dump(config_data))), patch(
-            "pwatch.utils.load_config.logging"
+            "kairos.utils.load_config.logging"
         ):
             result = load_config("test_config.yaml")
 
@@ -262,7 +262,7 @@ class TestLoadConfig:
         }
 
         with patch("builtins.open", mock_open(read_data=yaml.dump(config_data))), patch(
-            "pwatch.utils.load_config.logging"
+            "kairos.utils.load_config.logging"
         ):
             result = load_config("test_config.yaml")
 
@@ -281,7 +281,7 @@ class TestLoadConfig:
         }
 
         with patch("builtins.open", mock_open(read_data=yaml.dump(config_data))), patch(
-            "pwatch.utils.load_config.logging"
+            "kairos.utils.load_config.logging"
         ):
             result = load_config("test_config.yaml")
 

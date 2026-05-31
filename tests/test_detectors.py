@@ -4,10 +4,10 @@ import time
 
 import pytest
 
-from pwatch.core.sentry import PriceSentry
-from pwatch.detectors.base import AnomalyEvent, BaseDetector
-from pwatch.detectors.price_velocity import PriceVelocityDetector
-from pwatch.detectors.volume_spike import VolumeSpikeDetector
+from kairos.core.sentry import PriceSentry
+from kairos.detectors.base import AnomalyEvent, BaseDetector
+from kairos.detectors.price_velocity import PriceVelocityDetector
+from kairos.detectors.volume_spike import VolumeSpikeDetector
 
 # ---------------------------------------------------------------------------
 # BaseDetector
