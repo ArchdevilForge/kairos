@@ -626,7 +626,7 @@ def main():
     sub.add_parser("config-path", help="Print config directory path")
 
     # Trading commands
-    from kairos.app.trade_cli import register_trading_commands, get_trading_commands
+    from kairos.app.trade_cli import get_trading_commands, register_trading_commands
     register_trading_commands(sub)
 
     args = parser.parse_args()

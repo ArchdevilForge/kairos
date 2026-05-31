@@ -22,8 +22,10 @@ from kairos.app.trade_cli import (
 class TestTradingCLI:
     """Test trading CLI commands."""
     
-    def test_cmd_cycle(self, capsys):
+    @patch('kairos.app.trade_cli.load_config')
+    def test_cmd_cycle(self, mock_load_config, capsys):
         """Test market cycle command."""
+        mock_load_config.return_value = {"defaultExchange": "okx"}
         args = MagicMock()
         cmd_cycle(args)
         
@@ -31,8 +33,10 @@ class TestTradingCLI:
         assert "Market Cycle Analysis" in captured.out
         assert "SPRING" in captured.out
     
-    def test_cmd_scan(self, capsys):
+    @patch('kairos.app.trade_cli.load_config')
+    def test_cmd_scan(self, mock_load_config, capsys):
         """Test scan command."""
+        mock_load_config.return_value = {"defaultExchange": "okx"}
         args = MagicMock()
         args.exchange = "okx"
         args.min_volume = None

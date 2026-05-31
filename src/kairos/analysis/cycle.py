@@ -3,7 +3,6 @@
 import logging
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional
 
 import numpy as np
 
@@ -29,7 +28,7 @@ class MarketCycle:
     altcoin_correlation: float  # How correlated altcoins are with BTC
     funding_rates_avg: float  # Average funding rates
     market_cap_change_30d: float  # Total market cap 30-day change %
-    
+
     @property
     def description(self) -> str:
         """Human-readable description of the phase."""
@@ -40,7 +39,7 @@ class MarketCycle:
             MarketPhase.WINTER: "下跌震荡期，空仓冬眠，管住手"
         }
         return descriptions.get(self.phase, "未知")
-    
+
     @property
     def position_advice(self) -> str:
         """Position sizing advice."""
@@ -55,23 +54,23 @@ class MarketCycle:
 
 class CycleDetector:
     """Detects market cycle phase using quantitative indicators."""
-    
+
     def __init__(self, config: dict = None):
         self.logger = logging.getLogger("kairos.analysis.cycle")
         config = config or {}
-        
+
         # Thresholds for phase detection
         self.spring_btc_change_min = config.get("springBtcChangeMin", 10)  # BTC up 10%+ from bottom
         self.summer_btc_change_min = config.get("summerBtcChangeMin", 30)  # BTC up 30%+
         self.autumn_btc_change_max = config.get("autumnBtcChangeMax", 50)  # BTC up 50%+ but stalling
         self.winter_btc_change_max = config.get("winterBtcChangeMax", -10)  # BTC down 10%+
-        
+
         self.high_volatility_threshold = config.get("highVolatilityThreshold", 5)  # ATR > 5%
         self.low_volatility_threshold = config.get("lowVolatilityThreshold", 2)  # ATR < 2%
-        
+
         self.high_funding_threshold = config.get("highFundingThreshold", 0.05)  # 0.05% per 8h = ~55% annualized
         self.low_funding_threshold = config.get("lowFundingThreshold", -0.01)  # Negative funding
-    
+
     def detect_phase(
         self,
         btc_prices: np.ndarray,
@@ -83,21 +82,21 @@ class CycleDetector:
         """Detect current market phase."""
         if len(btc_prices) < 30:
             return self._default_cycle()
-        
+
         # Calculate metrics
         btc_change_7d = self._calculate_change(btc_prices, 7)
         btc_change_30d = self._calculate_change(btc_prices, 30)
         volatility = self._calculate_volatility(btc_prices)
         volume_trend = self._calculate_volume_trend(btc_volumes)
         btc_trend = self._determine_trend(btc_prices)
-        
+
         # Phase detection logic
         phase, confidence = self._determine_phase(
             btc_change_7d, btc_change_30d, volatility,
             volume_trend, altcoin_correlation, avg_funding_rate,
             total_market_cap_change_30d
         )
-        
+
         return MarketCycle(
             phase=phase,
             confidence=confidence,
@@ -110,51 +109,51 @@ class CycleDetector:
             funding_rates_avg=avg_funding_rate,
             market_cap_change_30d=total_market_cap_change_30d
         )
-    
+
     def _calculate_change(self, prices: np.ndarray, days: int) -> float:
         """Calculate price change over N days."""
         if len(prices) < days:
             return 0
         return ((prices[-1] - prices[-days]) / prices[-days]) * 100
-    
+
     def _calculate_volatility(self, prices: np.ndarray, period: int = 14) -> float:
         """Calculate ATR-like volatility as percentage."""
         if len(prices) < period + 1:
             return 0
-        
+
         # Simple daily returns volatility
         returns = np.diff(prices) / prices[:-1]
         return np.std(returns[-period:]) * 100 * np.sqrt(365)  # Annualized
-    
+
     def _calculate_volume_trend(self, volumes: np.ndarray, period: int = 7) -> str:
         """Determine volume trend."""
         if len(volumes) < period * 2:
             return "stable"
-        
+
         recent_avg = np.mean(volumes[-period:])
         prior_avg = np.mean(volumes[-period*2:-period])
-        
+
         if recent_avg > prior_avg * 1.2:
             return "increasing"
         elif recent_avg < prior_avg * 0.8:
             return "decreasing"
         return "stable"
-    
+
     def _determine_trend(self, prices: np.ndarray, period: int = 20) -> str:
         """Determine price trend."""
         if len(prices) < period:
             return "sideways"
-        
+
         # Simple trend based on slope of recent prices
         recent = prices[-period:]
         slope = np.polyfit(range(len(recent)), recent, 1)[0]
-        
+
         if slope > prices[-1] * 0.001:  # Upward slope
             return "up"
         elif slope < -prices[-1] * 0.001:  # Downward slope
             return "down"
         return "sideways"
-    
+
     def _determine_phase(
         self,
         btc_7d: float,
@@ -172,7 +171,7 @@ class CycleDetector:
             MarketPhase.AUTUMN: 0,
             MarketPhase.WINTER: 0
         }
-        
+
         # BTC 30-day change signals
         if btc_30d > self.summer_btc_change_min:
             scores[MarketPhase.SUMMER] += 2
@@ -185,7 +184,7 @@ class CycleDetector:
         else:
             scores[MarketPhase.AUTUMN] += 1
             scores[MarketPhase.WINTER] += 1
-        
+
         # Recent momentum (7d)
         if btc_7d > 10:
             scores[MarketPhase.SUMMER] += 1
@@ -193,14 +192,14 @@ class CycleDetector:
             scores[MarketPhase.SPRING] += 1
         elif btc_7d < -10:
             scores[MarketPhase.WINTER] += 2
-        
+
         # Volatility signals
         if volatility > self.high_volatility_threshold:
             scores[MarketPhase.SUMMER] += 1
             scores[MarketPhase.WINTER] += 1
         elif volatility < self.low_volatility_threshold:
             scores[MarketPhase.AUTUMN] += 1
-        
+
         # Volume trend
         if volume_trend == "increasing":
             scores[MarketPhase.SPRING] += 1
@@ -208,28 +207,28 @@ class CycleDetector:
         elif volume_trend == "decreasing":
             scores[MarketPhase.AUTUMN] += 1
             scores[MarketPhase.WINTER] += 1
-        
+
         # Funding rates (high positive = overheated)
         if funding_rate > self.high_funding_threshold:
             scores[MarketPhase.SUMMER] += 1
             scores[MarketPhase.AUTUMN] += 1
         elif funding_rate < self.low_funding_threshold:
             scores[MarketPhase.WINTER] += 1
-        
+
         # Altcoin correlation (high = still in trend, low = rotation)
         if altcoin_corr > 0.8:
             scores[MarketPhase.SPRING] += 1
             scores[MarketPhase.SUMMER] += 1
         elif altcoin_corr < 0.5:
             scores[MarketPhase.AUTUMN] += 1  # Rotation/补涨
-        
+
         # Find phase with highest score
         phase = max(scores, key=scores.get)
         total = sum(scores.values())
         confidence = scores[phase] / total if total > 0 else 0
-        
+
         return phase, round(confidence, 2)
-    
+
     def _default_cycle(self) -> MarketCycle:
         """Return default cycle when insufficient data."""
         return MarketCycle(

@@ -1,11 +1,9 @@
 """Trade executor - handles order execution across exchanges."""
 
-import asyncio
 import logging
-import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Optional
+from typing import Optional
 
 import ccxt
 
@@ -58,12 +56,12 @@ class OrderResult:
 
 class TradeExecutor:
     """Executes trades on exchanges via ccxt."""
-    
+
     def __init__(self, exchange_name: str, config: dict):
         self.exchange_name = exchange_name
         self.config = config
         self.logger = logging.getLogger("kairos.trades.executor")
-        
+
         # Initialize exchange
         exchange_class = getattr(ccxt, exchange_name)
         self.exchange = exchange_class({
@@ -72,16 +70,16 @@ class TradeExecutor:
             "secret": config.get("secret"),
             "password": config.get("password"),  # For OKX
         })
-        
+
         # Set to testnet if configured
         if config.get("testnet", False):
             self.exchange.set_sandbox_mode(True)
-        
+
         # Trading config
         self.default_leverage = config.get("defaultLeverage", 5)
         self.max_leverage = config.get("maxLeverage", 10)
         self.margin_mode = config.get("marginMode", "isolated")  # isolated or cross
-        
+
     async def set_leverage(self, symbol: str, leverage: int) -> bool:
         """Set leverage for a symbol."""
         try:
@@ -92,7 +90,7 @@ class TradeExecutor:
         except Exception as e:
             self.logger.error(f"Failed to set leverage for {symbol}: {e}")
             return False
-    
+
     async def set_margin_mode(self, symbol: str, mode: str = None) -> bool:
         """Set margin mode (isolated/cross)."""
         try:
@@ -103,23 +101,23 @@ class TradeExecutor:
         except Exception as e:
             self.logger.error(f"Failed to set margin mode for {symbol}: {e}")
             return False
-    
+
     async def execute_order(self, order: Order) -> OrderResult:
         """Execute a single order."""
         try:
             # Set leverage first
             await self.set_leverage(order.symbol, order.leverage)
-            
+
             # Prepare order params
             params = order.params.copy()
             if order.position_side == PositionSide.SHORT:
                 params["positionSide"] = "short"
             else:
                 params["positionSide"] = "long"
-            
+
             if order.reduce_only:
                 params["reduceOnly"] = True
-            
+
             # Execute based on order type
             if order.order_type == OrderType.MARKET:
                 result = await self.exchange.create_order(
@@ -153,7 +151,7 @@ class TradeExecutor:
                 )
             else:
                 return OrderResult(success=False, error=f"Unsupported order type: {order.order_type}")
-            
+
             # Parse result
             return OrderResult(
                 success=True,
@@ -163,7 +161,7 @@ class TradeExecutor:
                 fee=result.get("fee", {}).get("cost"),
                 raw_response=result
             )
-            
+
         except ccxt.InsufficientFunds as e:
             return OrderResult(success=False, error=f"Insufficient funds: {e}")
         except ccxt.InvalidOrder as e:
@@ -177,7 +175,7 @@ class TradeExecutor:
                 ErrorSeverity.ERROR
             )
             return OrderResult(success=False, error=str(e))
-    
+
     async def close_position(self, symbol: str, side: PositionSide, amount: float = None) -> OrderResult:
         """Close a position (full or partial)."""
         # Get current position
@@ -187,13 +185,13 @@ class TradeExecutor:
             if p["symbol"] == symbol and p["side"] == side.value:
                 position = p
                 break
-        
+
         if not position:
             return OrderResult(success=False, error=f"No {side.value} position found for {symbol}")
-        
+
         close_amount = amount or abs(position["contracts"])
         close_side = OrderSide.SELL if side == PositionSide.LONG else OrderSide.BUY
-        
+
         order = Order(
             symbol=symbol,
             side=close_side,
@@ -202,9 +200,9 @@ class TradeExecutor:
             position_side=side,
             reduce_only=True
         )
-        
+
         return await self.execute_order(order)
-    
+
     async def get_positions(self) -> list[dict]:
         """Get all open positions."""
         try:
@@ -213,7 +211,7 @@ class TradeExecutor:
         except Exception as e:
             self.logger.error(f"Failed to fetch positions: {e}")
             return []
-    
+
     async def get_balance(self) -> dict:
         """Get account balance."""
         try:
@@ -226,7 +224,7 @@ class TradeExecutor:
         except Exception as e:
             self.logger.error(f"Failed to fetch balance: {e}")
             return {}
-    
+
     async def get_ticker(self, symbol: str) -> dict:
         """Get current ticker for a symbol."""
         try:
@@ -234,7 +232,7 @@ class TradeExecutor:
         except Exception as e:
             self.logger.error(f"Failed to fetch ticker for {symbol}: {e}")
             return {}
-    
+
     async def get_funding_rate(self, symbol: str) -> dict:
         """Get current funding rate for a symbol."""
         try:
