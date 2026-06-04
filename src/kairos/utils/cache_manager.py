@@ -649,7 +649,7 @@ class NotificationCooldownManager:
                 entry = self._cache.cache[cache_key]
                 if not entry.is_expired():
                     elapsed = time.time() - entry.timestamp
-                    return max(0.0, entry.ttl - elapsed)
+                    return max(0.0, (entry.ttl or 0) - elapsed)
         return 0.0
 
     def clear(self):

@@ -163,7 +163,7 @@ class PerformanceMonitor:
                 # Collect open files count
                 try:
                     open_files = (
-                        self.process.num_handles()
+                        self.process.num_handles()  # type: ignore[attr-defined]
                         if hasattr(self.process, "num_handles")
                         else len(self.process.open_files())
                     )
@@ -203,7 +203,7 @@ class PerformanceMonitor:
             # Open files
             try:
                 open_files = (
-                    self.process.num_handles()
+                    self.process.num_handles()  # type: ignore[attr-defined]
                     if hasattr(self.process, "num_handles")
                     else len(self.process.open_files())
                 )

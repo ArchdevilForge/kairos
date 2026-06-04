@@ -223,7 +223,7 @@ class CycleDetector:
             scores[MarketPhase.AUTUMN] += 1  # Rotation/补涨
 
         # Find phase with highest score
-        phase = max(scores, key=scores.get)
+        phase = max(scores, key=lambda k: scores[k])  # type: ignore[return-value]
         total = sum(scores.values())
         confidence = scores[phase] / total if total > 0 else 0
 

@@ -78,3 +78,7 @@ venv = ".venv"
 pythonVersion = "3.12"
 pythonPlatform = "Linux"
 typeCheckingMode = "basic"
+
+[[tool.pyright.ignore]]
+include = "src/kairos/mcp"
+reportAttributeAccessIssue = false

@@ -161,13 +161,13 @@ class SupportResistance:
         avg_volume = np.mean(volumes[first_idx:last_idx+1]) if last_idx < len(volumes) else 0
 
         return PriceLevel(
-            price=avg_price,
+            price=float(avg_price),
             level_type=level_type,
             strength=strength,
             first_test_time=timestamps[first_idx] if first_idx < len(timestamps) else 0,
             last_test_time=timestamps[last_idx] if last_idx < len(timestamps) else 0,
             touch_count=touch_count,
-            volume_at_level=avg_volume
+            volume_at_level=float(avg_volume),
         )
 
     def _filter_levels(
@@ -179,13 +179,13 @@ class SupportResistance:
         """Filter and sort levels by relevance."""
         if level_type == "resistance":
             # Only keep levels above current price
-            levels = [l for l in levels if l.price > current_price]
+            levels = [lv for lv in levels if lv.price > current_price]
         else:
             # Only keep levels below current price
-            levels = [l for l in levels if l.price < current_price]
+            levels = [lv for lv in levels if lv.price < current_price]
 
         # Sort by distance from current price
-        levels.sort(key=lambda l: abs(l.price - current_price))
+        levels.sort(key=lambda lv: abs(lv.price - current_price))
 
         return levels
 

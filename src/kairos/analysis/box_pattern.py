@@ -19,6 +19,7 @@ class BoxStatus(str, Enum):
 @dataclass
 class BoxPattern:
     """Represents a box pattern."""
+
     symbol: str
     timeframe: str
     high: float  # Box upper boundary
@@ -78,7 +79,7 @@ class BoxDetector:
         lows: np.ndarray,
         closes: np.ndarray,
         volumes: np.ndarray,
-        timestamps: np.ndarray
+        timestamps: np.ndarray,
     ) -> list[BoxPattern]:
         """Detect box patterns in OHLCV data."""
         boxes = []
@@ -90,16 +91,16 @@ class BoxDetector:
         i = 0
         while i < len(highs) - self.min_bars:
             # Look for consolidation after a move
-            box = self._try_detect_box(
-                symbol, timeframe,
-                highs[i:], lows[i:], closes[i:],
-                volumes[i:], timestamps[i:]
-            )
+            box = self._try_detect_box(symbol, timeframe, highs[i:], lows[i:], closes[i:], volumes[i:], timestamps[i:])
 
             if box and box.status != BoxStatus.INVALID:
                 boxes.append(box)
                 # Skip ahead past this box
-                box_bars = int((box.end_time - box.start_time) / (timestamps[1] - timestamps[0])) if len(timestamps) > 1 else self.min_bars
+                box_bars = (
+                    int((box.end_time - box.start_time) / (timestamps[1] - timestamps[0]))
+                    if len(timestamps) > 1
+                    else self.min_bars
+                )
                 i += max(box_bars, self.min_bars)
             else:
                 i += 1
@@ -114,15 +115,15 @@ class BoxDetector:
         lows: np.ndarray,
         closes: np.ndarray,
         volumes: np.ndarray,
-        timestamps: np.ndarray
+        timestamps: np.ndarray,
     ) -> Optional[BoxPattern]:
         """Try to detect a single box pattern starting from the beginning of data."""
         if len(highs) < self.min_bars:
             return None
 
         # Find initial high and low
-        initial_high = np.max(highs[:self.min_bars])
-        initial_low = np.min(lows[:self.min_bars])
+        initial_high = np.max(highs[: self.min_bars])
+        initial_low = np.min(lows[: self.min_bars])
 
         # Box height must be reasonable (not too tight, not too wide)
         height_pct = (initial_high - initial_low) / initial_low * 100 if initial_low > 0 else 0
@@ -160,13 +161,13 @@ class BoxDetector:
         second_test_low = touch_low >= 2
 
         # Calculate convergence (range getting tighter)
-        recent_range = np.max(highs[max(0, box_end-5):box_end]) - np.min(lows[max(0, box_end-5):box_end])
+        recent_range = np.max(highs[max(0, box_end - 5) : box_end]) - np.min(lows[max(0, box_end - 5) : box_end])
         initial_range = box_high - box_low
         convergence = 1 - (recent_range / initial_range) if initial_range > 0 else 0
 
         # Check volume decline
-        early_vol = np.mean(volumes[:self.min_bars]) if len(volumes) >= self.min_bars else 0
-        recent_vol = np.mean(volumes[max(0, box_end-5):box_end])
+        early_vol = np.mean(volumes[: self.min_bars]) if len(volumes) >= self.min_bars else 0
+        recent_vol = np.mean(volumes[max(0, box_end - 5) : box_end])
         volume_declining = (recent_vol < early_vol * (1 - self.min_volume_decline_pct)) if early_vol > 0 else False
 
         # Determine status
@@ -188,15 +189,11 @@ class BoxDetector:
             second_test_high=second_test_high,
             second_test_low=second_test_low,
             convergence_pct=convergence,
-            volume_declining=volume_declining
+            volume_declining=volume_declining,
         )
 
     def check_breakout(
-        self,
-        box: BoxPattern,
-        current_price: float,
-        current_volume: float,
-        avg_volume: float
+        self, box: BoxPattern, current_price: float, current_volume: float, avg_volume: float
     ) -> Optional[BoxPattern]:
         """Check if a box has broken out."""
         if box.status in [BoxStatus.BREAKOUT_UP, BoxStatus.BREAKOUT_DOWN]:

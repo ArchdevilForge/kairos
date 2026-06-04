@@ -141,7 +141,7 @@ class ErrorHandler:
                                 raise
                             delay = min(base_delay * (backoff_factor**attempt), max_delay)
                             await asyncio.sleep(delay)
-                    raise last_exception
+                    assert last_exception is not None; raise last_exception
 
                 return async_wrapper
 
@@ -217,7 +217,7 @@ class ErrorHandler:
 
                 time.sleep(delay)
 
-        raise last_exception
+        assert last_exception is not None; raise last_exception
 
     async def retry_with_backoff_async(
         self,
@@ -269,7 +269,7 @@ class ErrorHandler:
 
                 await asyncio.sleep(delay)
 
-        raise last_exception
+        assert last_exception is not None; raise last_exception
 
     def circuit_breaker_protect(
         self, circuit_name: str, failure_threshold: int = 5, recovery_timeout: int = 60
