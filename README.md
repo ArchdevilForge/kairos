@@ -31,7 +31,7 @@ Kairos watches markets via WebSocket 24/7, detects anomalies (price velocity, vo
 | `detect_box_pattern` | Box pattern detection with convergence scoring |
 | `scan_symbols` | Symbol scanning with formula-based ranking |
 | `detect_signal` | Trading signal (breakout/pullback/reversal) |
-| `get_market_sentiment` | 恐惧贪婪指数 + market sentiment overview |
+| `get_market_sentiment` | Fear & Greed index + market sentiment |
 | `check_pyramiding` | Pyramiding condition analysis |
 | `check_exit_signals` | Exit signal detection (6 types) |
 | `blacklist_symbol` | Ban a noisy coin (Hermes-controlled blacklist) |
@@ -43,28 +43,17 @@ Kairos watches markets via WebSocket 24/7, detects anomalies (price velocity, vo
 | Skill | Description |
 |-------|-------------|
 | `kairos-harness` | **How Hermes uses kairos** — signal filtering, tool calling, decision flow |
-| `kairos-cycle` | 春夏秋冬周期判断 |
-| `kairos-scanner` | 量化选币 |
-| `kairos-box` | 箱体识别 |
-| `kairos-signal` | 交易信号 |
-| `kairos-market-sentiment` | 市场氛围 |
-| `kairos-pyramiding` | 加仓分析 |
-| `kairos-exit-signals` | 出场信号 |
-| `kairos-selection-formula` | 选币完美公式 |
-| `kairos-divergence` | 分歧理论 |
-| `kairos-new-coin` | 新币交易 |
-| `kairos-scanner-orchestrator` | 全自动扫描编排 |
-
-## Quick Start
-
-```bash
-git clone https://github.com/Xeron2000/kairos ~/kairos
-cd ~/kairos && uv sync
-export KAIROS_WEBHOOK_SECRET="<from hermes webhook subscribe>"
-uv run kairos-mcp
-```
-
-MCP server starts, connects to exchanges, begins scanning.
+| `kairos-cycle` | Market cycle analysis (春夏秋冬) |
+| `kairos-scanner` | Symbol scanner |
+| `kairos-box` | Box pattern detection |
+| `kairos-signal` | Trading signals |
+| `kairos-market-sentiment` | Market sentiment |
+| `kairos-pyramiding` | Pyramiding analysis |
+| `kairos-exit-signals` | Exit signals |
+| `kairos-selection-formula` | Selection formula |
+| `kairos-divergence` | Divergence theory |
+| `kairos-new-coin` | New coin trading |
+| `kairos-scanner-orchestrator` | Auto scan orchestrator |
 
 ## Philosophy
 
