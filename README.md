@@ -4,15 +4,11 @@
 
 Crypto futures trading signal harness for Hermes Agent. Based on Bit浪浪's trading philosophy.
 
-> 复制发送给 Hermes Agent，自动安装、配置、启动。点击展开看详情：
-
-<details><summary>📋 点这里展开完整指令（复制整段发送）</summary>
+> Copy and send to your Hermes Agent for automatic installation, configuration, and launch:
 
 ```
-请帮我安装并配置 kairos 加密货币交易信号 harness，服务器需有 git、uv、已配置 Telegram 和 webhook 的 Hermes。按顺序：1) git clone https://github.com/Xeron2000/kairos ~/kairos && cd ~/kairos && uv sync  2) mkdir -p ~/.hermes/skills/kairos && cp -r ~/kairos/skills/kairos-* ~/.hermes/skills/kairos/  3) 编辑 ~/.hermes/config.yaml，skills.external_dirs 改为 [~/.hermes/skills/kairos]  4) echo 'Y' | hermes webhook subscribe --name kairos-signals --url /webhooks/kairos-signals --prompt "你是交易信号过滤器。收到kairos推送的SignalEvent后：1.无意义/重复信号回复「静默」2.有价值的信号调用kairos MCP工具深度分析3.确认的高质量信号推送Telegram。详细规则见kairos-harness技能。" --delivery telegram（记下输出的 secret）  5) echo 'Y' | hermes mcp add kairos --command ~/kairos/run.sh --env KAIROS_WEBHOOK_SECRET=<把secret放这里>  6) systemctl --user restart hermes-gateway  7) 完成后告诉我是否成功。
+Please install and configure the kairos crypto trading signal harness. The server needs git, uv, and Hermes with Telegram and webhook platforms configured. Steps: 1) git clone https://github.com/Xeron2000/kairos ~/kairos && cd ~/kairos && uv sync  2) mkdir -p ~/.hermes/skills/kairos && cp -r ~/kairos/skills/kairos-* ~/.hermes/skills/kairos/  3) Edit ~/.hermes/config.yaml, set skills.external_dirs to [~/.hermes/skills/kairos]  4) echo 'Y' | hermes webhook subscribe --name kairos-signals --url /webhooks/kairos-signals --prompt "You are a trading signal filter. When receiving SignalEvents from kairos: 1. Reply '静默' for meaningless/duplicate signals 2. Call kairos MCP tools for deep analysis on valuable signals 3. Push confirmed high-quality signals to Telegram. See kairos-harness skill for detailed rules." --delivery telegram (save the secret)  5) echo 'Y' | hermes mcp add kairos --command ~/kairos/run.sh --env KAIROS_WEBHOOK_SECRET=<secret>  6) systemctl --user restart hermes-gateway  7) Tell me if successful.
 ```
-
-</details>
 
 ## Architecture
 
