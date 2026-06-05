@@ -8,6 +8,8 @@
 
 kairos是MCP服务器项目，通过anyio异步运行时驱动。主要模块包括交易所WebSocket连接、异常检测器、技术分析、Webhook信号推送。
 
+架构基线以 `docs/architecture.md` 为准。若本文件、README、Hermes skills 或旧任务文档与该基线冲突，优先按 `docs/architecture.md` 理解，并在后续任务中更新旧文档。
+
 **入口**：`uv run kairos-mcp` → `mcp_server.py:main()` → DataManager bootstrap → FastMCP stdio。
 
 ---

@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "Check that the documented architecture matches existing module boundaries or clearly marks future changes."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Check that the design avoids fake data, magic thresholds without config ownership, and ambiguous error behavior."}
+{"file": ".trellis/spec/guides/index.md", "reason": "Check cross-layer consistency between scanner, MCP tools, storage, webhook, and Hermes responsibilities."}
+{"file": ".trellis/tasks/06-06-architecture-baseline/research/best-practices.md", "reason": "Check that claims about reliability and trading controls are grounded in recorded research."}

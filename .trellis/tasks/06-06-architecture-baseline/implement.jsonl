@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "Documents current Kairos module boundaries and known architecture drift."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Documents project quality expectations and warns against fake/default market data."}
+{"file": ".trellis/spec/guides/index.md", "reason": "Cross-layer thinking applies because the architecture document spans MCP, scanner, storage, webhook, and Hermes boundaries."}
+{"file": ".trellis/tasks/06-06-architecture-baseline/research/best-practices.md", "reason": "Summarizes external evidence used to justify architecture decisions."}
