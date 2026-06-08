@@ -54,6 +54,17 @@ class TestInit:
         assert detector_custom.windows[0] == {"seconds": 10, "threshold": 0.3}
         assert detector_custom.cooldown_s == 30
 
+    def test_flat_config_from_data_manager(self):
+        d = PriceVelocityDetector(
+            {
+                "enabled": True,
+                "windows": [{"seconds": 15, "threshold": 0.4}],
+                "cooldownSeconds": 90,
+            }
+        )
+        assert d.windows == [{"seconds": 15, "threshold": 0.4}]
+        assert d.cooldown_s == 90
+
     def test_disabled_via_config(self):
         d = PriceVelocityDetector({"priceVelocity": {"enabled": False}})
         assert d.enabled is False
@@ -389,6 +400,11 @@ class TestUpdateConfig:
         detector.update_config({"priceVelocity": {"enabled": False, "cooldownSeconds": 120}})
         assert detector.enabled is False
         assert detector.cooldown_s == 120
+
+    def test_update_config_accepts_flat_section(self, detector):
+        detector.update_config({"enabled": False, "cooldownSeconds": 180})
+        assert detector.enabled is False
+        assert detector.cooldown_s == 180
 
     def test_update_config_empty_noop(self, detector):
         detector.update_config({})

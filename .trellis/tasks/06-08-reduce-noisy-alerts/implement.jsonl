@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Backend coding, config, and test quality rules for alert filtering changes."}
+{"file": ".trellis/spec/backend/mcp-scanner-contracts.md", "reason": "Webhook payload and kairos-mcp regression contracts touched by DataManager filtering."}

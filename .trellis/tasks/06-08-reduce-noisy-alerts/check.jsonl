@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Verify Python quality, config handling, and focused regression test coverage."}
+{"file": ".trellis/spec/backend/mcp-scanner-contracts.md", "reason": "Verify webhook/DataManager changes do not break kairos-mcp contracts."}

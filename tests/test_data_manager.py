@@ -104,6 +104,13 @@ class TestDataManagerConstruction:
         assert dm._velocity_config["cooldownSeconds"] == 120
         assert dm._spike_config["multiplier"] == 5.0
 
+    def test_alert_policy_defaults_to_kiss_price_velocity(self):
+        dm = DataManager({})
+        assert dm._alert_policy_enabled is True
+        assert dm._allowed_event_types == {"price_velocity"}
+        assert dm._min_price_change_pct == 1.2
+        assert dm._min_volume_ratio == 6.0
+
 
 # ── Tests: Symbol discovery ────────────────────────────────────
 
@@ -296,6 +303,81 @@ class TestRegisterDetectors:
 
 
 class TestAnomalyEventDispatch:
+    @pytest.mark.asyncio
+    async def test_alert_policy_allows_strong_price_velocity(self):
+        dm = DataManager(_make_config())
+        dm.running = True
+        dm._loop = asyncio.get_running_loop()
+
+        mock_wc = MagicMock()
+        mock_wc.send = AsyncMock()
+        dm._webhook = mock_wc
+
+        event = MagicMock()
+        event.symbol = "BTC/USDT:USDT"
+        event.event_type = "price_velocity"
+        event.data = {
+            "price": 65000.0,
+            "price_to": 65000.0,
+            "change_pct": 1.5,
+            "window_seconds": 30,
+            "threshold": 0.5,
+        }
+        event.severity = "MEDIUM"
+
+        dm._on_anomaly_event(event)
+        await asyncio.sleep(0.01)
+
+        assert mock_wc.send.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_alert_policy_drops_volume_spike_by_default(self):
+        dm = DataManager(_make_config())
+        dm.running = True
+        dm._loop = asyncio.get_running_loop()
+
+        mock_wc = MagicMock()
+        mock_wc.send = AsyncMock()
+        dm._webhook = mock_wc
+
+        event = MagicMock()
+        event.symbol = "ETH/USDT:USDT"
+        event.event_type = "volume_spike"
+        event.data = {"price": 3000.0, "ratio": 10.0, "window_minutes": 10}
+        event.severity = "HIGH"
+
+        dm._on_anomaly_event(event)
+        await asyncio.sleep(0.01)
+
+        assert mock_wc.send.call_count == 0
+
+    @pytest.mark.asyncio
+    async def test_alert_policy_drops_small_price_move(self):
+        dm = DataManager(_make_config())
+        dm.running = True
+        dm._loop = asyncio.get_running_loop()
+
+        mock_wc = MagicMock()
+        mock_wc.send = AsyncMock()
+        dm._webhook = mock_wc
+
+        event = MagicMock()
+        event.symbol = "SOL/USDT:USDT"
+        event.event_type = "price_velocity"
+        event.data = {
+            "price": 100.0,
+            "price_to": 100.5,
+            "change_pct": 0.8,
+            "window_seconds": 30,
+            "threshold": 0.5,
+        }
+        event.severity = "MEDIUM"
+
+        dm._on_anomaly_event(event)
+        await asyncio.sleep(0.01)
+
+        assert mock_wc.send.call_count == 0
+
     @pytest.mark.asyncio
     async def test_deduplicates_within_window(self):
         dm = DataManager(_make_config(dedupWindowSeconds=5))

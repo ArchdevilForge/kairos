@@ -21,6 +21,14 @@ _DEFAULT_CONFIG: Dict[str, Any] = {
         "topSymbols": 30,
         "refreshIntervalHours": 4,
         "dedupWindowSeconds": 5,
+        "symbolCooldownMinutes": 30,
+    },
+    "alertPolicy": {
+        "enabled": True,
+        "allowedEventTypes": ["price_velocity"],
+        "minSeverity": "MEDIUM",
+        "minPriceChangePct": 1.2,
+        "minVolumeRatio": 6.0,
     },
     "priceVelocity": {
         "enabled": True,

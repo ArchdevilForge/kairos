@@ -73,8 +73,8 @@ return make_mcp_envelope(
 
 ### 1. Scope / Trigger
 
-- Trigger: changes to legacy MCP tools in `src/kairos/mcp_server.py`, Hermes webhook payload fields, or `kairos-mcp` launcher dependencies.
-- Applies to `scan_symbols`, `SignalEvent.to_payload()`, HMAC signing, `main()`, `pyproject.toml`, `uv.lock`, and `run.sh`.
+- Trigger: changes to legacy MCP tools in `src/kairos/mcp_server.py`, Hermes webhook payload fields, real-time DataManager alert filtering, detector config wiring, or `kairos-mcp` launcher dependencies.
+- Applies to `scan_symbols`, `SignalEvent.to_payload()`, HMAC signing, `DataManager`, anomaly detectors, `main()`, `pyproject.toml`, `uv.lock`, and `run.sh`.
 - This scenario protects install/startup and candidate-filter regressions while the scanner-first `scan_market` surface continues to evolve.
 
 ### 2. Signatures
@@ -96,6 +96,8 @@ return make_mcp_envelope(
 - Candidate entries include `symbol`, `volume_24h`, `open_interest`, `age_days`, `price`, `change_24h_pct`, and `score` for the `perfect` formula.
 - `SignalEvent.to_payload()` must include `severity` and `change_pct` because Hermes uses them to prioritize anomaly hints.
 - HMAC signing uses compact canonical JSON via `json.dumps(payload, separators=(",", ":"), ensure_ascii=False)`.
+- `DataManager` must apply `alertPolicy` before webhook delivery and before mutating dedup/cooldown state. KISS defaults forward only stronger `price_velocity` events; permissive behavior must remain available by disabling the policy or widening event/severity thresholds.
+- Detector constructors and `update_config()` must accept both full top-level config mappings (`{"priceVelocity": ...}` / `{"volumeSpike": ...}`) and the flattened section mappings passed by `DataManager`.
 - Because `kairos-mcp` imports `mcp.server.fastmcp`, webhook imports `httpx`, and the entrypoint uses `anyio.run` at runtime, `mcp`, `httpx`, and `anyio` are base dependencies, not only optional extras or transitive assumptions.
 
 ### 4. Validation & Error Matrix
@@ -123,6 +125,8 @@ return make_mcp_envelope(
 - Mock-based OI tests must cover ticker-provided OI, OKX raw bulk OI, unavailable OI warnings, and legacy helper fetch failure behavior without requiring per-symbol OI fetch in the scan loop.
 - Mock-based scan tests must assert bulk tickers are used and per-symbol ticker fallback is only called when the bulk payload omits a symbol.
 - Webhook tests must assert `severity` and `change_pct` are included in payload and covered by canonical HMAC signing.
+- DataManager tests must assert `alertPolicy` drops disallowed event types and weak moves before webhook dispatch.
+- Detector tests must assert flattened DataManager section configs are honored.
 - Entrypoint/dependency tests must assert `mcp`, `httpx`, and `anyio` are base runtime dependencies and `run.sh` does not need `--extra hermes` to start `kairos-mcp`.
 - Coverage checks for this area must keep `src/kairos/mcp_server.py` at or above 80%.
 

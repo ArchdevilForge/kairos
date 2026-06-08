@@ -50,6 +50,28 @@ dataManager:
   symbolCooldownMinutes: 30
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# 提醒策略 / Alert Policy
+# ═══════════════════════════════════════════════════════════════════════════════
+alertPolicy:
+  # KISS 模式: 只把更像交易机会的强异动发给 Hermes
+  # KISS mode: only forward stronger opportunity-like anomalies to Hermes
+  enabled: true
+
+  # 只推价格异动；纯放量不代表方向，默认不推
+  # Only forward price velocity; volume-only spikes have no direction by default
+  allowedEventTypes:
+    - "price_velocity"
+
+  # 最低强度 / Minimum severity: LOW, MEDIUM, HIGH
+  minSeverity: "MEDIUM"
+
+  # 价格异动最低绝对涨跌幅 (%) / Minimum absolute price move (%)
+  minPriceChangePct: 1.2
+
+  # 如果允许 volume_spike，最低放量倍数 / Minimum ratio if volume_spike is allowed
+  minVolumeRatio: 6.0
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # 价格异动探测器 / Price Velocity Detector
 # ═══════════════════════════════════════════════════════════════════════════════
 priceVelocity:

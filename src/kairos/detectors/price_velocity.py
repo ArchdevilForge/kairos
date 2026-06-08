@@ -25,7 +25,7 @@ class PriceVelocityDetector(BaseDetector):
 
     def __init__(self, config: dict):
         super().__init__(config)
-        pv = config.get("priceVelocity", {})
+        pv = config.get("priceVelocity", config)
         self.enabled = pv.get("enabled", True)
         self.windows = pv.get("windows", _DEFAULT_WINDOWS)
         self.cooldown_s = pv.get("cooldownSeconds", _NOTIFY_COOLDOWN_S)
@@ -117,7 +117,7 @@ class PriceVelocityDetector(BaseDetector):
     def update_config(self, config: dict):
         with self._lock:
             super().update_config(config)
-            pv = config.get("priceVelocity", {})
+            pv = config.get("priceVelocity", config)
             self.enabled = pv.get("enabled", True)
             self.windows = pv.get("windows", _DEFAULT_WINDOWS)
             self.cooldown_s = pv.get("cooldownSeconds", _NOTIFY_COOLDOWN_S)

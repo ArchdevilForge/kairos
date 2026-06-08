@@ -117,6 +117,19 @@ class TestInit:
         assert detector_custom.window_minutes == 5
         assert detector_custom.min_notify_seconds == 30
 
+    def test_flat_config_from_data_manager(self):
+        d = VolumeSpikeDetector(
+            {
+                "enabled": True,
+                "multiplier": 7.0,
+                "windowMinutes": 15,
+                "minNotifyInterval": "10m",
+            }
+        )
+        assert d.multiplier == 7.0
+        assert d.window_minutes == 15
+        assert d.min_notify_seconds == 600
+
     def test_disabled_via_config(self):
         d = VolumeSpikeDetector({"volumeSpike": {"enabled": False}})
         assert d.enabled is False
@@ -378,6 +391,12 @@ class TestUpdateConfig:
         assert detector.multiplier == 5.0
         assert detector.window_minutes == 20
         assert detector.min_notify_seconds == 300
+
+    def test_update_config_accepts_flat_section(self, detector):
+        detector.update_config({"enabled": False, "multiplier": 8.0, "minNotifyInterval": "15m"})
+        assert detector.enabled is False
+        assert detector.multiplier == 8.0
+        assert detector.min_notify_seconds == 900
 
     def test_update_config_empty_noop(self, detector):
         detector.update_config({})

@@ -17,7 +17,7 @@ class VolumeSpikeDetector(BaseDetector):
 
     def __init__(self, config: dict):
         super().__init__(config)
-        vs = config.get("volumeSpike", {})
+        vs = config.get("volumeSpike", config)
         self.enabled = vs.get("enabled", True)
         self.multiplier = vs.get("multiplier", 3.0)
         self.window_minutes = vs.get("windowMinutes", 10)
@@ -120,7 +120,7 @@ class VolumeSpikeDetector(BaseDetector):
     def update_config(self, config: dict):
         with self._lock:
             super().update_config(config)
-            vs = config.get("volumeSpike", {})
+            vs = config.get("volumeSpike", config)
             self.enabled = vs.get("enabled", True)
             self.multiplier = vs.get("multiplier", 3.0)
             self.window_minutes = vs.get("windowMinutes", 10)

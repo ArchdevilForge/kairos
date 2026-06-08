@@ -138,6 +138,9 @@ class TestLoadConfig:
         assert result["priceVelocity"]["enabled"] is True
         assert result["dataManager"]["refreshIntervalHours"] == 4
         assert result["dataManager"]["dedupWindowSeconds"] == 5
+        assert result["dataManager"]["symbolCooldownMinutes"] == 30
+        assert result["alertPolicy"]["allowedEventTypes"] == ["price_velocity"]
+        assert result["alertPolicy"]["minPriceChangePct"] == 1.2
 
     def test_load_invalid_yaml_returns_defaults(self, tmp_path, caplog):
         """load_config with invalid YAML should return defaults and log error."""

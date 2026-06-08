@@ -30,6 +30,7 @@ _EXCHANGE_CLASSES = {
     "binance": BinanceExchange,
     "bybit": BybitExchange,
 }
+_SEVERITY_RANK = {"LOW": 1, "MEDIUM": 2, "HIGH": 3}
 
 
 # USDT perpetual symbol suffix patterns
@@ -56,6 +57,16 @@ class DataManager:
         # ── Detector configs ──
         self._velocity_config = config.get("priceVelocity", {})
         self._spike_config = config.get("volumeSpike", {})
+
+        # ── Alert policy ──
+        policy = config.get("alertPolicy", {})
+        self._alert_policy_enabled: bool = bool(policy.get("enabled", True))
+        self._allowed_event_types: set[str] | None = _normalize_event_types(
+            policy.get("allowedEventTypes", ["price_velocity"])
+        )
+        self._min_severity_rank: int = _severity_rank(policy.get("minSeverity", "MEDIUM"))
+        self._min_price_change_pct: float = _float_config(policy.get("minPriceChangePct", 1.2), 1.2)
+        self._min_volume_ratio: float = _float_config(policy.get("minVolumeRatio", 6.0), 6.0)
 
         # ── Dedup state ──
         self._last_sent: Dict[str, float] = {}  # "symbol__event_type" → timestamp
@@ -197,6 +208,9 @@ class DataManager:
             logger.debug("Blacklist drop: %s", event.symbol)
             return
 
+        if not self._passes_alert_policy(event):
+            return
+
         # Dedup key: symbol + event_type
         dedup_key = f"{event.symbol}__{event.event_type}"
         now = time.time()
@@ -237,6 +251,50 @@ class DataManager:
             asyncio.run_coroutine_threadsafe(
                 self._webhook.send(signal), self._loop
             )
+
+    def _passes_alert_policy(self, event) -> bool:
+        """Return True when an anomaly is worth forwarding to Hermes."""
+        if not self._alert_policy_enabled:
+            return True
+
+        event_type = str(event.event_type).strip().lower()
+        if self._allowed_event_types is not None and event_type not in self._allowed_event_types:
+            logger.debug("Alert policy drop: event_type=%s symbol=%s", event.event_type, event.symbol)
+            return False
+
+        if _severity_rank(event.severity, default=0) < self._min_severity_rank:
+            logger.debug(
+                "Alert policy drop: severity=%s symbol=%s event_type=%s",
+                event.severity,
+                event.symbol,
+                event.event_type,
+            )
+            return False
+
+        data = event.data or {}
+        if event_type == "price_velocity":
+            change_pct = abs(_float_config(data.get("change_pct", 0.0), 0.0))
+            if change_pct < self._min_price_change_pct:
+                logger.debug(
+                    "Alert policy drop: change_pct=%.2f min=%.2f symbol=%s",
+                    change_pct,
+                    self._min_price_change_pct,
+                    event.symbol,
+                )
+                return False
+
+        if event_type == "volume_spike":
+            ratio = _float_config(data.get("ratio", 0.0), 0.0)
+            if ratio < self._min_volume_ratio:
+                logger.debug(
+                    "Alert policy drop: ratio=%.2f min=%.2f symbol=%s",
+                    ratio,
+                    self._min_volume_ratio,
+                    event.symbol,
+                )
+                return False
+
+        return True
 
     @staticmethod
     def _build_condition(event) -> str:
@@ -288,3 +346,31 @@ class DataManager:
 def _is_usdt_perpetual(symbol: str) -> bool:
     """Check if a CCXT unified symbol is a USDT perpetual contract."""
     return symbol.endswith(":USDT") and "/USDT:" in symbol
+
+
+def _normalize_event_types(value: Any) -> set[str] | None:
+    """Normalize an event-type allowlist; empty means allow all types."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        raw_values = [value]
+    else:
+        try:
+            raw_values = list(value)
+        except TypeError:
+            raw_values = [value]
+    normalized = {str(item).strip().lower() for item in raw_values if str(item).strip()}
+    return normalized or None
+
+
+def _severity_rank(value: Any, default: int = _SEVERITY_RANK["LOW"]) -> int:
+    """Map LOW/MEDIUM/HIGH to sortable ranks."""
+    return _SEVERITY_RANK.get(str(value).strip().upper(), default)
+
+
+def _float_config(value: Any, default: float) -> float:
+    """Parse numeric config values with a safe fallback."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
