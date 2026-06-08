@@ -175,6 +175,18 @@ assert result["signal_strength"] == "high"
 assert result["confidence"] > 0.5
 ```
 
+### Git Ignore Hygiene
+
+Runtime/output directories should be anchored to the repository root in `.gitignore` when their names may also appear under `src/`. For example, use `/data/` for root runtime data, not `data/`, because the latter also ignores source packages such as `src/kairos/data/` and can hide untracked production code from commits.
+
+Before relying on `git status` after adding or moving source packages, verify suspicious paths explicitly:
+
+```bash
+git check-ignore -v src/kairos/data/data_manager.py src/kairos/data/__init__.py
+```
+
+Expected result for source code is no output with exit code `1`.
+
 ---
 
 ## Code Review Checklist
