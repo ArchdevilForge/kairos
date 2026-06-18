@@ -48,6 +48,7 @@ class SignalEvent:
         """Canonical JSON payload for Hermes webhook."""
         return {
             "event": self.event,
+            "event_type": self.event,
             "event_id": self.event_id,
             "timestamp": self.timestamp,
             "symbol": self.symbol,
@@ -119,6 +120,7 @@ class WebhookClient:
         headers = {
             "Content-Type": "application/json",
             "X-Webhook-Signature": signature,
+            "X-Request-ID": event.event_id,
             "User-Agent": "Kairos-Webhook/1.0",
         }
 
