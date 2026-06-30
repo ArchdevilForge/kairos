@@ -12,9 +12,8 @@ import numpy as np
 from kairos.analysis.box_pattern import BoxDetector
 from kairos.analysis.cycle import CycleDetector, MarketCycle
 from kairos.config import KairosArchitectureConfig, load_architecture_config, load_config
-from kairos.mcp_schema import make_mcp_envelope, normalize_symbol
+from kairos.exchanges import OkxExchange, BinanceExchange, BybitExchange
 from kairos.utils.blacklist import Blacklist
-from kairos.utils.get_exchange import get_exchange
 from kairos.utils.market_data import extract_last_price as _shared_extract_last_price
 from kairos.utils.market_data import extract_quote_volume as _shared_extract_quote_volume
 from kairos.utils.market_data import first_float as _shared_first_float
@@ -49,7 +48,7 @@ class Direction(str, Enum):
 
 
 class MarketScanner:
-    """Deterministic scanner and setup analyzer used by MCP tools."""
+    """Deterministic scanner and setup analyzer used by alert runners."""
 
     def __init__(
         self,
@@ -58,7 +57,7 @@ class MarketScanner:
         blacklist: BlacklistLike | None = None,
     ) -> None:
         self.config = config if isinstance(config, KairosArchitectureConfig) else load_architecture_config(config)
-        self.exchange_getter = exchange_getter or get_exchange
+        self.exchange_getter = exchange_getter or _get_exchange
         self.blacklist = blacklist or Blacklist()
         self.box_detector = BoxDetector()
         self.cycle_detector = CycleDetector()
@@ -73,7 +72,7 @@ class MarketScanner:
             wrapper, api = self._get_exchange_api(exchange_name)
         except Exception as exc:
             logger.exception("Scanner exchange init failed: %s", exchange_name)
-            return make_mcp_envelope(
+            return _make_signal_envelope(
                 success=False,
                 data={"exchange": exchange_name, "candidates": [], "setups": [], "qualified_setups": []},
                 warnings=warnings,
@@ -156,7 +155,7 @@ class MarketScanner:
         if btc_context:
             score["btc_cycle"] = btc_context["cycle"]["phase"]
 
-        return make_mcp_envelope(
+        return _make_signal_envelope(
             success=True,
             data=data,
             score=score,
@@ -172,9 +171,9 @@ class MarketScanner:
         errors: list[str] = []
 
         try:
-            canonical_symbol = normalize_symbol(symbol)
+            canonical_symbol = _normalize_symbol(symbol)
         except ValueError as exc:
-            return make_mcp_envelope(
+            return _make_signal_envelope(
                 success=False,
                 data={},
                 symbol=None,
@@ -185,7 +184,7 @@ class MarketScanner:
             wrapper, api = self._get_exchange_api(exchange_name)
         except Exception as exc:
             logger.exception("Symbol analysis exchange init failed: %s", exchange_name)
-            return make_mcp_envelope(
+            return _make_signal_envelope(
                 success=False,
                 data={"exchange": exchange_name},
                 symbol=canonical_symbol,
@@ -210,7 +209,7 @@ class MarketScanner:
                 reasons=["minimum liquidity not satisfied"],
                 warnings=[warning],
             )
-            return make_mcp_envelope(
+            return _make_signal_envelope(
                 success=True,
                 symbol=canonical_symbol,
                 data={"exchange": exchange_name, "candidate": candidate, "setup": setup},
@@ -242,7 +241,7 @@ class MarketScanner:
                     warnings=[],
                 )
 
-        return make_mcp_envelope(
+        return _make_signal_envelope(
             success=True,
             symbol=canonical_symbol,
             data={"exchange": exchange_name, "candidate": candidate, "setup": setup},
@@ -273,7 +272,7 @@ class MarketScanner:
             if not _looks_like_usdt_perpetual(raw_symbol, ticker):
                 continue
             try:
-                symbol = normalize_symbol(raw_symbol)
+                symbol = _normalize_symbol(raw_symbol)
             except ValueError:
                 continue
             if self.blacklist.is_blocked(symbol):
@@ -404,7 +403,7 @@ class MarketScanner:
 
     def _load_btc_context(self, wrapper: Any, api: Any) -> tuple[dict[str, Any] | None, list[str]]:
         warnings: list[str] = []
-        btc_symbol = normalize_symbol("BTC/USDT")
+        btc_symbol = _normalize_symbol("BTC/USDT")
         ohlcv = self._fetch_ohlcv(wrapper, api, btc_symbol, "1d", 100)
         if not ohlcv or len(ohlcv["closes"]) < 30:
             return None, ["BTC 1d OHLCV unavailable or insufficient; setup scoring withheld."]
@@ -827,13 +826,23 @@ class MarketScanner:
         }
 
 
+def _get_exchange(exchange_name: str):
+    if exchange_name.lower() == "okx":
+        return OkxExchange()
+    if exchange_name.lower() == "binance":
+        return BinanceExchange()
+    if exchange_name.lower() == "bybit":
+        return BybitExchange()
+    raise ValueError(f"Exchange {exchange_name} not supported.")
+
+
 def scan_market(
     config: Mapping[str, Any] | KairosArchitectureConfig | None = None,
     exchange_getter: ExchangeGetter | None = None,
     exchange: str | None = None,
     blacklist: BlacklistLike | None = None,
 ) -> dict[str, Any]:
-    """Public callable used by MCP and tests."""
+    """Public callable used by alert runners and tests."""
     raw_config = load_config() if config is None else config
     return MarketScanner(raw_config, exchange_getter=exchange_getter, blacklist=blacklist).scan_market(exchange=exchange)
 
@@ -845,7 +854,7 @@ def analyze_symbol_setup(
     exchange: str | None = None,
     blacklist: BlacklistLike | None = None,
 ) -> dict[str, Any]:
-    """Public callable used by MCP and tests."""
+    """Public callable used by alert runners and tests."""
     raw_config = load_config() if config is None else config
     return MarketScanner(raw_config, exchange_getter=exchange_getter, blacklist=blacklist).analyze_symbol_setup(
         symbol, exchange=exchange
@@ -968,4 +977,45 @@ def _cycle_to_dict(cycle: MarketCycle) -> dict[str, Any]:
         "volatility": cycle.volatility,
         "volume_trend": cycle.volume_trend,
         "funding_rates_avg": cycle.funding_rates_avg,
+    }
+
+
+def _normalize_symbol(symbol: str) -> str:
+    value = symbol.strip().upper()
+    if not value:
+        raise ValueError("symbol is required")
+    if value.endswith(":USDT") and "/USDT:" in value:
+        return value
+    if value.endswith("/USDT"):
+        return f"{value}:USDT"
+    if value.endswith("USDT") and "/" not in value and ":" not in value:
+        base = value[: -len("USDT")]
+        if not base:
+            raise ValueError(f"invalid USDT symbol: {symbol}")
+        return f"{base}/USDT:USDT"
+    raise ValueError(f"unsupported symbol format: {symbol}")
+
+
+def _make_signal_envelope(
+    *,
+    success: bool,
+    data: dict | None = None,
+    symbol: str | None = None,
+    score: dict | None = None,
+    reasons: list[str] | None = None,
+    warnings: list[str] | None = None,
+    errors: list[str] | None = None,
+    timestamp: str | None = None,
+) -> dict:
+    from datetime import datetime, timezone
+    return {
+        "success": success,
+        "schema_version": "1.0",
+        "timestamp": timestamp or datetime.now(timezone.utc).isoformat(),
+        "symbol": symbol,
+        "data": dict(data or {}),
+        "score": dict(score or {}),
+        "reasons": list(reasons or []),
+        "warnings": list(warnings or []),
+        "errors": list(errors or []),
     }

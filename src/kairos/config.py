@@ -30,6 +30,9 @@ _DEFAULT_CONFIG: Dict[str, Any] = {
             "volume_spike",
             "open_interest_change",
             "funding_rate_anomaly",
+            "long_short_ratio",
+            "liquidation",
+            "resonance",
         ],
         "minSeverity": "MEDIUM",
         "minPriceChangePct": 1.2,
@@ -69,6 +72,31 @@ _DEFAULT_CONFIG: Dict[str, Any] = {
             "minChangeAbs": 0.0003,
             "minNotifyInterval": "30m",
         },
+    },
+    "longShortRatio": {
+        "enabled": True,
+        "pollIntervalSeconds": 300,
+        "absThreshold": 80.0,
+        "zscoreThreshold": 2.5,
+        "zscoreWindow": 48,
+        "velocityThresholdPct": 15.0,
+        "minNotifyInterval": "30m",
+    },
+    "liquidation": {
+        "enabled": True,
+        "pollIntervalSeconds": 300,
+        "absThresholdUsd": 1000000,
+        "zscoreThreshold": 2.5,
+        "zscoreWindow": 48,
+        "imbalanceThreshold": 0.80,
+        "minNotifyInterval": "30m",
+    },
+    "resonanceScorer": {
+        "enabled": True,
+        "windowSeconds": 300,
+        "minDimensions": 2,
+        "minScore": 55,
+        "cooldownSeconds": 600,
     },
     "scanner": {
         "intervalSeconds": 300,
@@ -141,13 +169,9 @@ _DEFAULT_CONFIG: Dict[str, Any] = {
         "cleanupDays": 7,
         "multiTimeframeScoreThreshold": 8.0,
     },
-    "webhook": {
-        "url": "http://localhost:8644/webhooks/kairos-signals",
-        "secretEnv": "KAIROS_WEBHOOK_SECRET",
-        "schemaVersion": "1.1",
-        "maxRetries": 5,
-        "initialBackoffSeconds": 0.5,
-        "maxBackoffSeconds": 45.0,
+    "telegram": {
+        "enabled": True,
+        "parseMode": "HTML",
     },
 }
 
@@ -248,15 +272,11 @@ class ChartConfig:
 
 
 @dataclass(frozen=True)
-class WebhookConfig:
-    """Webhook delivery configuration for auxiliary anomaly hints."""
+class TelegramConfig:
+    """Telegram delivery configuration for hard-data alerts."""
 
-    url: str = "http://localhost:8644/webhooks/kairos-signals"
-    secret_env: str = "KAIROS_WEBHOOK_SECRET"
-    schema_version: str = "1.1"
-    max_retries: int = 5
-    initial_backoff_seconds: float = 0.5
-    max_backoff_seconds: float = 45.0
+    enabled: bool = True
+    parse_mode: str = "HTML"
 
 
 @dataclass(frozen=True)
@@ -269,7 +289,7 @@ class KairosArchitectureConfig:
     risk: RiskConfig = field(default_factory=RiskConfig)
     storage: StorageConfig = field(default_factory=StorageConfig)
     charts: ChartConfig = field(default_factory=ChartConfig)
-    webhook: WebhookConfig = field(default_factory=WebhookConfig)
+    telegram: TelegramConfig = field(default_factory=TelegramConfig)
 
 
 def load_config(path: Path | None = None) -> Dict[str, Any]:
@@ -320,7 +340,7 @@ def load_architecture_config(config: Mapping[str, Any] | None = None) -> KairosA
     risk = raw.get("risk", {})
     storage = raw.get("storage", {})
     charts = raw.get("charts", {})
-    webhook = raw.get("webhook", {})
+    telegram = raw.get("telegram", {})
 
     return KairosArchitectureConfig(
         scanner=ScannerConfig(
@@ -373,12 +393,8 @@ def load_architecture_config(config: Mapping[str, Any] | None = None) -> KairosA
             cleanup_days=int(charts.get("cleanupDays", 7)),
             multi_timeframe_score_threshold=float(charts.get("multiTimeframeScoreThreshold", 8.0)),
         ),
-        webhook=WebhookConfig(
-            url=str(webhook.get("url", "http://localhost:8644/webhooks/kairos-signals")),
-            secret_env=str(webhook.get("secretEnv", "KAIROS_WEBHOOK_SECRET")),
-            schema_version=str(webhook.get("schemaVersion", "1.1")),
-            max_retries=int(webhook.get("maxRetries", 5)),
-            initial_backoff_seconds=float(webhook.get("initialBackoffSeconds", 0.5)),
-            max_backoff_seconds=float(webhook.get("maxBackoffSeconds", 45.0)),
+        telegram=TelegramConfig(
+            enabled=bool(telegram.get("enabled", True)),
+            parse_mode=str(telegram.get("parseMode", "HTML")),
         ),
     )

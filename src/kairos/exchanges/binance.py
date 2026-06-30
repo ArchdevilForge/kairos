@@ -78,8 +78,7 @@ class BinanceExchange(BaseExchange):
                                         price,
                                     )
 
-                                # Store historical data using base class method
-                                self._store_historical_price(canonical_symbol, price)
+                                # Notify detectors
                                 self._notify_detectors_price(canonical_symbol, price)
 
                                 # Volume tracking (24h quote volume in USDT)

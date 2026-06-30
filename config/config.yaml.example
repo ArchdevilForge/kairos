@@ -1,96 +1,45 @@
-# ╔══════════════════════════════════════════════════════════════════════════════╗
-# ║                    Kairos 交易分析系统配置                                   ║
-# ║                    Kairos Trading Analysis Config                           ║
-# ╚══════════════════════════════════════════════════════════════════════════════╝
+# Kairos human-controlled futures alert config
 #
-# 📖 使用说明 / Usage:
-#    1. 复制此文件为 config.yaml / Copy this file to config.yaml
-#    2. Kairos MCP server 使用 CCXT 公开 WebSocket 拉取数据，无需 API Key
-#       Kairos MCP server uses CCXT public WebSocket — no API key required
-#    3. 运行 `uv run kairos-mcp` 启动 MCP Server / Start MCP server
-#
-# ═══════════════════════════════════════════════════════════════════════════════
+# Usage:
+#   1. Copy this file to your Kairos config path.
+#   2. Export TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.
+#   3. Run `uv run kairos-watch` for realtime alerts.
+#   4. Run `uv run kairos-alert` from cron/systemd timer for scanner summaries.
 
-# 默认交易所 / Default Exchange
-# ─────────────────────────────
-# 可选值 / Options: "okx", "bybit", "binance"
 exchange: "okx"
-
-# 默认时间周期 / Default Timeframe
-# ─────────────────────────────────
-# 可选值 / Options: "1m", "5m", "15m", "1h", "1d"
 defaultTimeframe: "1d"
-
-# 时区 / Timezone
 notificationTimezone: "Asia/Shanghai"
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# Data Manager 配置 / Data Manager Configuration
-# ═══════════════════════════════════════════════════════════════════════════════
+telegram:
+  enabled: true
+  parseMode: "HTML"
+
 dataManager:
-  # 交易所列表 / Exchange list
-  # 可选值 / Options: ["okx", "binance", "bybit"]
   exchanges:
     - "okx"
     - "binance"
     - "bybit"
-
-  # 每个交易所订阅的 Top N 合约 / Top N symbols per exchange
-  # Low volume = no opportunity. Top 30 keeps only liquid markets.
   topSymbols: 30
-
-  # Symbol 刷新间隔 (小时) / Symbol refresh interval (hours)
   refreshIntervalHours: 4
-
-  # 跨交易所信号去重窗口 (秒) / Cross-exchange dedup window (seconds)
   dedupWindowSeconds: 5
-
-  # 同 symbol 最小推送间隔 (分钟) / Min interval between signals for same symbol
-  # 避免同一币短时间内反复推送 / Prevents spam from same coin
   symbolCooldownMinutes: 30
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# 提醒策略 / Alert Policy
-# ═══════════════════════════════════════════════════════════════════════════════
 alertPolicy:
-  # KISS 模式: 只把更像交易机会的期货关键异动发给 Hermes
-  # KISS mode: only forward stronger opportunity-like futures anomalies to Hermes
   enabled: true
-
-  # 任一关键指标异动都可进入 Hermes 分析；阈值和冷却负责降噪
-  # Any key futures metric anomaly can enter Hermes analysis; thresholds/cooldowns reduce noise
   allowedEventTypes:
     - "price_velocity"
     - "volume_spike"
     - "open_interest_change"
     - "funding_rate_anomaly"
-
-  # 最低强度 / Minimum severity: LOW, MEDIUM, HIGH
   minSeverity: "MEDIUM"
-
-  # 价格异动最低绝对涨跌幅 (%) / Minimum absolute price move (%)
   minPriceChangePct: 1.2
-
-  # 如果允许 volume_spike，最低放量倍数 / Minimum ratio if volume_spike is allowed
   minVolumeRatio: 6.0
-
-  # 持仓异动最低绝对变化 (%) / Minimum absolute open-interest change (%)
   minOpenInterestChangePct: 5.0
-
-  # 资金费率异常阈值 / Funding-rate anomaly thresholds
-  # 0.0005 = 0.05%; 0.0003 = 0.03%
   minFundingRateAbs: 0.0005
   minFundingRateChangeAbs: 0.0003
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# 价格异动探测器 / Price Velocity Detector
-# ═══════════════════════════════════════════════════════════════════════════════
 priceVelocity:
   enabled: true
-
-  # 检测窗口 / Detection windows
-  # seconds: 时间窗口 / Time window
-  # threshold: 触发阈值 (%) / Trigger threshold (%)
   windows:
     - seconds: 30
       threshold: 0.5
@@ -98,60 +47,96 @@ priceVelocity:
       threshold: 0.8
     - seconds: 120
       threshold: 1.2
-
-  # 同 symbol+window 重复通知间隔 (秒) / Cooldown per symbol+window (seconds)
   cooldownSeconds: 60
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# 成交量异动探测器 / Volume Spike Detector
-# ═══════════════════════════════════════════════════════════════════════════════
 volumeSpike:
   enabled: true
-
-  # 触发倍数: 近期成交量 / 历史均量 / Trigger ratio: recent / baseline
   multiplier: 3.0
-
-  # 对比窗口 (分钟) / Baseline window (minutes)
   windowMinutes: 10
-
-  # 冷启动预热时间；未积累足够基线前不触发放量事件
-  # Cold-start warmup; volume spikes need enough baseline history first
   minHistorySeconds: 600
-
-  # 同 symbol 最小通知间隔 / Min interval between notifications per symbol
-  # 支持格式 / Supported formats: "30s", "2m", "1h"
   minNotifyInterval: "2m"
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# 合约指标异动探测器 / Futures Metrics Detector
-# ═══════════════════════════════════════════════════════════════════════════════
 futuresMetrics:
   enabled: true
-
-  # REST 轮询间隔 (秒) / REST polling interval (seconds)
   pollIntervalSeconds: 300
-
-  # 部分交易所不支持批量资金费率时，是否按 symbol 兜底拉取
-  # Fallback to per-symbol funding-rate requests when bulk data is unavailable
   fetchFundingPerSymbol: true
-
   openInterest:
     enabled: true
-
-    # 持仓量相对上次采样变化阈值 (%) / Open-interest change vs previous sample (%)
     minChangePct: 5.0
-
-    # 同 symbol 持仓异动最小通知间隔 / Min interval per symbol for OI anomalies
     minNotifyInterval: "30m"
-
   fundingRate:
     enabled: true
-
-    # 资金费率绝对值异常阈值 / Absolute funding-rate threshold
     absRateThreshold: 0.0005
-
-    # 相对上次采样的资金费率变化阈值 / Funding-rate shift vs previous sample
     minChangeAbs: 0.0003
-
-    # 同 symbol 资金费率异动最小通知间隔 / Min interval per symbol for funding anomalies
     minNotifyInterval: "30m"
+
+scanner:
+  intervalSeconds: 300
+  universeSize: 30
+  candidateLimit: 20
+  deepAnalysisLimit: 10
+  totalTimeoutSeconds: 75
+  exchangeRequestTimeoutSeconds: 8
+  symbolAnalysisTimeoutSeconds: 12
+  timeframes:
+    - "1d"
+    - "4h"
+    - "15m"
+  generateChartsByDefault: false
+
+exchanges:
+  primary: "okx"
+  backups:
+    - "binance"
+    - "bybit"
+  rateLimit: true
+  canonicalQuote: "USDT"
+  settle: "USDT"
+
+scoring:
+  candidateWeights:
+    quoteVolume: 4.0
+    priceVelocity: 2.0
+    openInterest: 1.0
+    funding: 1.0
+    relativeStrength: 2.0
+  setupWeights:
+    dailyTrend: 1.5
+    structure: 2.0
+    entryTrigger: 2.0
+    btcResonance: 1.0
+    marketCycle: 1.0
+    volumeConfirmation: 1.0
+    riskReward: 1.5
+  cycleThresholds:
+    spring: 5.5
+    summer: 5.5
+    autumn: 6.5
+    winter: 7.5
+  minimumLiquidityQuoteVolume: 30000000.0
+  minimumRiskReward: 1.8
+  strictRiskReward: 2.2
+  shortThresholdPremium: 0.5
+
+risk:
+  maxPositionPct:
+    major: 33.0
+    altcoin: 33.0
+  maxLeverage:
+    major: 10.0
+    altcoin: 5.0
+  weakCyclePositionMultiplier: 0.5
+  shortPositionMultiplier: 0.75
+  inverseCyclePositionMultiplier: 0.5
+
+storage:
+  databasePath: "~/.local/share/kairos/kairos.db"
+  retentionDays: 90
+  jsonlExport: false
+  jsonlPath: ""
+
+charts:
+  defaultChartCount: 1
+  outputPath: "~/.local/share/kairos/charts"
+  cleanupDays: 7
+  multiTimeframeScoreThreshold: 8.0

@@ -6,11 +6,11 @@
 
 ## Overview
 
-kairos是MCP服务器项目，通过anyio异步运行时驱动。主要模块包括交易所WebSocket连接、异常检测器、技术分析、Webhook信号推送。
+kairos is a human-controlled crypto futures alert system. It reads exchange market data, runs deterministic detectors/scanners, and sends Telegram hard-data alerts. It does not use LLMs and does not place orders.
 
-架构基线以 `docs/architecture.md` 为准。若本文件、README、Hermes skills 或旧任务文档与该基线冲突，优先按 `docs/architecture.md` 理解，并在后续任务中更新旧文档。
+`docs/architecture.md` is the architecture source of truth. If older task documents conflict with it, update the old document instead of reviving removed systems.
 
-**入口**：`uv run kairos-mcp` → `mcp_server.py:main()` → DataManager bootstrap → FastMCP stdio。
+**Entrypoints**: `uv run kairos-watch` for realtime alerts, `uv run kairos-alert` for one-shot scanner summaries, and `uv run kairos-backtest` for local backtests.
 
 ---
 
@@ -19,35 +19,35 @@ kairos是MCP服务器项目，通过anyio异步运行时驱动。主要模块包
 ```
 src/kairos/
 ├── __init__.py
-├── config.py                  # YAML配置加载
-├── mcp_server.py              # MCP服务器主入口（7个工具）
-├── paths.py                   # XDG路径配置
-├── webhook.py                 # Hermes Webhook客户端
-├── analysis/                  # 技术分析
+├── alert_runner.py            # one-shot scanner Telegram alerts
+├── backtest.py                # local backtest utilities
+├── config.py                  # YAML config loading
+├── paths.py                   # XDG paths
+├── scanner.py                 # deterministic market scanner
+├── signal_schema.py           # shared scanner response envelope
+├── telegram.py                # Telegram sender and alert formatter
+├── watch_runner.py            # realtime alert runner
+├── analysis/                  # technical analysis
 │   ├── __init__.py
 │   ├── box_pattern.py         # 箱体识别算法
 │   ├── cycle.py               # 春夏秋冬周期判断
 │   └── support_resistance.py  # 支撑阻力位
-├── data/                      # 数据管理
+├── data/                      # data clients and orchestration
 │   ├── __init__.py
-│   └── data_manager.py        # WS编排 + 探测器 + Webhook分发
-├── detectors/                 # 异常检测器
+│   ├── coinglass_client.py    # optional hard-data context
+│   └── data_manager.py        # WS orchestration + detectors + Telegram alerts
+├── detectors/                 # anomaly detectors
 │   ├── __init__.py
 │   ├── base.py                # 基础检测器 + AnomalyEvent
 │   ├── price_velocity.py      # 价格速度检测
 │   └── volume_spike.py        # 成交量异常检测
-├── exchanges/                 # 交易所接口
+├── exchanges/                 # exchange adapters
 │   ├── __init__.py
 │   ├── base.py                # 基础交易所类（CCXT封装）
 │   ├── binance.py             # Binance WS实现
 │   ├── bybit.py               # Bybit WS实现
 │   └── okx.py                 # OKX WS实现
-├── mcp/                       # MCP子服务器（独立进程）
-│   ├── __init__.py
-│   ├── analysis_server.py     # 分析服务
-│   ├── chart_server.py        # 图表生成服务
-│   └── coinglass_server.py    # Coinglass RSI热力图
-└── utils/                     # 工具模块
+└── utils/                     # utilities
     ├── __init__.py
     ├── cache_manager.py        # 缓存管理
     ├── error_handler.py        # 错误处理 + 断路器 + 重试
@@ -63,41 +63,37 @@ src/kairos/
 OKX/Binance/Bybit WS feeds
     │
     ▼
-DataManager (WebSocket threads)
+DataManager
     │
     ▼
 PriceVelocityDetector · VolumeSpikeDetector (per-exchange)
     │  AnomalyEvent callback
     ▼
-DataManager._on_anomaly_event (5s dedup + webhook send)
+DataManager._on_anomaly_event (5s dedup + Telegram dispatch)
     │
     ▼
-Hermes Webhook → LLM filter → Telegram
+Telegram hard-data alert
     │
     ▼
-Hermes skills call MCP tools (get_market_cycle, detect_box_pattern, etc.)
+Human chart review and decision
 ```
 
 ---
 
 ## Removed Modules
 
-以下模块已删除（转为纯MCP架构，无CLI/交易/Telegram通知）：
+These modules are intentionally absent:
 
-- `app/` — CLI入口、监控运行器
-- `core/` — 配置管理、通知器、价格哨兵
-- `notifications/` — Telegram通知
-- `trades/` — 交易执行
-- `arbitrage/` — 套利策略
-- `utils/send_notifications.py` — 通知分发
-- `utils/config_validator.py` — 配置验证器
-- `utils/default_symbols.py` — 默认交易对
+- `src/kairos/mcp/` and `src/kairos/mcp_server.py` — no production MCP layer.
+- `src/kairos/webhook.py` — Telegram is sent directly, not through webhook relays.
+- `skills/` — no assistant skill layer in the trading path.
+- Trading execution modules — final decisions and order placement stay human-only.
 
 ---
 
 ## Naming Conventions
 
-- 文件名：`snake_case.py`
-- 类名：`PascalCase`
-- 函数名：`snake_case`
-- 私有属性：`_leading_underscore`
+- File names: `snake_case.py`
+- Classes: `PascalCase`
+- Functions: `snake_case`
+- Private attributes: `_leading_underscore`

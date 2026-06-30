@@ -82,7 +82,7 @@ class BoxDetector:
         timestamps: np.ndarray,
     ) -> list[BoxPattern]:
         """Detect box patterns in OHLCV data."""
-        boxes = []
+        boxes: list[BoxPattern] = []
 
         if len(highs) < self.min_bars:
             return boxes

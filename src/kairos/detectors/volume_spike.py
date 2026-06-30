@@ -28,7 +28,7 @@ class VolumeSpikeDetector(BaseDetector):
         self._volume_history: dict[str, deque] = {}
         # symbol -> last notification timestamp
         self._last_notify: dict[str, float] = {}
-        # symbol -> latest price from the ticker stream, used as webhook context.
+        # symbol -> latest price from the ticker stream, used as alert context.
         self._last_price: dict[str, float] = {}
 
     # ------------------------------------------------------------------

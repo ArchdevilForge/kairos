@@ -162,7 +162,7 @@ def test_scan_market_uses_backup_when_primary_has_no_candidates():
 
 
 def test_scan_market_returns_envelope_when_ticker_fetch_raises():
-    """Ticker API failures should not escape the standardized MCP envelope."""
+    """Ticker API failures should not escape the standardized signal envelope."""
     result = scan_market(
         config={},
         exchange_getter=_exchange_getter(RaisingExchange(raise_tickers=True)),

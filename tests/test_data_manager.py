@@ -201,10 +201,10 @@ class TestLifecycle:
         mock_ex = _mock_exchange()
 
         with patch("kairos.data.data_manager._EXCHANGE_CLASSES", {"okx": lambda: mock_ex}):
-            with patch("kairos.data.data_manager.WebhookClient") as mock_wc_cls:
-                mock_wc = MagicMock()
-                mock_wc.is_configured.return_value = False
-                mock_wc_cls.return_value = mock_wc
+            with patch("kairos.data.data_manager.TelegramClient") as mock_tg_cls:
+                mock_tg = MagicMock()
+                mock_tg.is_configured.return_value = False
+                mock_tg_cls.return_value = mock_tg
 
                 with patch("kairos.data.data_manager.PriceVelocityDetector") as mock_pv_cls:
                     with patch("kairos.data.data_manager.VolumeSpikeDetector") as mock_vs_cls:
@@ -239,16 +239,16 @@ class TestLifecycle:
         mock_ex.stop_websocket = MagicMock()
         dm.exchanges = {"okx": mock_ex}
 
-        with patch("kairos.data.data_manager.WebhookClient") as mock_wc_cls:
-            mock_wc = MagicMock()
-            mock_wc.close = AsyncMock()
-            mock_wc_cls.return_value = mock_wc
-            dm._webhook = mock_wc
+        with patch("kairos.data.data_manager.TelegramClient") as mock_tg_cls:
+            mock_tg = MagicMock()
+            mock_tg.close = AsyncMock()
+            mock_tg_cls.return_value = mock_tg
+            dm._telegram = mock_tg
 
             await dm.stop()
 
         mock_ex.stop_websocket.assert_called_once()
-        mock_wc.close.assert_called_once()
+        mock_tg.close.assert_called_once()
         assert dm.running is False
 
     @pytest.mark.asyncio
@@ -259,15 +259,15 @@ class TestLifecycle:
         mock_ex.stop_websocket.side_effect = RuntimeError("stop failed")
         dm.exchanges = {"okx": mock_ex}
 
-        with patch("kairos.data.data_manager.WebhookClient") as mock_wc_cls:
-            mock_wc = MagicMock()
-            mock_wc.close = AsyncMock()
-            mock_wc_cls.return_value = mock_wc
-            dm._webhook = mock_wc
+        with patch("kairos.data.data_manager.TelegramClient") as mock_tg_cls:
+            mock_tg = MagicMock()
+            mock_tg.close = AsyncMock()
+            mock_tg_cls.return_value = mock_tg
+            dm._telegram = mock_tg
 
             # Should not raise despite exchange error
             await dm.stop()
-        mock_wc.close.assert_called_once()
+        mock_tg.close.assert_called_once()
 
 
 # ── Tests: Register detectors ──────────────────────────────────
@@ -401,9 +401,9 @@ class TestAnomalyEventDispatch:
         dm.running = True
         dm._loop = asyncio.get_running_loop()
 
-        mock_wc = MagicMock()
-        mock_wc.send = AsyncMock()
-        dm._webhook = mock_wc
+        mock_tg = MagicMock()
+        mock_tg.send_event = AsyncMock()
+        dm._telegram = mock_tg
 
         event = MagicMock()
         event.symbol = "BTC/USDT:USDT"
@@ -420,7 +420,7 @@ class TestAnomalyEventDispatch:
         dm._on_anomaly_event(event)
         await asyncio.sleep(0.01)
 
-        assert mock_wc.send.call_count == 1
+        assert mock_tg.send_event.call_count == 1
 
     @pytest.mark.asyncio
     async def test_alert_policy_allows_strong_volume_spike_by_default(self):
@@ -428,9 +428,9 @@ class TestAnomalyEventDispatch:
         dm.running = True
         dm._loop = asyncio.get_running_loop()
 
-        mock_wc = MagicMock()
-        mock_wc.send = AsyncMock()
-        dm._webhook = mock_wc
+        mock_tg = MagicMock()
+        mock_tg.send_event = AsyncMock()
+        dm._telegram = mock_tg
 
         event = MagicMock()
         event.symbol = "ETH/USDT:USDT"
@@ -441,7 +441,7 @@ class TestAnomalyEventDispatch:
         dm._on_anomaly_event(event)
         await asyncio.sleep(0.01)
 
-        assert mock_wc.send.call_count == 1
+        assert mock_tg.send_event.call_count == 1
 
     @pytest.mark.asyncio
     async def test_alert_policy_drops_small_price_move(self):
@@ -449,9 +449,9 @@ class TestAnomalyEventDispatch:
         dm.running = True
         dm._loop = asyncio.get_running_loop()
 
-        mock_wc = MagicMock()
-        mock_wc.send = AsyncMock()
-        dm._webhook = mock_wc
+        mock_tg = MagicMock()
+        mock_tg.send_event = AsyncMock()
+        dm._telegram = mock_tg
 
         event = MagicMock()
         event.symbol = "SOL/USDT:USDT"
@@ -468,7 +468,7 @@ class TestAnomalyEventDispatch:
         dm._on_anomaly_event(event)
         await asyncio.sleep(0.01)
 
-        assert mock_wc.send.call_count == 0
+        assert mock_tg.send_event.call_count == 0
 
     @pytest.mark.asyncio
     async def test_alert_policy_allows_open_interest_change_by_default(self):
@@ -476,9 +476,9 @@ class TestAnomalyEventDispatch:
         dm.running = True
         dm._loop = asyncio.get_running_loop()
 
-        mock_wc = MagicMock()
-        mock_wc.send = AsyncMock()
-        dm._webhook = mock_wc
+        mock_tg = MagicMock()
+        mock_tg.send_event = AsyncMock()
+        dm._telegram = mock_tg
 
         event = MagicMock()
         event.symbol = "BTC/USDT:USDT"
@@ -494,7 +494,7 @@ class TestAnomalyEventDispatch:
         dm._on_anomaly_event(event)
         await asyncio.sleep(0.01)
 
-        assert mock_wc.send.call_count == 1
+        assert mock_tg.send_event.call_count == 1
 
     @pytest.mark.asyncio
     async def test_alert_policy_allows_funding_rate_shift_by_default(self):
@@ -502,9 +502,9 @@ class TestAnomalyEventDispatch:
         dm.running = True
         dm._loop = asyncio.get_running_loop()
 
-        mock_wc = MagicMock()
-        mock_wc.send = AsyncMock()
-        dm._webhook = mock_wc
+        mock_tg = MagicMock()
+        mock_tg.send_event = AsyncMock()
+        dm._telegram = mock_tg
 
         event = MagicMock()
         event.symbol = "ETH/USDT:USDT"
@@ -521,7 +521,7 @@ class TestAnomalyEventDispatch:
         dm._on_anomaly_event(event)
         await asyncio.sleep(0.01)
 
-        assert mock_wc.send.call_count == 1
+        assert mock_tg.send_event.call_count == 1
 
     @pytest.mark.asyncio
     async def test_symbol_cooldown_does_not_block_different_event_types(self):
@@ -529,9 +529,9 @@ class TestAnomalyEventDispatch:
         dm.running = True
         dm._loop = asyncio.get_running_loop()
 
-        mock_wc = MagicMock()
-        mock_wc.send = AsyncMock()
-        dm._webhook = mock_wc
+        mock_tg = MagicMock()
+        mock_tg.send_event = AsyncMock()
+        dm._telegram = mock_tg
 
         price_event = MagicMock()
         price_event.symbol = "BTC/USDT:USDT"
@@ -560,7 +560,7 @@ class TestAnomalyEventDispatch:
         dm._on_anomaly_event(oi_event)
         await asyncio.sleep(0.01)
 
-        assert mock_wc.send.call_count == 2
+        assert mock_tg.send_event.call_count == 2
 
     @pytest.mark.asyncio
     async def test_symbol_cooldown_still_blocks_same_event_type_repeats(self):
@@ -568,9 +568,9 @@ class TestAnomalyEventDispatch:
         dm.running = True
         dm._loop = asyncio.get_running_loop()
 
-        mock_wc = MagicMock()
-        mock_wc.send = AsyncMock()
-        dm._webhook = mock_wc
+        mock_tg = MagicMock()
+        mock_tg.send_event = AsyncMock()
+        dm._telegram = mock_tg
 
         event1 = MagicMock()
         event1.symbol = "BTC/USDT:USDT"
@@ -600,7 +600,7 @@ class TestAnomalyEventDispatch:
         dm._on_anomaly_event(event2)
         await asyncio.sleep(0.01)
 
-        assert mock_wc.send.call_count == 1
+        assert mock_tg.send_event.call_count == 1
 
     @pytest.mark.asyncio
     async def test_deduplicates_within_window(self):
@@ -608,9 +608,9 @@ class TestAnomalyEventDispatch:
         dm.running = True
         dm._loop = asyncio.get_running_loop()
 
-        mock_wc = MagicMock()
-        mock_wc.send = AsyncMock()
-        dm._webhook = mock_wc
+        mock_tg = MagicMock()
+        mock_tg.send_event = AsyncMock()
+        dm._telegram = mock_tg
 
         event1 = MagicMock()
         event1.symbol = "BTC/USDT:USDT"
@@ -644,8 +644,8 @@ class TestAnomalyEventDispatch:
         # Give async callback a moment
         await asyncio.sleep(0.01)
 
-        # Only one signal sent to webhook
-        assert mock_wc.send.call_count == 1
+        # Only one signal sent to telegram
+        assert mock_tg.send_event.call_count == 1
 
     @pytest.mark.asyncio
     async def test_different_symbols_not_deduped(self):
@@ -653,9 +653,9 @@ class TestAnomalyEventDispatch:
         dm.running = True
         dm._loop = asyncio.get_running_loop()
 
-        mock_wc = MagicMock()
-        mock_wc.send = AsyncMock()
-        dm._webhook = mock_wc
+        mock_tg = MagicMock()
+        mock_tg.send_event = AsyncMock()
+        dm._telegram = mock_tg
 
         event_btc = MagicMock(
             symbol="BTC/USDT:USDT",
@@ -675,7 +675,7 @@ class TestAnomalyEventDispatch:
 
         await asyncio.sleep(0.01)
         # Both should be dispatched (different symbols)
-        assert mock_wc.send.call_count == 2
+        assert mock_tg.send_event.call_count == 2
 
     def test_drops_when_not_running(self):
         dm = DataManager(_make_config())

@@ -145,6 +145,9 @@ class TestLoadConfig:
             "volume_spike",
             "open_interest_change",
             "funding_rate_anomaly",
+            "long_short_ratio",
+            "liquidation",
+            "resonance",
         ]
         assert result["alertPolicy"]["minPriceChangePct"] == 1.2
         assert result["alertPolicy"]["minOpenInterestChangePct"] == 5.0
@@ -252,7 +255,8 @@ class TestArchitectureConfig:
         assert cfg.storage.database_path == "~/.local/share/kairos/kairos.db"
         assert cfg.storage.retention_days == 90
         assert cfg.charts.default_chart_count == 1
-        assert cfg.webhook.schema_version == "1.1"
+        assert cfg.telegram.enabled is True
+        assert cfg.telegram.parse_mode == "HTML"
 
     def test_architecture_config_merges_overrides(self):
         """Typed config accepts YAML-facing camelCase overrides."""

@@ -1,8 +1,8 @@
-"""Data Manager - WebSocket orchestration, detector wiring, signal delivery.
+"""Data Manager - WebSocket orchestration, detector wiring, Telegram delivery.
 
 Auto-discovers top USDT perpetual contracts per exchange, starts real-time
 WebSocket feeds, routes ticks through per-exchange anomaly detectors, and
-delivers deduplicated trading signals to Hermes webhook.
+delivers deduplicated hard-data alerts to Telegram.
 """
 
 import asyncio
@@ -16,12 +16,15 @@ import anyio
 from kairos.detectors.futures_metrics import FuturesMetricsDetector
 from kairos.detectors.price_velocity import PriceVelocityDetector
 from kairos.detectors.volume_spike import VolumeSpikeDetector
+from kairos.detectors.long_short_ratio import LongShortRatioDetector
+from kairos.detectors.liquidation import LiquidationDetector
+from kairos.detectors.resonance import ResonanceScorer, ResonanceEvent
 from kairos.exchanges.binance import BinanceExchange
 from kairos.exchanges.bybit import BybitExchange
 from kairos.exchanges.okx import OkxExchange
+from kairos.telegram import AlertEvent, TelegramClient
 from kairos.utils.blacklist import Blacklist
 from kairos.utils.market_data import extract_quote_volume
-from kairos.webhook import SignalEvent, WebhookClient
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +44,7 @@ _SEVERITY_RANK = {"LOW": 1, "MEDIUM": 2, "HIGH": 3}
 # ────────────────────────────────────────────────────────────────
 
 class DataManager:
-    """Orchestrates exchange WebSocket feeds → detectors → Hermes webhook."""
+    """Orchestrates exchange WebSocket feeds -> detectors -> Telegram."""
 
     def __init__(self, config: Dict[str, Any]):
         dm = config.get("dataManager", {})
@@ -52,13 +55,18 @@ class DataManager:
         self._symbol_cooldown: float = float(dm.get("symbolCooldownMinutes", 30)) * 60
 
         self.exchanges: Dict[str, Any] = {}
-        self._webhook = WebhookClient()
+        telegram = config.get("telegram", {})
+        self._telegram_enabled = bool(telegram.get("enabled", True))
+        self._telegram = TelegramClient(parse_mode=str(telegram.get("parseMode", "HTML")))
         self._blacklist = Blacklist()
 
         # ── Detector configs ──
         self._velocity_config = config.get("priceVelocity", {})
         self._spike_config = config.get("volumeSpike", {})
         self._metrics_config = config.get("futuresMetrics", {})
+        self._long_short_config = config.get("longShortRatio", {})
+        self._liquidation_config = config.get("liquidation", {})
+        self._resonance_config = config.get("resonanceScorer", {})
 
         # ── Alert policy ──
         policy = config.get("alertPolicy", {})
@@ -92,7 +100,16 @@ class DataManager:
         self._metrics_detectors: Dict[str, FuturesMetricsDetector] = {}
         self._metrics_task: asyncio.Task | None = None
 
-        # ── Thread-safe webhook dispatch ──
+        # ── CoinGlass-based detectors ──
+        self._long_short_detectors: Dict[str, LongShortRatioDetector] = {}
+        self._liquidation_detectors: Dict[str, LiquidationDetector] = {}
+        self._coinglass_ls_task: asyncio.Task | None = None
+        self._coinglass_liq_task: asyncio.Task | None = None
+
+        # ── Resonance scorer ──
+        self._resonance_scorer: ResonanceScorer | None = None
+
+        # ── Thread-safe Telegram dispatch ──
         self._loop: asyncio.AbstractEventLoop | None = None
 
         # ── Lifecycle ──
@@ -143,20 +160,36 @@ class DataManager:
             exchange.start_websocket(symbols)
             logger.info("WebSocket started for %s with %d symbols", name, len(symbols))
 
+        # 3b. Register CoinGlass-based detectors (cross-exchange, not per-exchange)
+        self._register_coinglass_detectors()
+
+        # 3c. Register resonance scorer (aggregates all detectors)
+        self._register_resonance_scorer()
+
         # 4. Start periodic symbol refresh
         self.running = True
         self._refresh_task = asyncio.ensure_future(self._refresh_loop())
         if self._metrics_detectors:
             self._metrics_task = asyncio.ensure_future(self._futures_metrics_loop())
 
+        # 5. Start CoinGlass polling detectors
+        if self._long_short_detectors:
+            self._coinglass_ls_task = asyncio.ensure_future(self._coinglass_ls_loop())
+        if self._liquidation_detectors:
+            self._coinglass_liq_task = asyncio.ensure_future(self._coinglass_liq_loop())
+
+        # 6. Register resonance scorer callback
+        if self._resonance_scorer is not None:
+            self._resonance_scorer.set_callback(self._on_resonance_event)
+
         logger.info(
-            "DataManager started: exchanges=%s webhook=%s",
+            "DataManager started: exchanges=%s telegram=%s",
             list(self.exchanges.keys()),
-            "configured" if self._webhook.is_configured() else "UNCONFIGURED",
+            "configured" if self._telegram_enabled and self._telegram.is_configured() else "UNCONFIGURED",
         )
 
     async def stop(self) -> None:
-        """Graceful shutdown - stop WebSocket, cancel refresh, close webhook."""
+        """Graceful shutdown - stop WebSocket, cancel refresh, close Telegram client."""
         logger.info("DataManager stopping...")
         self.running = False
 
@@ -174,6 +207,23 @@ class DataManager:
             except asyncio.CancelledError:
                 pass
 
+        if self._coinglass_ls_task:
+            self._coinglass_ls_task.cancel()
+            try:
+                await self._coinglass_ls_task
+            except asyncio.CancelledError:
+                pass
+
+        if self._coinglass_liq_task:
+            self._coinglass_liq_task.cancel()
+            try:
+                await self._coinglass_liq_task
+            except asyncio.CancelledError:
+                pass
+
+        if self._resonance_scorer is not None:
+            self._resonance_scorer.reset()
+
         for name, exchange in self.exchanges.items():
             try:
                 exchange.stop_websocket()
@@ -181,7 +231,7 @@ class DataManager:
             except Exception:
                 logger.exception("Error stopping exchange: %s", name)
 
-        await self._webhook.close()
+        await self._telegram.close()
         logger.info("DataManager stopped")
 
     # ── Symbol Discovery ──────────────────────────────────────
@@ -235,11 +285,44 @@ class DataManager:
         self._metrics_detectors[name] = detector
         logger.info("Futures metrics detector registered: %s", name)
 
-    # ── Anomaly Event → Webhook ────────────────────────────────
+    def _register_coinglass_detectors(self) -> None:
+        """Register CoinGlass-polled detectors for long/short ratio and liquidations.
+
+        These are cross-exchange detectors (one per metric, not one per exchange).
+        """
+        if self._long_short_config.get("enabled", True):
+            ls = LongShortRatioDetector(self._long_short_config)
+            ls.on_event(self._on_anomaly_event)
+            self._long_short_detectors["coinglass"] = ls
+            logger.info("Long/short ratio detector registered (CoinGlass)")
+
+        if self._liquidation_config.get("enabled", True):
+            liq = LiquidationDetector(self._liquidation_config)
+            liq.on_event(self._on_anomaly_event)
+            self._liquidation_detectors["coinglass"] = liq
+            logger.info("Liquidation detector registered (CoinGlass)")
+
+    def _register_resonance_scorer(self) -> None:
+        """Register the multi-dimension resonance scorer.
+
+        It sits between raw detectors and Telegram: raw events feed into
+        the scorer, and it emits ResonanceEvents when multiple dimensions
+        fire for the same symbol within a window.
+        """
+        if not self._resonance_config.get("enabled", True):
+            return
+        scorer = ResonanceScorer(self._resonance_config)
+        self._resonance_scorer = scorer
+        logger.info("Resonance scorer registered (min_score=%s)",
+                    self._resonance_config.get("minScore", 55))
+
+    # ── Anomaly Event -> Telegram ──────────────────────────────
 
     def _on_anomaly_event(self, event) -> None:
-        """Callback from detectors: dedup + deliver via webhook."""
+        """Callback from detectors: resonance score + dedup + deliver via Telegram."""
         if not self.running:
+            return
+        if not self._telegram_enabled:
             return
 
         # Check blacklist
@@ -247,10 +330,23 @@ class DataManager:
             logger.debug("Blacklist drop: %s", event.symbol)
             return
 
+        # Resonance events deliver straight through (already scored)
+        if event.event_type == "resonance":
+            self._deliver_event(event)
+            return
+
+        # Feed raw events into resonance scorer before delivery
+        if self._resonance_scorer is not None:
+            self._resonance_scorer.on_event(event)
+
+        # Deliver raw event to Telegram
+        self._deliver_event(event)
+
+    def _deliver_event(self, event) -> None:
+        """Dedup and deliver a single event via Telegram."""
         if not self._passes_alert_policy(event):
             return
 
-        # Dedup key: symbol + event_type
         dedup_key = f"{event.symbol}__{event.event_type}"
         now = time.time()
         with self._dedup_lock:
@@ -259,7 +355,6 @@ class DataManager:
                 logger.debug("Dedup drop: %s (%.1fs since last)", dedup_key, now - last)
                 return
 
-            # Per-symbol+event cooldown suppresses repeats without hiding a different futures anomaly.
             symbol_event_last = self._symbol_event_last_sent.get(dedup_key, 0)
             if now - symbol_event_last < self._symbol_cooldown:
                 logger.debug(
@@ -273,26 +368,60 @@ class DataManager:
             self._last_sent[dedup_key] = now
             self._symbol_event_last_sent[dedup_key] = now
 
-        # Build signal
-        data = event.data
-        signal = SignalEvent(
+        data = event.data or {}
+        alert = AlertEvent(
             event=event.event_type,
             symbol=event.symbol,
-            price=data.get("price_to", data.get("price", 0)),
+            price=data.get("price_to", data.get("price", data.get("last_price", 0))),
             condition=self._build_condition(event),
-            exchange="",  # stripped per design
+            exchange="",
             change_pct=data.get("change_pct", 0),
             severity=event.severity,
+            data=data,
         )
 
-        # Schedule async webhook send from WS thread → main loop
         if self._loop:
             asyncio.run_coroutine_threadsafe(
-                self._webhook.send(signal), self._loop
+                self._telegram.send_event(alert), self._loop
+            )
+
+    def _on_resonance_event(self, resonance: ResonanceEvent) -> None:
+        """Callback from ResonanceScorer: deliver the aggregated resonance alert."""
+        if not self.running:
+            return
+        if not self._telegram_enabled:
+            return
+
+        alert_event = resonance.to_alert_event()
+        # All resonance events from scorer already pass the min_score gate — push.
+
+        dedup_key = f"{resonance.symbol}__resonance__{resonance.signal_score}"
+        now = time.time()
+        with self._dedup_lock:
+            last = self._last_sent.get(dedup_key, 0)
+            if now - last < self._symbol_cooldown:
+                logger.debug("Resonance cooldown drop: %s", dedup_key)
+                return
+            self._last_sent[dedup_key] = now
+
+        alert = AlertEvent(
+            event="resonance",
+            symbol=resonance.symbol,
+            price=0,
+            condition=f"🎯 信号质量={resonance.signal_score}",
+            exchange="",
+            change_pct=0,
+            severity="HIGH",
+            data=alert_event.data,
+        )
+
+        if self._loop:
+            asyncio.run_coroutine_threadsafe(
+                self._telegram.send_event(alert), self._loop
             )
 
     def _passes_alert_policy(self, event) -> bool:
-        """Return True when an anomaly is worth forwarding to Hermes."""
+        """Return True when an anomaly is worth showing to the human."""
         if not self._alert_policy_enabled:
             return True
 
@@ -389,7 +518,7 @@ class DataManager:
     async def _refresh_loop(self) -> None:
         """Periodically refresh top symbols and log changes.
 
-        New symbols are logged but not auto-subscribed - restart kairos-mcp to
+        New symbols are logged but not auto-subscribed - restart kairos-watch to
         pick up WebSocket subscription changes.
         """
         while self.running:
@@ -406,7 +535,7 @@ class DataManager:
                     removed = current_symbols - set(new_symbols)
                     if added or removed:
                         logger.warning(
-                            "%s top-100 changed: +%d -%d. Restart kairos-mcp to apply.",
+                            "%s top-100 changed: +%d -%d. Restart kairos-watch to apply.",
                             name,
                             len(added),
                             len(removed),
@@ -444,13 +573,122 @@ class DataManager:
                 detector.on_metrics_update(
                     symbol=symbol,
                     timestamp=now,
-                    price=data.get("price", 0.0),
+                    price=data["price"] or 0.0,
                     open_interest=data.get("open_interest"),
                     funding_rate=data.get("funding_rate"),
                 )
 
+    # ── CoinGlass L/S Ratio Polling ────────────────────────────
+
+    async def _coinglass_ls_loop(self) -> None:
+        """Poll CoinGlass for long/short ratio snapshots."""
+        interval = self._long_short_config.get("pollIntervalSeconds", 300)
+        while self.running:
+            try:
+                await self._poll_long_short()
+            except Exception:
+                logger.exception("CoinGlass L/S poll failed")
+            await asyncio.sleep(interval)
+
+    async def _poll_long_short(self) -> None:
+        from kairos.data.coinglass_client import fetch_coinglass_endpoint, normalize_coin_symbol
+
+        symbols = self._symbols_by_exchange.get("okx", []) or self._symbols_by_exchange.get("binance", [])
+        if not symbols:
+            logger.debug("No symbols for L/S poll; skipping")
+            return
+
+        for detector in self._long_short_detectors.values():
+            now = time.time()
+            for raw_symbol in symbols:
+                base = normalize_coin_symbol(raw_symbol)
+                if not base:
+                    continue
+                try:
+                    payload = await anyio.to_thread.run_sync(
+                        fetch_coinglass_endpoint,
+                        "/api/futures/longShortRate",
+                        {"symbol": base, "timeType": 2},
+                    )
+                    long_rate = _extract_avg_long_rate(payload)
+                    if long_rate is not None:
+                        short_rate = 100.0 - long_rate
+                        detector.on_ls_snapshot(raw_symbol, now, long_rate, short_rate)
+                except Exception:
+                    logger.debug("L/S poll failed for %s", raw_symbol)
+
+    # ── CoinGlass Liquidation Polling ──────────────────────────
+
+    async def _coinglass_liq_loop(self) -> None:
+        """Poll CoinGlass for liquidation snapshots."""
+        interval = self._liquidation_config.get("pollIntervalSeconds", 300)
+        while self.running:
+            try:
+                await self._poll_liquidations()
+            except Exception:
+                logger.exception("CoinGlass liquidation poll failed")
+            await asyncio.sleep(interval)
+
+    async def _poll_liquidations(self) -> None:
+        from kairos.data.coinglass_client import fetch_coinglass_endpoint, normalize_coin_symbol
+
+        symbols = self._symbols_by_exchange.get("okx", []) or self._symbols_by_exchange.get("binance", [])
+        if not symbols:
+            logger.debug("No symbols for liquidation poll; skipping")
+            return
+
+        for detector in self._liquidation_detectors.values():
+            now = time.time()
+            for raw_symbol in symbols:
+                base = normalize_coin_symbol(raw_symbol)
+                if not base:
+                    continue
+                try:
+                    payload = await anyio.to_thread.run_sync(
+                        fetch_coinglass_endpoint,
+                        "/api/futures/liquidation/today",
+                        {"symbol": base},
+                    )
+                    total = _float_config(payload.get("liquidationUsd"), 0.0)
+                    long_liq = _float_config(payload.get("longLiquidationUsd"), 0.0)
+                    short_liq = _float_config(payload.get("shortLiquidationUsd"), 0.0)
+                    if total > 0:
+                        detector.on_liquidation_snapshot(raw_symbol, now, total, long_liq, short_liq)
+                except Exception:
+                    logger.debug("Liquidation poll failed for %s", raw_symbol)
+
+
+
 
 # ── Helpers ────────────────────────────────────────────────────
+
+def _extract_avg_long_rate(payload: Any) -> float | None:
+    """Extract the aggregate long rate from CoinGlass longShortRate response.
+
+    The response is a list of exchange-level entries.  We compute the
+    volume-weighted average long rate across all exchanges.
+    """
+    if not isinstance(payload, list):
+        return None
+    entries: list[Any] = payload
+    total_long_vol = 0.0
+    total_short_vol = 0.0
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        exchanges = entry.get("list") if isinstance(entry.get("list"), list) else [entry]
+        for ex in exchanges:  # type: ignore[union-attr]
+            if not isinstance(ex, dict):
+                continue
+            long_vol = _float_config(ex.get("longVolUsd"), 0.0)
+            short_vol = _float_config(ex.get("shortVolUsd"), 0.0)
+            total_long_vol += long_vol
+            total_short_vol += short_vol
+    total_vol = total_long_vol + total_short_vol
+    if total_vol <= 0:
+        return None
+    return round(total_long_vol / total_vol * 100, 2)
+
 
 def _is_usdt_perpetual(symbol: str) -> bool:
     """Check if a CCXT unified symbol is a USDT perpetual contract."""
@@ -571,9 +809,12 @@ def _funding_rates_from_payload(payload: Any) -> Dict[str, float]:
     if not isinstance(payload, dict):
         return {}
     result: Dict[str, float] = {}
-    items = payload.items()
+    # Normalize items to a list of (key, value) pairs
+    items: list[tuple[Any, Any]]
     if isinstance(payload.get("data"), list):
         items = [(row.get("symbol") or row.get("instId"), row) for row in payload["data"] if isinstance(row, dict)]
+    else:
+        items = list(payload.items())
     for key, value in items:
         if not isinstance(value, dict):
             continue
@@ -602,7 +843,8 @@ def _extract_price(payload: Dict[str, Any]) -> float:
         value = _float_config(payload.get(key), 0.0)
         if value:
             return value
-    info = payload.get("info") if isinstance(payload.get("info"), dict) else {}
+    raw_info = payload.get("info")
+    info = raw_info if isinstance(raw_info, dict) else {}
     for key in ("last", "lastPrice", "markPx", "idxPx"):
         value = _float_config(info.get(key), 0.0)
         if value:
@@ -615,7 +857,8 @@ def _extract_open_interest(payload: Dict[str, Any]) -> float | None:
         value = _float_config(payload.get(key), 0.0)
         if value:
             return value
-    info = payload.get("info") if isinstance(payload.get("info"), dict) else {}
+    raw_info = payload.get("info")
+    info = raw_info if isinstance(raw_info, dict) else {}
     for key in ("openInterestValue", "openInterestAmount", "openInterest", "oiUsd", "oiCcy"):
         value = _float_config(info.get(key), 0.0)
         if value:
@@ -627,7 +870,8 @@ def _extract_funding_rate(payload: Dict[str, Any]) -> float | None:
     for key in ("fundingRate", "funding_rate"):
         if key in payload:
             return _float_config(payload.get(key), 0.0)
-    info = payload.get("info") if isinstance(payload.get("info"), dict) else {}
+    raw_info = payload.get("info")
+    info = raw_info if isinstance(raw_info, dict) else {}
     for key in ("fundingRate", "funding_rate"):
         if key in info:
             return _float_config(info.get(key), 0.0)

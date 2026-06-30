@@ -4,12 +4,14 @@
 
 ## Project Overview
 
-kairos is a cryptocurrency futures price monitor & trading system with Hermes Agent integration.
+kairos is a human-controlled cryptocurrency futures alert system.
+
+It scans futures markets, detects hard-data anomalies, scores deterministic setup candidates, and pushes Telegram alerts. It does not use LLMs and does not place orders.
 
 ## Core Principles
 
 - **Research first**: Unfamiliar tech/architecture → research before coding
-- **Tool priority**: MCP ace-tool for code search, built-in tools for web search
+- **Tool priority**: use fast code search first, built-in tools for web search
 - **Reasoning**: Complex → deep thinking, simple → direct response
 - **Code quality**: Handle errors, add type annotations, document large files
 
@@ -17,44 +19,31 @@ kairos is a cryptocurrency futures price monitor & trading system with Hermes Ag
 
 | Task type | Read first | Trigger |
 | --- | --- | --- |
-| Research & investigation | `docs/research.md` | Unfamiliar tech, architecture decisions, complex integration |
-| Tool usage & search | `docs/tool-priority.md` | Code search, web search, text search, Python tools |
-| Problem solving | `docs/reasoning.md` | Complex problems, stuck situations, first principles |
-| Code standards | `docs/code-quality.md` | Error handling, type annotations, documentation |
+| Architecture changes | `docs/architecture.md` | Runtime boundary, alert delivery, risk output |
+| Strategy changes | `docs/trading-system.md` | Trading philosophy, setup logic, risk discipline |
+| Config changes | `config/config.yaml.example` | Detector thresholds, scanner limits, Telegram settings |
 
-## Trading System
+## Trading System Boundary
 
 ### Architecture
-- **kairos (CLI)**: Data fetching, technical analysis, trade execution, risk control
-- **hermes agent**: Reads skills, calls CLI, LLM judgment, learning & review
 
-### Skills
-- `kairos-cycle` - Market cycle analysis (春夏秋冬 theory)
-- `kairos-scanner` - Symbol scanning (quantitative + agent analysis)
-- `kairos-box` - Box pattern detection (algorithm + agent confirmation)
-- `kairos-signal` - Trading signals (breakout/pullback/reversal)
-- `kairos-position` - Position management (fixed sizing, leverage limits)
-- `kairos-risk` - Risk control (stop-loss, consecutive loss limits)
-- `kairos-review` - Trade review (history, statistics, learning)
+- **kairos-watch**: realtime WebSocket anomaly watcher -> Telegram
+- **kairos-alert**: one-shot deterministic scanner summary -> Telegram
+- **human**: final chart review, trade selection, sizing, entries, exits
 
 ### CLI Commands
 ```bash
-kairos cycle                    # Market cycle phase
-kairos scan                     # Scan for symbols
-kairos box-detect --symbol BTC/USDT  # Box pattern detection
-kairos signal --symbol BTC/USDT      # Trading signals
-kairos sr --symbol BTC/USDT          # Support/resistance levels
-kairos position status          # Current positions
-kairos risk status              # Risk status
-kairos history                  # Trade history
-kairos stats                    # Trading statistics
+uv run kairos-watch             # Realtime hard-data Telegram alerts
+uv run kairos-alert             # One-shot scanner candidate Telegram alert
+uv run kairos-alert --dry-run   # Preview scanner alert text
+uv run kairos-backtest --help   # Backtest utilities
 ```
 
 ### Risk Constraints
 - Altcoins: 33% position, max 5x leverage
 - BTC/ETH: 33% position, max 10x leverage
-- Max 2 simultaneous positions
-- Pause after 3 consecutive daily losses
+- Scanner risk output is a bound, not a trade instruction
+- No automatic order placement
 
 ## Always-On Rules
 

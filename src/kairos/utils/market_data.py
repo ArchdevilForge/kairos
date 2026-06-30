@@ -52,7 +52,7 @@ def first_float(mapping: Mapping[str, Any], keys: list[str]) -> float | None:
         if value in (None, ""):
             continue
         try:
-            return float(value)
+            return float(value)  # type: ignore[arg-type]
         except (TypeError, ValueError):
             continue
     return None

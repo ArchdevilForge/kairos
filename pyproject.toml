@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "kairos"
 version = "1.0.0"
-description = "Cryptocurrency trading agent system based on Bit浪浪's trading philosophy"
+description = "Human-controlled cryptocurrency futures alert system based on Bit浪浪's trading philosophy"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { file = "LICENSE" }
@@ -22,9 +22,9 @@ dependencies = [
   "numpy>=1.24.0",
   "tenacity>=8.0.0",
   "anyio>=4.0.0",
-  "mcp>=1.0.0",
   "httpx>=0.27.0",
   "cryptography>=42.0.0",
+  "types-pyyaml>=6.0.12.20260518",
 ]
 
 [project.urls]
@@ -32,7 +32,9 @@ Homepage = "https://github.com/Xeron2000/kairos"
 Issues = "https://github.com/Xeron2000/kairos/issues"
 
 [project.scripts]
-kairos-mcp = "kairos.mcp_server:main"
+kairos-backtest = "kairos.backtest:main"
+kairos-alert = "kairos.alert_runner:main"
+kairos-watch = "kairos.watch_runner:main"
 
 [project.optional-dependencies]
 dev = [
@@ -46,8 +48,6 @@ dev = [
   "pip-audit>=2.7.3",
   "mypy>=1.14.1",
 ]
-hermes = ["mplfinance>=0.12.10b0"]
-
 [tool.hatch.build.targets.wheel]
 packages = ["src/kairos"]
 
@@ -78,4 +78,3 @@ venv = ".venv"
 pythonVersion = "3.12"
 pythonPlatform = "Linux"
 typeCheckingMode = "basic"
-ignore = ["src/kairos/mcp"]

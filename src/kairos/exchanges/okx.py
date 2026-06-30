@@ -31,17 +31,6 @@ class OkxExchange(BaseExchange):
         except Exception as exc:
             logging.debug(f"Failed to preload OKX swap markets: {exc}")
 
-    def _get_ohlcv_params(self, symbol):
-        """Ensure only swap markets are requested for historical data."""
-        params = {"instType": "SWAP"}
-        try:
-            base, remainder = symbol.split("/")
-            quote = remainder.split(":")[0]
-            params["instId"] = f"{base}-{quote}-SWAP"
-        except ValueError:
-            pass
-        return params
-
     @staticmethod
     def _canonical_symbol(inst_id: str) -> str:
         parts = inst_id.split("-")
@@ -138,8 +127,7 @@ class OkxExchange(BaseExchange):
                                     if time.time() % 600 < 1:  # Approximately every 10 minutes
                                         logging.info(f"OKX price update - {symbol}: {price}")
 
-                                    # Store historical data using base class method
-                                    self._store_historical_price(symbol, price)
+                                    # Notify detectors
                                     self._notify_detectors_price(symbol, price)
 
                                     # Volume tracking (24h volume in contracts)
