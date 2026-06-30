@@ -24,35 +24,36 @@ src/kairos/
 ├── config.py                  # YAML config loading
 ├── paths.py                   # XDG paths
 ├── scanner.py                 # deterministic market scanner
-├── signal_schema.py           # shared scanner response envelope
 ├── telegram.py                # Telegram sender and alert formatter
 ├── watch_runner.py            # realtime alert runner
 ├── analysis/                  # technical analysis
 │   ├── __init__.py
 │   ├── box_pattern.py         # 箱体识别算法
-│   ├── cycle.py               # 春夏秋冬周期判断
-│   └── support_resistance.py  # 支撑阻力位
+│   └── cycle.py               # 春夏秋冬周期判断
 ├── data/                      # data clients and orchestration
 │   ├── __init__.py
-│   ├── coinglass_client.py    # optional hard-data context
-│   └── data_manager.py        # WS orchestration + detectors + Telegram alerts
+│   ├── coinglass_client.py    # optional CoinGlass hard-data context
+│   └── data_manager.py        # WS orchestration + detectors + Telegram
 ├── detectors/                 # anomaly detectors
 │   ├── __init__.py
-│   ├── base.py                # 基础检测器 + AnomalyEvent
+│   ├── base.py                # BaseDetector + AnomalyEvent
+│   ├── futures_metrics.py     # open interest / funding rate polling
+│   ├── liquidation.py         # CoinGlass liquidation polling
+│   ├── long_short_ratio.py    # CoinGlass long/short ratio polling
 │   ├── price_velocity.py      # 价格速度检测
+│   ├── resonance.py           # multi-dimension signal quality scorer
 │   └── volume_spike.py        # 成交量异常检测
 ├── exchanges/                 # exchange adapters
 │   ├── __init__.py
-│   ├── base.py                # 基础交易所类（CCXT封装）
-│   ├── binance.py             # Binance WS实现
-│   ├── bybit.py               # Bybit WS实现
-│   └── okx.py                 # OKX WS实现
+│   ├── base.py                # BaseExchange (CCXT wrapper)
+│   ├── binance.py             # Binance WS implementation
+│   ├── bybit.py               # Bybit WS implementation
+│   └── okx.py                 # OKX WS implementation
 └── utils/                     # utilities
     ├── __init__.py
-    ├── cache_manager.py        # 缓存管理
-    ├── error_handler.py        # 错误处理 + 断路器 + 重试
-    ├── get_exchange.py         # 交易所工厂函数
-    └── performance_monitor.py  # 性能监控
+    ├── blacklist.py            # read-only symbol blacklist (.txt file)
+    ├── market_data.py          # ticker field extraction helpers
+    └── zscore.py               # rolling z-score computation
 ```
 
 ---
@@ -63,19 +64,29 @@ src/kairos/
 OKX/Binance/Bybit WS feeds
     │
     ▼
-DataManager
+DataManager ─── per-exchange detectors ───→ Telegram (realtime alerts)
+    │
+    ▼ (polling)
+FuturesMetricsDetector · LongShortRatioDetector · LiquidationDetector
     │
     ▼
-PriceVelocityDetector · VolumeSpikeDetector (per-exchange)
-    │  AnomalyEvent callback
-    ▼
-DataManager._on_anomaly_event (5s dedup + Telegram dispatch)
+ResonanceScorer (multi-dimension signal quality)
     │
     ▼
 Telegram hard-data alert
     │
     ▼
 Human chart review and decision
+
+
+Scanner (one-shot, CLI):
+scanner.py ──→ Telegram / stdout
+    │
+    ▼
+scan_market() / analyze_symbol_setup()
+    │
+    ▼
+_signal_envelope → alert_runner.py → Telegram
 ```
 
 ---
@@ -86,6 +97,11 @@ These modules are intentionally absent:
 
 - `src/kairos/mcp/` and `src/kairos/mcp_server.py` — no production MCP layer.
 - `src/kairos/webhook.py` — Telegram is sent directly, not through webhook relays.
+- `src/kairos/utils/get_exchange.py` — inlined into scanner.py as `_get_exchange`.
+- `src/kairos/utils/cache_manager.py` — removed; not needed.
+- `src/kairos/utils/error_handler.py` — removed; standard try/except + logging used.
+- `src/kairos/utils/performance_monitor.py` — removed; not needed.
+- `src/kairos/analysis/support_resistance.py` — removed; box_pattern used instead.
 - `skills/` — no assistant skill layer in the trading path.
 - Trading execution modules — final decisions and order placement stay human-only.
 
@@ -97,3 +113,4 @@ These modules are intentionally absent:
 - Classes: `PascalCase`
 - Functions: `snake_case`
 - Private attributes: `_leading_underscore`
+- Internal helpers shared across modules: `_shared_` prefix (e.g. `_shared_extract_last_price`)

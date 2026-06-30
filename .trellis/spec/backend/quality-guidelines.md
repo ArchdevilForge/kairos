@@ -108,7 +108,7 @@ logger.error(f"Failed to execute order: {e}")
 
 ```
 uv run pytest
-501 passed · 1 skipped
+357 passed · 1 skipped
 ```
 
 Run the smallest relevant subset while editing, then run the full suite before finishing architecture-level changes.

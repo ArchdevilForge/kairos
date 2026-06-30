@@ -3,21 +3,21 @@
 ## Scope
 
 - Trigger: changes to scanner response envelopes, Telegram alert delivery, realtime anomaly dispatch, alert config, or human-control boundaries.
-- Applies to `src/kairos/scanner.py`, `src/kairos/signal_schema.py`, `src/kairos/telegram.py`, `src/kairos/alert_runner.py`, `src/kairos/watch_runner.py`, `src/kairos/data/data_manager.py`, and config/defaults.
+- Applies to `src/kairos/scanner.py`, `src/kairos/telegram.py`, `src/kairos/alert_runner.py`, `src/kairos/watch_runner.py`, `src/kairos/data/data_manager.py`, and config/defaults.
 - Product source of truth: `docs/architecture.md`.
 
 ## Signatures
 
 - `scan_market(config=None, exchange_getter=None, exchange=None, blacklist=None) -> dict[str, Any]`
 - `analyze_symbol_setup(symbol, config=None, exchange_getter=None, exchange=None, blacklist=None) -> dict[str, Any]`
-- `make_signal_envelope(...) -> dict[str, Any]`
+- `_make_signal_envelope(...) -> dict[str, Any]` (internal, scanner.py)
 - `TelegramClient.send_event(event: AlertEvent) -> bool`
 - `TelegramClient.send_text(text: str) -> bool`
 
 ## Contracts
 
 - No production alert path may require an LLM, assistant skill, MCP server, or order execution module.
-- Core signal envelope fields: `success`, `schema_version`, `timestamp`, `symbol`, `data`, `score`, `reasons`, `warnings`, `errors`.
+- Core signal envelope fields (produced by `_make_signal_envelope` in scanner.py): `success`, `schema_version`, `timestamp`, `symbol`, `data`, `score`, `reasons`, `warnings`, `errors`.
 - Symbol input normalizes to `BASE/USDT:USDT`; invalid symbols return a failed envelope instead of raising across CLI boundaries.
 - Scanner states are deterministic filters only: `no_trade`, `watch`, `prepare`, `trade_candidate`.
 - Alert copy must clearly state human control in Chinese, currently `仅供人工判断，不自动交易。`
@@ -53,7 +53,7 @@ return {"signal": "buy now", "size": "10000 USDT"}
 ### Correct
 
 ```python
-return make_signal_envelope(
+return _make_signal_envelope(
     success=True,
     symbol="BTC/USDT:USDT",
     data={"setup": {"action_state": "prepare"}},
