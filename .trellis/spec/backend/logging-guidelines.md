@@ -6,7 +6,7 @@
 
 ## Overview
 
-kairos使用Python标准logging模块，支持结构化日志和不同级别。
+kairos 使用 Go 标准库 `log/slog`（部分 legacy 路径仍用 `log.Printf`），支持结构化字段与级别过滤。
 
 ---
 

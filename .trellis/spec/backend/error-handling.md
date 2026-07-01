@@ -6,7 +6,7 @@
 
 ## Overview
 
-kairos uses standard Python error handling with custom exception types and logging. No error handler middleware or circuit breaker framework is used — standard `try/except` + `logging` is sufficient for a deterministic alert system.
+kairos uses Go idiomatic error handling: functions return `(T, error)` and callers log or propagate. No middleware or circuit-breaker framework — `log/slog` plus explicit error checks are sufficient for a deterministic alert system.
 
 ---
 

@@ -3,27 +3,30 @@
 ## Scope
 
 - Trigger: changes to scanner response envelopes, Telegram alert delivery, realtime anomaly dispatch, alert config, or human-control boundaries.
-- Applies to `src/kairos/scanner.py`, `src/kairos/telegram.py`, `src/kairos/alert_runner.py`, `src/kairos/watch_runner.py`, `src/kairos/data/data_manager.py`, and config/defaults.
+- Applies to `internal/scanner/`, `internal/notify/`, `internal/alert/`, `cmd/kairosd/`, `internal/engine/`, and config/defaults.
 - Product source of truth: `docs/architecture.md`.
 
 ## Signatures
 
-- `scan_market(config=None, exchange_getter=None, exchange=None, blacklist=None) -> dict[str, Any]`
-- `analyze_symbol_setup(symbol, config=None, exchange_getter=None, exchange=None, blacklist=None) -> dict[str, Any]`
-- `_make_signal_envelope(...) -> dict[str, Any]` (internal, scanner.py)
-- `TelegramClient.send_event(event: AlertEvent) -> bool`
-- `TelegramClient.send_text(text: str) -> bool`
+- `(*MarketScanner).ScanMarket(ctx, exchangeName) -> *types.SignalEnvelope` (`internal/scanner`)
+- `(*MarketScanner).AnalyzeSymbolSetup(ctx, symbol, exchangeName) -> *types.SignalEnvelope` (`internal/scanner`)
+- `makeSignalEnvelope(...) -> *types.SignalEnvelope` (internal, `internal/scanner/helpers.go`)
+- `(*TelegramClient).SendEvent(event types.AlertEvent) error` (`internal/notify`)
+- `(*TelegramClient).SendText(text string) error` (`internal/notify`)
+- `alert.SelectSetups(scan *types.SignalEnvelope, minState string, limit int) -> []map[string]any` (`internal/alert`)
+- `alert.FormatAlert(setups []map[string]any) -> string` (`internal/alert`)
+- `(*Pipeline).Start(ctx) error` / `(*Pipeline).Stop()` (`internal/engine`)
 
 ## Contracts
 
 - No production alert path may require an LLM, assistant skill, MCP server, or order execution module.
-- Core signal envelope fields (produced by `_make_signal_envelope` in scanner.py): `success`, `schema_version`, `timestamp`, `symbol`, `data`, `score`, `reasons`, `warnings`, `errors`.
+- Core signal envelope fields (produced by `makeSignalEnvelope` in Go): `success`, `schema_version`, `timestamp`, `symbol`, `data`, `score`, `reasons`, `warnings`, `errors`.
 - Symbol input normalizes to `BASE/USDT:USDT`; invalid symbols return a failed envelope instead of raising across CLI boundaries.
 - Scanner states are deterministic filters only: `no_trade`, `watch`, `prepare`, `trade_candidate`.
 - Alert copy must clearly state human control in Chinese, currently `仅供人工判断，不自动交易。`
 - Risk output is bounded context only: entry zone, structural stop, targets, RR, max position percentage, and max leverage. Do not include account-equity sizing or order placement.
 - Telegram credentials come only from `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`; optional scanner filters are `KAIROS_ALERT_MIN_STATE` and `KAIROS_ALERT_LIMIT`.
-- `DataManager` applies `alertPolicy` before Telegram delivery and before mutating dedup/cooldown state.
+- `engine.Pipeline` applies `alertPolicy` before Telegram delivery and before mutating dedup/cooldown state.
 - CoinGlass data may enrich hard-data context but must remain optional evidence, not a hard dependency.
 
 ## Validation
@@ -36,28 +39,25 @@
 
 ## Tests Required
 
-- Envelope tests assert all standard fields and symbol normalization.
-- Telegram tests assert formatted messages include the human-control line and send through Telegram `sendMessage`.
-- Scanner tests assert BTC-context/liquidity/threshold gates block `trade_candidate`.
-- Alert runner tests assert `--dry-run`, min-state filtering, missing credentials, and send behavior.
-- DataManager tests assert `alertPolicy` filters before Telegram dispatch.
+- `internal/types`: JSON round-trip for `SignalEnvelope`, `AlertEvent`, `Setup`.
+- `internal/notify`: formatted messages include the human-control line.
+- `internal/scanner`: BTC-context/liquidity/threshold gates block `trade_candidate`.
+- `internal/alert`: `--dry-run` shape, min-state filtering (see `cmd/kairos-alert` tests).
+- `internal/engine`: alert policy and pipeline wiring tests.
 
 ## Wrong vs Correct
 
 ### Wrong
 
-```python
-return {"signal": "buy now", "size": "10000 USDT"}
+```go
+return map[string]any{"signal": "buy now", "size": "10000 USDT"}
 ```
 
 ### Correct
 
-```python
-return _make_signal_envelope(
-    success=True,
-    symbol="BTC/USDT:USDT",
-    data={"setup": {"action_state": "prepare"}},
-    score={"setup_score": 5.8},
-    warnings=["15m trigger not active"],
-)
+```go
+return makeSignalEnvelope(true, map[string]any{
+    "setup": map[string]any{"action_state": "prepare"},
+}, "BTC/USDT:USDT", map[string]any{"setup_score": 5.8}, nil,
+    []string{"15m trigger not active"}, nil, nil)
 ```

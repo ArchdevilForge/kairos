@@ -27,16 +27,20 @@ It scans futures markets, detects hard-data anomalies, scores deterministic setu
 
 ### Architecture
 
-- **kairos-watch**: realtime WebSocket anomaly watcher -> Telegram
-- **kairos-alert**: one-shot deterministic scanner summary -> Telegram
+- **kairosd** (`cmd/kairosd`): realtime WebSocket anomaly watcher → Telegram
+- **kairos-alert** (`cmd/kairos-alert`): one-shot deterministic scanner summary → Telegram
 - **human**: final chart review, trade selection, sizing, entries, exits
 
 ### CLI Commands
 ```bash
-uv run kairos-watch             # Realtime hard-data Telegram alerts
-uv run kairos-alert             # One-shot scanner candidate Telegram alert
-uv run kairos-alert --dry-run   # Preview scanner alert text
-uv run kairos-backtest --help   # Backtest utilities
+go build -o kairosd ./cmd/kairosd
+go build -o kairos-alert ./cmd/kairos-alert
+go build -o kairos-backtest ./cmd/kairos-backtest
+
+./kairosd --config config/config.yaml               # Realtime hard-data Telegram alerts
+./kairos-alert --config config/config.yaml --dry-run
+./kairos-backtest --symbol BTC/USDT --start 2024-01-01 --end 2024-06-01
+make check                                          # build + vet + lint + test -race
 ```
 
 ### Risk Constraints

@@ -1,40 +1,14 @@
-# 环境和虚拟环境
+# 环境与虚拟环境
 *.env
-*venv/
-.venv/
 
-# Python缓存和编译文件
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-
-# 测试相关
-.coverage
-coverage.xml
-*.cover
-htmlcov/
-.pytest_cache/
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-.hypothesis/
+# Go
+/kairosd
+/kairos-alert
+/kairos-backtest
+/bin/
+*.exe
+*.test
+*.out
 
 # 日志文件
 *.log*
@@ -49,7 +23,6 @@ logs/
 # AI和工具相关文件
 .spec-workflow/
 .crush/
-.ruff_cache/
 .claude/
 .bmad-core/
 *CLAUDE.md

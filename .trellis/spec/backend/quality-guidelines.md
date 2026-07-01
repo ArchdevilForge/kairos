@@ -6,7 +6,7 @@
 
 ## Overview
 
-kairos遵循Python最佳实践，使用ruff进行代码检查，pytest进行测试。
+kairos 使用 Go 标准布局，golangci-lint 静态检查，`make check` 作为质量门禁。
 
 ---
 
@@ -106,12 +106,11 @@ logger.error(f"Failed to execute order: {e}")
 
 ### Current runnable checks
 
-```
-uv run pytest
-357 passed · 1 skipped
+```bash
+make check   # go build + vet + golangci-lint + test -race
 ```
 
-Run the smallest relevant subset while editing, then run the full suite before finishing architecture-level changes.
+Run the smallest relevant package test while editing, then run `make check` before finishing architecture-level changes.
 
 ### Mock 规则
 
@@ -167,12 +166,12 @@ assert result["confidence"] > 0.5
 
 ### Git Ignore Hygiene
 
-Runtime/output directories should be anchored to the repository root in `.gitignore` when their names may also appear under `src/`. For example, use `/data/` for root runtime data, not `data/`, because the latter also ignores source packages such as `src/kairos/data/` and can hide untracked production code from commits.
+Runtime/output directories should be anchored to the repository root in `.gitignore` when their names may also appear under source trees. For example, use `/data/` for root runtime data, not `data/`, because the latter can also ignore `internal/data/` and hide untracked production code from commits.
 
-Before relying on `git status` after adding or moving source packages, verify suspicious paths explicitly:
+Before relying on `git status` after adding or moving packages, verify suspicious paths explicitly:
 
 ```bash
-git check-ignore -v src/kairos/data/data_manager.py src/kairos/data/__init__.py
+git check-ignore -v internal/data/coinglass.go
 ```
 
 Expected result for source code is no output with exit code `1`.

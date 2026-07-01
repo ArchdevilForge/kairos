@@ -6,7 +6,7 @@
 
 ## Overview
 
-This directory contains guidelines for backend development. Fill in each file with your project's specific conventions.
+This directory contains guidelines for Go backend development (`cmd/`, `internal/`). Fill in each file with your project's specific conventions.
 
 ---
 

@@ -1,0 +1,9 @@
+repos:
+  - repo: local
+    hooks:
+      - id: go-check
+        name: go build vet lint test-race
+        entry: make check
+        language: system
+        pass_filenames: false
+        files: \.(go|mod|sum)$
