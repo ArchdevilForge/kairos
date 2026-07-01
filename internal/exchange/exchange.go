@@ -12,6 +12,7 @@ type Exchange interface {
 	Name() string
 	SubscribeTickers(ctx context.Context, symbols []string, tickerCh chan<- types.Ticker) error
 	FetchTickers(ctx context.Context) (map[string]*types.Ticker, error)
+	FetchTicker(ctx context.Context, symbol string) (*types.Ticker, error)
 	FetchOHLCV(ctx context.Context, symbol, timeframe string, limit int, sinceMs int64) ([]types.Candle, error)
 	Close() error
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/ArchdevilForge/kairos/internal/indicators"
 	"github.com/ArchdevilForge/kairos/internal/types"
 )
 
@@ -38,6 +39,64 @@ func makeSignalEnvelope(success bool, data map[string]any, symbol string, score 
 		Warnings:      warnings,
 		Errors:        errors,
 	}
+}
+
+// DetectSupportAtBoxLow checks 15m double-bottom / non-lower-low near box support.
+func DetectSupportAtBoxLow(ohlcv *types.OHLCVArrays, boxLow float64) (triggered, near bool) {
+	if ohlcv == nil || boxLow <= 0 || len(ohlcv.Lows) < 12 {
+		return false, false
+	}
+	lastLow := ohlcv.Lows[len(ohlcv.Lows)-1]
+	near = lastLow <= boxLow*1.01 && lastLow >= boxLow*0.985
+	if !near {
+		return false, false
+	}
+	triggered = detectDoubleBottom(ohlcv.Lows, ohlcv.Closes)
+	return triggered, true
+}
+
+func detectDoubleBottom(lows, closes []float64) bool {
+	if len(lows) < 12 || len(closes) < 12 {
+		return false
+	}
+	n := len(lows)
+	window := lows[n-12 : n]
+	firstLow := minVal(window[:6])
+	secondLow := minVal(window[6:])
+	if secondLow < firstLow*0.995 {
+		return false
+	}
+	return closes[n-1] > closes[n-2]
+}
+
+func cycleDetectorConfig(cfg types.ScoringConfig) indicators.CycleDetectorConfig {
+	d := indicators.DefaultCycleDetectorConfig()
+	y := cfg.CycleDetector
+	if y.SpringBtcChangeMin != 0 {
+		d.SpringBtcChangeMin = y.SpringBtcChangeMin
+	}
+	if y.SummerBtcChangeMin != 0 {
+		d.SummerBtcChangeMin = y.SummerBtcChangeMin
+	}
+	if y.AutumnBtcChangeMax != 0 {
+		d.AutumnBtcChangeMax = y.AutumnBtcChangeMax
+	}
+	if y.WinterBtcChangeMax != 0 {
+		d.WinterBtcChangeMax = y.WinterBtcChangeMax
+	}
+	if y.HighVolatilityThreshold != 0 {
+		d.HighVolatilityThreshold = y.HighVolatilityThreshold
+	}
+	if y.LowVolatilityThreshold != 0 {
+		d.LowVolatilityThreshold = y.LowVolatilityThreshold
+	}
+	if y.HighFundingThreshold != 0 {
+		d.HighFundingThreshold = y.HighFundingThreshold
+	}
+	if y.LowFundingThreshold != 0 {
+		d.LowFundingThreshold = y.LowFundingThreshold
+	}
+	return d
 }
 
 // ---------------------------------------------------------------------------

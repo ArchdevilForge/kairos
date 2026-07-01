@@ -13,7 +13,12 @@ import (
 // 10-pt scale based on liquidity, velocity, OI, funding, relative strength.
 // ---------------------------------------------------------------------------
 
-func (s *MarketScanner) scoreCandidate(symbol, exchangeName string, ticker *types.Ticker) types.Candidate {
+func (s *MarketScanner) scoreCandidate(
+	symbol, exchangeName string,
+	ticker *types.Ticker,
+	btcChange24h *float64,
+	watchBoost float64,
+) types.Candidate {
 	cand := types.Candidate{
 		Symbol:       symbol,
 		Exchange:     exchangeName,
@@ -61,6 +66,22 @@ func (s *MarketScanner) scoreCandidate(symbol, exchangeName string, ticker *type
 		}
 	} else {
 		cand.Warnings = append(cand.Warnings, "missing 24h percentage change")
+	}
+
+	// BTC relative strength vs alt 24h change (up to 1.5 pts)
+	if btcChange24h != nil && ticker.ChangePct != nil {
+		rs := *ticker.ChangePct - *btcChange24h
+		rsWeight := getWeight(weights, "btcRelativeStrength", 1.5)
+		rsComponent := math.Min(rsWeight, math.Max(0, rs)/5.0*rsWeight)
+		if rsComponent > 0 {
+			score += rsComponent
+			cand.ScoreReasons = append(cand.ScoreReasons, fmt.Sprintf("btc relative strength component=%.2f", rsComponent))
+		}
+	}
+
+	if watchBoost > 0 {
+		score += watchBoost
+		cand.ScoreReasons = append(cand.ScoreReasons, fmt.Sprintf("watch hint boost=%.2f", watchBoost))
 	}
 
 	// 4. Open interest (up to 1 pt)
@@ -196,6 +217,8 @@ func (s *MarketScanner) scoreDirection(
 	setupScore := math.Round(math.Min(score, 10.0)*100) / 100
 	actionState := s.determineActionState(setupScore, threshold, risk.RiskReward, requiredRR,
 		risk.Triggered, risk.NearTrigger, candidate.CandidateScore)
+	actionState, gateWarnings := s.ApplyStrategyActionGate(actionState, direction, phase, btcTrend)
+	warnings = append(warnings, gateWarnings...)
 
 	if actionState != string(types.ActionStateTradeCandidate) && setupScore >= threshold {
 		warnings = append(warnings, "score threshold met but trigger/RR requirements block trade_candidate")
@@ -203,6 +226,9 @@ func (s *MarketScanner) scoreDirection(
 
 	setupTypeStr := fmt.Sprintf("%s_%s", getMapString(structure, "type"),
 		map[string]string{"long": "breakout", "short": "breakdown"}[string(direction)])
+	if getMapString(structure, "entry_mode") == "support" && direction == types.DirectionLong {
+		setupTypeStr = "box_support"
+	}
 	fp := fingerprint(symbol, string(direction), setupTypeStr, structure, risk)
 
 	return types.Setup{
@@ -264,8 +290,18 @@ func (s *MarketScanner) computeRiskBounds(
 	triggered := false
 	nearTrigger := false
 	invalidation := ""
+	entryMode := getMapString(structure, "entry_mode")
 
-	if direction == types.DirectionLong {
+	if direction == types.DirectionLong && entryMode == "support" {
+		entryZone = [2]float64{low * 0.997, low * 1.003}
+		entryMid := (entryZone[0] + entryZone[1]) / 2
+		stop = low * 0.995
+		targets = [2]float64{high, high + height}
+		risk = entryMid - stop
+		triggered = getMapBool(structure, "support_triggered")
+		nearTrigger = getMapBool(structure, "support_near")
+		invalidation = "long support setup invalid below 4h structure low"
+	} else if direction == types.DirectionLong {
 		entryZone = [2]float64{high, high * 1.003}
 		entryMid := (entryZone[0] + entryZone[1]) / 2
 		stop = low * 0.995
@@ -390,6 +426,28 @@ func (s *MarketScanner) determineActionState(
 		return string(types.ActionStateWatch)
 	}
 	return string(types.ActionStateNoTrade)
+}
+
+// ApplyStrategyActionGate downgrades trade_candidate when market cycle policy
+// from docs/trading-system.md conflicts with a deterministic pass.
+func (s *MarketScanner) ApplyStrategyActionGate(
+	state string,
+	direction types.Direction,
+	phase, btcTrend string,
+) (string, []string) {
+	if state != string(types.ActionStateTradeCandidate) {
+		return state, nil
+	}
+	var w []string
+	if phase == "winter" && direction == types.DirectionLong {
+		w = append(w, "winter cycle: long trade_candidate withheld (strategy: hibernate)")
+		return string(types.ActionStatePrepare), w
+	}
+	if phase == "autumn" && direction == types.DirectionLong && btcTrend != "up" {
+		w = append(w, "autumn non-resonance: long trade_candidate downgraded to prepare")
+		return string(types.ActionStatePrepare), w
+	}
+	return state, nil
 }
 
 // ---------------------------------------------------------------------------

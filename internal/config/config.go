@@ -212,6 +212,16 @@ func setDefaults(v *viper.Viper) {
 		"minimumRiskReward":           1.8,
 		"strictRiskReward":            2.2,
 		"shortThresholdPremium":       0.5,
+		"cycleDetector": map[string]any{
+			"springBtcChangeMin":      10.0,
+			"summerBtcChangeMin":      30.0,
+			"autumnBtcChangeMax":      50.0,
+			"winterBtcChangeMax":      -10.0,
+			"highVolatilityThreshold": 5.0,
+			"lowVolatilityThreshold":  2.0,
+			"highFundingThreshold":    0.05,
+			"lowFundingThreshold":     -0.01,
+		},
 	})
 
 	v.SetDefault("risk", map[string]any{
@@ -229,10 +239,12 @@ func setDefaults(v *viper.Viper) {
 	})
 
 	v.SetDefault("storage", map[string]any{
-		"databasePath":  "~/.local/share/kairos/kairos.db",
-		"retentionDays": 90,
-		"jsonlExport":   false,
-		"jsonlPath":     "",
+		"databasePath":            "~/.local/share/kairos/kairos.db",
+		"retentionDays":           90,
+		"jsonlExport":             false,
+		"jsonlPath":               "",
+		"watchHintRetentionHours": 24.0,
+		"watchHintScoreBoost":     0.5,
 	})
 
 	v.SetDefault("charts", map[string]any{

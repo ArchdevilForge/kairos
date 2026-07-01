@@ -166,6 +166,55 @@ func (o *okxExchange) FetchTickers(ctx context.Context) (map[string]*types.Ticke
 	return result, nil
 }
 
+func (o *okxExchange) FetchTicker(ctx context.Context, symbol string) (*types.Ticker, error) {
+	instID := normalizeSymbol(symbol)
+	url := fmt.Sprintf("%s/api/v5/market/ticker?instId=%s", okxRESTEndpoint, instID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("okx fetch ticker: %w", err)
+	}
+	resp, err := o.httpCli.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("okx fetch ticker: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("okx fetch ticker: read: %w", err)
+	}
+	var okxResp struct {
+		Code string `json:"code"`
+		Data []struct {
+			InstID   string `json:"instId"`
+			Last     string `json:"last"`
+			VolCcy24 string `json:"volCcy24h"`
+			Open24h  string `json:"open24h"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &okxResp); err != nil {
+		return nil, fmt.Errorf("okx fetch ticker: decode: %w", err)
+	}
+	if okxResp.Code != "0" || len(okxResp.Data) == 0 {
+		return nil, fmt.Errorf("okx fetch ticker: empty")
+	}
+	item := okxResp.Data[0]
+	sym := denormalizeSymbol(item.InstID)
+	t := &types.Ticker{Symbol: sym, Info: map[string]any{}}
+	if v := parseFloat(item.Last); v > 0 {
+		t.LastPrice = &v
+	}
+	if v := parseFloat(item.VolCcy24); v > 0 {
+		t.QuoteVolume = &v
+	}
+	if o, l := parseFloat(item.Open24h), parseFloat(item.Last); o > 0 && l > 0 {
+		pct := (l - o) / o * 100
+		t.ChangePct = &pct
+	}
+	one := map[string]*types.Ticker{sym: t}
+	enrichOKXMetrics(ctx, o.httpCli, one)
+	return t, nil
+}
+
 func (o *okxExchange) FetchOHLCV(ctx context.Context, symbol, timeframe string, limit int, sinceMs int64) ([]types.Candle, error) {
 	instID := normalizeSymbol(symbol)
 	bar := mapTimeframe(timeframe)

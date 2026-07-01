@@ -156,3 +156,6 @@ KAIROS_ALERT_LIMIT
 ```
 
 There is no remote AI server, inbound alert route, or HMAC route in the current architecture.
+
+For a multi-lens architecture/strategy review and optimization roadmap, see
+[`architecture-review.md`](architecture-review.md).

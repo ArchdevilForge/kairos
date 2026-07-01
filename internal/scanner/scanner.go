@@ -3,12 +3,13 @@ package scanner
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"sort"
 	"strings"
 
 	"github.com/ArchdevilForge/kairos/internal/exchange"
 	"github.com/ArchdevilForge/kairos/internal/indicators"
+	"github.com/ArchdevilForge/kairos/internal/storage"
 	"github.com/ArchdevilForge/kairos/internal/types"
 	"github.com/ArchdevilForge/kairos/internal/utils"
 )
@@ -33,15 +34,23 @@ type MarketScanner struct {
 	blacklist     *utils.Blacklist
 	boxDetector   *indicators.BoxDetector
 	cycleDetector *indicators.CycleDetector
+	hints         *storage.HintStore
+	log           *slog.Logger
 }
 
 // NewMarketScanner creates a new scanner from the application config.
 func NewMarketScanner(cfg *types.Config) *MarketScanner {
+	hints, err := storage.NewHintStore(cfg.Storage)
+	if err != nil {
+		slog.Default().Warn("scanner hint store disabled", "error", err)
+	}
 	return &MarketScanner{
 		config:        cfg,
 		blacklist:     utils.NewBlacklist(),
 		boxDetector:   indicators.NewBoxDetector(indicators.DefaultBoxDetectorConfig()),
-		cycleDetector: indicators.NewCycleDetector(indicators.DefaultCycleDetectorConfig()),
+		cycleDetector: indicators.NewCycleDetector(cycleDetectorConfig(cfg.Scoring)),
+		hints:         hints,
+		log:           slog.Default().With("component", "scanner"),
 	}
 }
 
@@ -186,7 +195,7 @@ func (s *MarketScanner) AnalyzeSymbolSetup(ctx context.Context, symbol, exchange
 	defer func() { _ = exch.Close() }()
 
 	ticker := s.fetchTicker(ctx, exch, canonical)
-	cand := s.scoreCandidate(canonical, exchangeName, ticker)
+	cand := s.scoreCandidate(canonical, exchangeName, ticker, nil, 0)
 	minLiq := s.config.Scoring.MinimumLiquidityQuoteVolume
 
 	quoteVolume := 0.0
@@ -254,6 +263,12 @@ func (s *MarketScanner) getExchange(name string) (exchange.Exchange, error) {
 // Candidate discovery  (ported from _discover_candidates)
 // ---------------------------------------------------------------------------
 
+type universeItem struct {
+	symbol string
+	ticker *types.Ticker
+	volume float64
+}
+
 func (s *MarketScanner) discoverCandidates(ctx context.Context, exch exchange.Exchange, exchangeName string) ([]types.Candidate, int, []string) {
 	tickers, err := exch.FetchTickers(ctx)
 	if err != nil || len(tickers) == 0 {
@@ -261,12 +276,6 @@ func (s *MarketScanner) discoverCandidates(ctx context.Context, exch exchange.Ex
 			return nil, 0, []string{fmt.Sprintf("%s did not return ticker data: %v", exchangeName, err)}
 		}
 		return nil, 0, []string{fmt.Sprintf("%s did not return ticker data.", exchangeName)}
-	}
-
-	type universeItem struct {
-		symbol string
-		ticker *types.Ticker
-		volume float64
 	}
 
 	var warnings []string
@@ -306,9 +315,15 @@ func (s *MarketScanner) discoverCandidates(ctx context.Context, exch exchange.Ex
 		universe = universe[:s.config.Scanner.UniverseSize]
 	}
 
+	btcChange := s.btcChangeFromUniverse(universe)
+	boosts := map[string]float64{}
+	if s.hints != nil {
+		boosts = s.hints.ActiveBoosts()
+	}
+
 	scored := make([]types.Candidate, len(universe))
 	for i, item := range universe {
-		scored[i] = s.scoreCandidate(item.symbol, exchangeName, item.ticker)
+		scored[i] = s.scoreCandidate(item.symbol, exchangeName, item.ticker, btcChange, boosts[item.symbol])
 	}
 
 	// Sort by candidate score desc, break ties by volume desc
@@ -326,17 +341,29 @@ func (s *MarketScanner) discoverCandidates(ctx context.Context, exch exchange.Ex
 	return scored, universeSize, warnings
 }
 
+func (s *MarketScanner) btcChangeFromUniverse(universe []universeItem) *float64 {
+	btcSym, err := utils.NormalizeSymbol("BTC/USDT")
+	if err != nil {
+		return nil
+	}
+	for _, item := range universe {
+		if item.symbol != btcSym || item.ticker == nil || item.ticker.ChangePct == nil {
+			continue
+		}
+		v := *item.ticker.ChangePct
+		return &v
+	}
+	return nil
+}
+
 // ---------------------------------------------------------------------------
 // Ticker fetching
 // ---------------------------------------------------------------------------
 
 func (s *MarketScanner) fetchTicker(ctx context.Context, exch exchange.Exchange, symbol string) *types.Ticker {
-	tickers, err := exch.FetchTickers(ctx)
-	if err != nil || tickers == nil {
-		return nil
-	}
-	t, ok := tickers[symbol]
-	if !ok {
+	t, err := exch.FetchTicker(ctx, symbol)
+	if err != nil {
+		s.log.Debug("fetch ticker failed", "symbol", symbol, "error", err)
 		return nil
 	}
 	return t
@@ -349,7 +376,7 @@ func (s *MarketScanner) fetchTicker(ctx context.Context, exch exchange.Exchange,
 func (s *MarketScanner) fetchOHLCV(ctx context.Context, exch exchange.Exchange, symbol, timeframe string, limit int) *types.OHLCVArrays {
 	candles, err := exch.FetchOHLCV(ctx, symbol, timeframe, limit, 0)
 	if err != nil {
-		log.Printf("scanner: failed to fetch OHLCV for %s %s: %v", symbol, timeframe, err)
+		s.log.Debug("fetch ohlcv failed", "symbol", symbol, "timeframe", timeframe, "error", err)
 		return nil
 	}
 	return OHLCVToArrays(candles)
@@ -426,6 +453,15 @@ func (s *MarketScanner) analyzeCandidate(
 	currentPrice := timeframeData["15m"].Closes[len(timeframeData["15m"].Closes)-1]
 	dailyTrend := Trend(timeframeData["1d"])
 	structure := s.structure(symbol, "4h", timeframeData["4h"], currentPrice)
+	boxLow := getMapFloat64(structure, "low")
+	if boxLow > 0 {
+		supportTriggered, supportNear := DetectSupportAtBoxLow(timeframeData["15m"], boxLow)
+		if supportTriggered || supportNear {
+			structure["entry_mode"] = "support"
+			structure["support_triggered"] = supportTriggered
+			structure["support_near"] = supportNear
+		}
+	}
 	volConfirmed := VolumeConfirmed(timeframeData["15m"])
 
 	longSetup := s.scoreDirection(types.DirectionLong, symbol, candidate,

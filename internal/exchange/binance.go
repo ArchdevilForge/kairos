@@ -116,6 +116,37 @@ func (b *binanceExchange) FetchTickers(ctx context.Context) (map[string]*types.T
 	return result, nil
 }
 
+func (b *binanceExchange) FetchTicker(ctx context.Context, symbol string) (*types.Ticker, error) {
+	url := fmt.Sprintf("%s/fapi/v1/ticker/24hr?symbol=%s", binanceRESTEndpoint, binanceSymbol(symbol))
+	body, err := b.get(ctx, url)
+	if err != nil {
+		return nil, err
+	}
+	var row struct {
+		Symbol             string `json:"symbol"`
+		LastPrice          string `json:"lastPrice"`
+		QuoteVolume        string `json:"quoteVolume"`
+		PriceChangePercent string `json:"priceChangePercent"`
+	}
+	if err := json.Unmarshal(body, &row); err != nil {
+		return nil, fmt.Errorf("binance fetch ticker: decode: %w", err)
+	}
+	sym := toCanonicalBinance(row.Symbol)
+	t := &types.Ticker{Symbol: sym, Info: map[string]any{"instType": "SWAP"}}
+	if v := parseFloat(row.LastPrice); v > 0 {
+		t.LastPrice = &v
+	}
+	if v := parseFloat(row.QuoteVolume); v > 0 {
+		t.QuoteVolume = &v
+	}
+	if v := parseFloat(row.PriceChangePercent); v != 0 {
+		t.ChangePct = &v
+	}
+	one := map[string]*types.Ticker{sym: t}
+	_ = b.mergePremiumIndex(ctx, one)
+	return t, nil
+}
+
 func (b *binanceExchange) FetchOHLCV(ctx context.Context, symbol, timeframe string, limit int, sinceMs int64) ([]types.Candle, error) {
 	if limit <= 0 || limit > 1500 {
 		limit = 500

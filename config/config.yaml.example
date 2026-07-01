@@ -3,13 +3,15 @@
 # Usage:
 #   1. Copy this file to your Kairos config path.
 #   2. Export TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.
-#   3. Run `uv run kairos-watch` for realtime alerts.
-#   4. Run `uv run kairos-alert` from cron/systemd timer for scanner summaries.
+#   3. Run `go run ./cmd/kairosd` (or built binary) for realtime alerts.
+#   4. Run `go run ./cmd/kairos-alert` from cron/systemd timer for scanner summaries.
 
 exchange: "okx"
 defaultTimeframe: "1d"
 notificationTimezone: "Asia/Shanghai"
 
+# dataManager: legacy name for kairos-watch runtime (WS feeds, dedup, cooldown).
+# Delivery gates live under alertPolicy.
 telegram:
   enabled: true
   parseMode: "HTML"
@@ -100,6 +102,7 @@ scoring:
     openInterest: 1.0
     funding: 1.0
     relativeStrength: 2.0
+    btcRelativeStrength: 1.5
   setupWeights:
     dailyTrend: 1.5
     structure: 2.0
@@ -117,6 +120,15 @@ scoring:
   minimumRiskReward: 1.8
   strictRiskReward: 2.2
   shortThresholdPremium: 0.5
+  cycleDetector:
+    springBtcChangeMin: 10.0
+    summerBtcChangeMin: 30.0
+    autumnBtcChangeMax: 50.0
+    winterBtcChangeMax: -10.0
+    highVolatilityThreshold: 5.0
+    lowVolatilityThreshold: 2.0
+    highFundingThreshold: 0.05
+    lowFundingThreshold: -0.01
 
 risk:
   maxPositionPct:
@@ -134,6 +146,8 @@ storage:
   retentionDays: 90
   jsonlExport: false
   jsonlPath: ""
+  watchHintRetentionHours: 24
+  watchHintScoreBoost: 0.5
 
 charts:
   defaultChartCount: 1

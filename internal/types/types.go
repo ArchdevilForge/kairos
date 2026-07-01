@@ -245,7 +245,8 @@ type TelegramConfig struct {
 	ChatID    string `mapstructure:"-" json:"chat_id,omitempty" yaml:"-"`   // env: TELEGRAM_CHAT_ID
 }
 
-// DataManagerConfig controls ticker polling and deduplication.
+// DataManagerConfig controls kairos-watch ticker polling and deduplication.
+// Deprecated name: use alertPolicy for delivery gates; this block configures watch runtime only.
 type DataManagerConfig struct {
 	Exchanges            []string `mapstructure:"exchanges" json:"exchanges" yaml:"exchanges"`
 	TopSymbols           int      `mapstructure:"topSymbols" json:"topSymbols" yaml:"topSymbols"`
@@ -367,13 +368,26 @@ type ExchangesConfig struct {
 
 // ScoringConfig defines deterministic scoring thresholds and weights.
 type ScoringConfig struct {
-	CandidateWeights             map[string]float64 `mapstructure:"candidateWeights" json:"candidateWeights" yaml:"candidateWeights"`
-	SetupWeights                 map[string]float64 `mapstructure:"setupWeights" json:"setupWeights" yaml:"setupWeights"`
-	CycleThresholds              map[string]float64 `mapstructure:"cycleThresholds" json:"cycleThresholds" yaml:"cycleThresholds"`
-	MinimumLiquidityQuoteVolume  float64            `mapstructure:"minimumLiquidityQuoteVolume" json:"minimumLiquidityQuoteVolume" yaml:"minimumLiquidityQuoteVolume"`
-	MinimumRiskReward            float64            `mapstructure:"minimumRiskReward" json:"minimumRiskReward" yaml:"minimumRiskReward"`
-	StrictRiskReward             float64            `mapstructure:"strictRiskReward" json:"strictRiskReward" yaml:"strictRiskReward"`
-	ShortThresholdPremium        float64            `mapstructure:"shortThresholdPremium" json:"shortThresholdPremium" yaml:"shortThresholdPremium"`
+	CandidateWeights             map[string]float64      `mapstructure:"candidateWeights" json:"candidateWeights" yaml:"candidateWeights"`
+	SetupWeights                 map[string]float64      `mapstructure:"setupWeights" json:"setupWeights" yaml:"setupWeights"`
+	CycleThresholds              map[string]float64      `mapstructure:"cycleThresholds" json:"cycleThresholds" yaml:"cycleThresholds"`
+	CycleDetector                CycleDetectorYAMLConfig `mapstructure:"cycleDetector" json:"cycleDetector" yaml:"cycleDetector"`
+	MinimumLiquidityQuoteVolume  float64                 `mapstructure:"minimumLiquidityQuoteVolume" json:"minimumLiquidityQuoteVolume" yaml:"minimumLiquidityQuoteVolume"`
+	MinimumRiskReward            float64                 `mapstructure:"minimumRiskReward" json:"minimumRiskReward" yaml:"minimumRiskReward"`
+	StrictRiskReward             float64                 `mapstructure:"strictRiskReward" json:"strictRiskReward" yaml:"strictRiskReward"`
+	ShortThresholdPremium        float64                 `mapstructure:"shortThresholdPremium" json:"shortThresholdPremium" yaml:"shortThresholdPremium"`
+}
+
+// CycleDetectorYAMLConfig maps yaml thresholds to indicators.CycleDetectorConfig.
+type CycleDetectorYAMLConfig struct {
+	SpringBtcChangeMin      float64 `mapstructure:"springBtcChangeMin" json:"springBtcChangeMin" yaml:"springBtcChangeMin"`
+	SummerBtcChangeMin      float64 `mapstructure:"summerBtcChangeMin" json:"summerBtcChangeMin" yaml:"summerBtcChangeMin"`
+	AutumnBtcChangeMax      float64 `mapstructure:"autumnBtcChangeMax" json:"autumnBtcChangeMax" yaml:"autumnBtcChangeMax"`
+	WinterBtcChangeMax      float64 `mapstructure:"winterBtcChangeMax" json:"winterBtcChangeMax" yaml:"winterBtcChangeMax"`
+	HighVolatilityThreshold float64 `mapstructure:"highVolatilityThreshold" json:"highVolatilityThreshold" yaml:"highVolatilityThreshold"`
+	LowVolatilityThreshold  float64 `mapstructure:"lowVolatilityThreshold" json:"lowVolatilityThreshold" yaml:"lowVolatilityThreshold"`
+	HighFundingThreshold    float64 `mapstructure:"highFundingThreshold" json:"highFundingThreshold" yaml:"highFundingThreshold"`
+	LowFundingThreshold     float64 `mapstructure:"lowFundingThreshold" json:"lowFundingThreshold" yaml:"lowFundingThreshold"`
 }
 
 // RiskConfig defines signal-only risk bounds (not execution commands).
@@ -387,10 +401,13 @@ type RiskConfig struct {
 
 // StorageConfig defines persistence configuration.
 type StorageConfig struct {
-	DatabasePath   string `mapstructure:"databasePath" json:"databasePath" yaml:"databasePath"`
-	RetentionDays  int    `mapstructure:"retentionDays" json:"retentionDays" yaml:"retentionDays"`
-	JSONLExport    bool   `mapstructure:"jsonlExport" json:"jsonlExport" yaml:"jsonlExport"`
-	JSONLPath      string `mapstructure:"jsonlPath" json:"jsonlPath" yaml:"jsonlPath"`
+	DatabasePath            string  `mapstructure:"databasePath" json:"databasePath" yaml:"databasePath"`
+	RetentionDays           int     `mapstructure:"retentionDays" json:"retentionDays" yaml:"retentionDays"`
+	JSONLExport             bool    `mapstructure:"jsonlExport" json:"jsonlExport" yaml:"jsonlExport"`
+	JSONLPath               string  `mapstructure:"jsonlPath" json:"jsonlPath" yaml:"jsonlPath"`
+	WatchHintsPath          string  `mapstructure:"watchHintsPath" json:"watchHintsPath" yaml:"watchHintsPath"`
+	WatchHintRetentionHours float64 `mapstructure:"watchHintRetentionHours" json:"watchHintRetentionHours" yaml:"watchHintRetentionHours"`
+	WatchHintScoreBoost     float64 `mapstructure:"watchHintScoreBoost" json:"watchHintScoreBoost" yaml:"watchHintScoreBoost"`
 }
 
 // ChartConfig defines chart generation policy.

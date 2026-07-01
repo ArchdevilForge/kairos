@@ -28,6 +28,7 @@ import (
 	"github.com/ArchdevilForge/kairos/internal/detector"
 	"github.com/ArchdevilForge/kairos/internal/exchange"
 	"github.com/ArchdevilForge/kairos/internal/notify"
+	"github.com/ArchdevilForge/kairos/internal/storage"
 	"github.com/ArchdevilForge/kairos/internal/types"
 	"github.com/ArchdevilForge/kairos/internal/utils"
 	"golang.org/x/sync/errgroup"
@@ -63,6 +64,9 @@ type Pipeline struct {
 
 	// Blacklist
 	blacklist *utils.Blacklist
+
+	// Watch hints for scanner boosting (cross-runtime).
+	hints *storage.HintStore
 
 	// Dedup state: "symbol__event_type" → timestamp
 	dedupMu   sync.Mutex
@@ -157,6 +161,13 @@ func NewPipeline(cfg *types.Config, tg *notify.TelegramClient) *Pipeline {
 	p.minFundingRateChange = policy.MinFundingRateChangeAbs
 	if p.minFundingRateChange <= 0 {
 		p.minFundingRateChange = 0.0003
+	}
+
+	hints, err := storage.NewHintStore(cfg.Storage)
+	if err != nil {
+		log.Warn("hint store disabled", "error", err)
+	} else {
+		p.hints = hints
 	}
 
 	return p
@@ -861,6 +872,8 @@ func (p *Pipeline) sendResonanceAlert(ctx context.Context, re detector.Resonance
 	default:
 		if err := p.tg.SendEvent(alert); err != nil {
 			p.log.Warn("telegram send failed", "symbol", re.Symbol, "error", err)
+		} else {
+			p.recordWatchHint(re.Symbol, "resonance", p.cfg.Exchanges.Primary)
 		}
 	}
 }
@@ -926,7 +939,18 @@ func (p *Pipeline) deliverEvent(ctx context.Context, evt types.AnomalyEvent) {
 	default:
 		if err := p.tg.SendEvent(alert); err != nil {
 			p.log.Warn("telegram send failed", "symbol", evt.Symbol, "event", evt.EventType, "error", err)
+		} else {
+			p.recordWatchHint(evt.Symbol, evt.EventType, p.cfg.Exchanges.Primary)
 		}
+	}
+}
+
+func (p *Pipeline) recordWatchHint(symbol, eventType, exchange string) {
+	if p.hints == nil || symbol == "" {
+		return
+	}
+	if err := p.hints.Record(symbol, eventType, exchange); err != nil {
+		p.log.Warn("watch hint record failed", "symbol", symbol, "error", err)
 	}
 }
 

@@ -135,6 +135,53 @@ func (b *bybitExchange) FetchTickers(ctx context.Context) (map[string]*types.Tic
 	return result, nil
 }
 
+func (b *bybitExchange) FetchTicker(ctx context.Context, symbol string) (*types.Ticker, error) {
+	url := fmt.Sprintf("%s/v5/market/tickers?category=linear&symbol=%s", bybitRESTEndpoint, bybitSymbol(symbol))
+	body, err := b.get(ctx, url)
+	if err != nil {
+		return nil, err
+	}
+	var resp struct {
+		RetCode int `json:"retCode"`
+		Result  struct {
+			List []struct {
+				Symbol       string `json:"symbol"`
+				LastPrice    string `json:"lastPrice"`
+				Turnover24h  string `json:"turnover24h"`
+				Price24hPcnt string `json:"price24hPcnt"`
+				FundingRate  string `json:"fundingRate"`
+				OpenInterest string `json:"openInterest"`
+			} `json:"list"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("bybit fetch ticker: decode: %w", err)
+	}
+	if resp.RetCode != 0 || len(resp.Result.List) == 0 {
+		return nil, fmt.Errorf("bybit fetch ticker: empty")
+	}
+	row := resp.Result.List[0]
+	sym := toCanonicalBybit(row.Symbol)
+	t := &types.Ticker{Symbol: sym, Info: map[string]any{"instType": "SWAP"}}
+	if v := parseFloat(row.LastPrice); v > 0 {
+		t.LastPrice = &v
+	}
+	if v := parseFloat(row.Turnover24h); v > 0 {
+		t.QuoteVolume = &v
+	}
+	if v := parseFloat(row.Price24hPcnt); v != 0 {
+		pct := v * 100
+		t.ChangePct = &pct
+	}
+	if v := parseFloat(row.OpenInterest); v > 0 {
+		t.OpenInterest = &v
+	}
+	if v := parseFloat(row.FundingRate); v != 0 {
+		t.FundingRate = &v
+	}
+	return t, nil
+}
+
 func (b *bybitExchange) FetchOHLCV(ctx context.Context, symbol, timeframe string, limit int, sinceMs int64) ([]types.Candle, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 200

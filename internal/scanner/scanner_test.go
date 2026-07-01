@@ -76,6 +76,43 @@ func TestOHLCVToArrays(t *testing.T) {
 	}
 }
 
+func TestDetectSupportAtBoxLow(t *testing.T) {
+	lows := []float64{10, 9.5, 9.2, 9.0, 9.1, 9.0, 9.05, 9.02, 9.01, 9.0, 9.02, 9.05}
+	closes := []float64{10, 9.6, 9.3, 9.1, 9.2, 9.05, 9.1, 9.08, 9.06, 9.05, 9.08, 9.12}
+	ohlcv := &types.OHLCVArrays{Lows: lows, Closes: closes}
+	triggered, near := DetectSupportAtBoxLow(ohlcv, 9.0)
+	if !near {
+		t.Fatal("expected near support")
+	}
+	if !triggered {
+		t.Fatal("expected double-bottom trigger")
+	}
+}
+
+func TestApplyStrategyActionGate(t *testing.T) {
+	s := NewMarketScanner(&types.Config{})
+
+	state, w := s.ApplyStrategyActionGate(string(types.ActionStateTradeCandidate), types.DirectionLong, "winter", "down")
+	if state != string(types.ActionStatePrepare) || len(w) == 0 {
+		t.Fatalf("winter long: state=%s warnings=%v", state, w)
+	}
+
+	state, w = s.ApplyStrategyActionGate(string(types.ActionStateTradeCandidate), types.DirectionShort, "winter", "down")
+	if state != string(types.ActionStateTradeCandidate) || len(w) != 0 {
+		t.Fatalf("winter short should pass: state=%s warnings=%v", state, w)
+	}
+
+	state, w = s.ApplyStrategyActionGate(string(types.ActionStateTradeCandidate), types.DirectionLong, "autumn", "sideways")
+	if state != string(types.ActionStatePrepare) || len(w) == 0 {
+		t.Fatalf("autumn non-resonance long: state=%s warnings=%v", state, w)
+	}
+
+	state, _ = s.ApplyStrategyActionGate(string(types.ActionStateWatch), types.DirectionLong, "winter", "down")
+	if state != string(types.ActionStateWatch) {
+		t.Fatalf("non-candidate states unchanged: %s", state)
+	}
+}
+
 func repeatFloat(v float64, n int) []float64 {
 	out := make([]float64, n)
 	for i := range out {
