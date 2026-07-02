@@ -28,6 +28,11 @@
 - Telegram credentials come only from `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`; optional scanner filters are `KAIROS_ALERT_MIN_STATE` and `KAIROS_ALERT_LIMIT`.
 - `engine.Pipeline` applies `alertPolicy` before Telegram delivery and before mutating dedup/cooldown state.
 - CoinGlass data may enrich hard-data context but must remain optional evidence, not a hard dependency.
+- CoinGlass fetch prefers Python `scripts/coinglass_fetch.py` + sibling `coinglass-decrypt` repo when available; falls back to native Go decrypt in `internal/data/coinglass.go`.
+- CoinGlass env keys (all optional): `KAIROS_COINGLASS_DECRYPT`, `KAIROS_COINGLASS_PYTHON`, `KAIROS_COINGLASS_USE_PYTHON` (`0`/`false` forces Go-only).
+- Scanner RSI hotness uses `data.FetchSpotRSIMap` → `scoreCandidate(..., rsiMap)`; weight key `scoring.candidateWeights.rsiHotness` (default `1.0`). Missing RSI adds a warning, never blocks scan.
+- OKX funding rates are lazy-loaded via `exchange.FundingEnricher.EnrichFunding` for universe symbols only (not full ticker map).
+- Scanner deep analysis runs candidates in parallel (semaphore max 6) and fetches multi-timeframe OHLCV concurrently per symbol; optional per-symbol timeout from `scanner.symbolAnalysisTimeoutSeconds`.
 
 ## Validation
 
@@ -41,9 +46,11 @@
 
 - `internal/types`: JSON round-trip for `SignalEnvelope`, `AlertEvent`, `Setup`.
 - `internal/notify`: formatted messages include the human-control line.
-- `internal/scanner`: BTC-context/liquidity/threshold gates block `trade_candidate`.
+- `internal/scanner`: BTC-context/liquidity/threshold gates block `trade_candidate`; RSI unavailable degrades with warning only.
+- `internal/data`: `ParseSpotRSIMap`, `RSIHotnessScore`, CoinGlass Python/Go fetch paths.
 - `internal/alert`: `--dry-run` shape, min-state filtering (see `cmd/kairos-alert` tests).
-- `internal/engine`: alert policy and pipeline wiring tests.
+- `internal/engine`: alert policy and pipeline wiring tests (`exchangeNew` injectable in tests).
+- `internal/backtest`: OKX OHLCV backward pagination from `end` cursor (not forward `since`).
 
 ## Wrong vs Correct
 

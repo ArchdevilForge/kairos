@@ -224,6 +224,7 @@ func (b *bybitExchange) FetchOHLCV(ctx context.Context, symbol, timeframe string
 			Volume:    parseFloat(row[5]),
 		})
 	}
+	sortCandlesAscending(candles)
 	return candles, nil
 }
 

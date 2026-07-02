@@ -17,6 +17,11 @@ type Exchange interface {
 	Close() error
 }
 
+// FundingEnricher is implemented by exchanges that fetch funding rates lazily.
+type FundingEnricher interface {
+	EnrichFunding(ctx context.Context, tickers map[string]*types.Ticker, symbols []string)
+}
+
 // New creates an exchange by name ("okx", "binance", "bybit").
 func New(name string) (Exchange, error) {
 	switch name {

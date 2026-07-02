@@ -6,7 +6,10 @@ import (
 	"log/slog"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 
+	"github.com/ArchdevilForge/kairos/internal/data"
 	"github.com/ArchdevilForge/kairos/internal/exchange"
 	"github.com/ArchdevilForge/kairos/internal/indicators"
 	"github.com/ArchdevilForge/kairos/internal/storage"
@@ -30,12 +33,14 @@ type btcContext struct {
 // ---------------------------------------------------------------------------
 
 type MarketScanner struct {
-	config        *types.Config
-	blacklist     *utils.Blacklist
-	boxDetector   *indicators.BoxDetector
-	cycleDetector *indicators.CycleDetector
-	hints         *storage.HintStore
-	log           *slog.Logger
+	config          *types.Config
+	blacklist       *utils.Blacklist
+	boxDetector     *indicators.BoxDetector
+	cycleDetector   *indicators.CycleDetector
+	hints           *storage.HintStore
+	log             *slog.Logger
+	exchangeFactory func(string) (exchange.Exchange, error) // tests only
+	rsiLoader       func(context.Context) (map[string]data.CoinRSI, string) // tests only
 }
 
 // NewMarketScanner creates a new scanner from the application config.
@@ -64,6 +69,11 @@ func (s *MarketScanner) ScanMarket(ctx context.Context, exchangeName string) *ty
 	if exchangeName == "" {
 		exchangeName = s.config.Exchanges.Primary
 	}
+	if sec := s.config.Scanner.TotalTimeoutSeconds; sec > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(sec)*time.Second)
+		defer cancel()
+	}
 	var warnings, errors []string
 
 	exch, err := s.getExchange(exchangeName)
@@ -72,9 +82,31 @@ func (s *MarketScanner) ScanMarket(ctx context.Context, exchangeName string) *ty
 			"exchange": exchangeName, "candidates": []any{}, "setups": []any{}, "qualified_setups": []any{},
 		}, "", nil, nil, nil, []string{fmt.Sprintf("Cannot connect to %s: %v", exchangeName, err)})
 	}
+	defer func() { _ = exch.Close() }()
 
-	candidates, universeSize, discWarnings := s.discoverCandidates(ctx, exch, exchangeName)
+	var btcCtx *btcContext
+	var btcWarnings []string
+	var rsiMap map[string]data.CoinRSI
+	var rsiWarn string
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		btcCtx, btcWarnings = s.loadBTCContext(ctx, exch)
+	}()
+	go func() {
+		defer wg.Done()
+		rsiMap, rsiWarn = s.loadRSIMap(ctx)
+	}()
+	wg.Wait()
+
+	if rsiWarn != "" {
+		warnings = append(warnings, rsiWarn)
+	}
+
+	candidates, universeSize, discWarnings := s.discoverCandidates(ctx, exch, exchangeName, rsiMap)
 	warnings = append(warnings, discWarnings...)
+	warnings = append(warnings, btcWarnings...)
 
 	// Backup exchange fallback
 	if len(candidates) == 0 {
@@ -84,7 +116,7 @@ func (s *MarketScanner) ScanMarket(ctx context.Context, exchangeName string) *ty
 				warnings = append(warnings, fmt.Sprintf("%s backup discovery failed: %v", backup, bErr))
 				continue
 			}
-			backupCandidates, backUnivSize, backWarnings := s.discoverCandidates(ctx, backupExch, backup)
+			backupCandidates, backUnivSize, backWarnings := s.discoverCandidates(ctx, backupExch, backup, rsiMap)
 			warnings = append(warnings, backWarnings...)
 			if len(backupCandidates) > 0 {
 				warnings = append(warnings, fmt.Sprintf("%s returned no candidates; using %s backup universe.", exchangeName, backup))
@@ -93,14 +125,14 @@ func (s *MarketScanner) ScanMarket(ctx context.Context, exchangeName string) *ty
 				exchangeName = backup
 				candidates = backupCandidates
 				universeSize = backUnivSize
+				var btcReloadWarnings []string
+				btcCtx, btcReloadWarnings = s.loadBTCContext(ctx, exch)
+				warnings = append(warnings, btcReloadWarnings...)
 				break
 			}
 			_ = backupExch.Close()
 		}
 	}
-
-	btcCtx, btcWarnings := s.loadBTCContext(ctx, exch)
-	warnings = append(warnings, btcWarnings...)
 
 	var setups []types.Setup
 	var qualifiedSetups []types.Setup
@@ -111,13 +143,36 @@ func (s *MarketScanner) ScanMarket(ctx context.Context, exchangeName string) *ty
 		if limit > len(candidates) {
 			limit = len(candidates)
 		}
-		for _, cand := range candidates[:limit] {
-			setup := s.analyzeCandidate(ctx, exch, cand, btcCtx)
-			setups = append(setups, setup)
-			if setup.ActionState == string(types.ActionStateTradeCandidate) {
-				qualifiedSetups = append(qualifiedSetups, setup)
-			}
+		// ponytail: parallel deep analysis — each candidate pulls 3 TF OHLCV independently.
+		maxParallel := 6
+		if limit < maxParallel {
+			maxParallel = limit
 		}
+		sem := make(chan struct{}, maxParallel)
+		var mu sync.Mutex
+		var analysisWg sync.WaitGroup
+		for _, cand := range candidates[:limit] {
+			analysisWg.Add(1)
+			go func(c types.Candidate) {
+				defer analysisWg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
+				candCtx := ctx
+				if sec := s.config.Scanner.SymbolAnalysisTimeoutSeconds; sec > 0 {
+					var cancel context.CancelFunc
+					candCtx, cancel = context.WithTimeout(ctx, time.Duration(sec)*time.Second)
+					defer cancel()
+				}
+				setup := s.analyzeCandidate(candCtx, exch, c, btcCtx)
+				mu.Lock()
+				setups = append(setups, setup)
+				if setup.ActionState == string(types.ActionStateTradeCandidate) {
+					qualifiedSetups = append(qualifiedSetups, setup)
+				}
+				mu.Unlock()
+			}(cand)
+		}
+		analysisWg.Wait()
 	}
 
 	// Serialize candidates
@@ -195,7 +250,11 @@ func (s *MarketScanner) AnalyzeSymbolSetup(ctx context.Context, symbol, exchange
 	defer func() { _ = exch.Close() }()
 
 	ticker := s.fetchTicker(ctx, exch, canonical)
-	cand := s.scoreCandidate(canonical, exchangeName, ticker, nil, 0)
+	rsiMap, rsiWarn := s.loadRSIMap(ctx)
+	if rsiWarn != "" {
+		warnings = append(warnings, rsiWarn)
+	}
+	cand := s.scoreCandidate(canonical, exchangeName, ticker, nil, 0, rsiMap)
 	minLiq := s.config.Scoring.MinimumLiquidityQuoteVolume
 
 	quoteVolume := 0.0
@@ -256,6 +315,9 @@ func (s *MarketScanner) AnalyzeSymbolSetup(ctx context.Context, symbol, exchange
 // ---------------------------------------------------------------------------
 
 func (s *MarketScanner) getExchange(name string) (exchange.Exchange, error) {
+	if s.exchangeFactory != nil {
+		return s.exchangeFactory(name)
+	}
 	return exchange.New(name)
 }
 
@@ -269,7 +331,7 @@ type universeItem struct {
 	volume float64
 }
 
-func (s *MarketScanner) discoverCandidates(ctx context.Context, exch exchange.Exchange, exchangeName string) ([]types.Candidate, int, []string) {
+func (s *MarketScanner) discoverCandidates(ctx context.Context, exch exchange.Exchange, exchangeName string, rsiMap map[string]data.CoinRSI) ([]types.Candidate, int, []string) {
 	tickers, err := exch.FetchTickers(ctx)
 	if err != nil || len(tickers) == 0 {
 		if err != nil {
@@ -315,6 +377,14 @@ func (s *MarketScanner) discoverCandidates(ctx context.Context, exch exchange.Ex
 		universe = universe[:s.config.Scanner.UniverseSize]
 	}
 
+	if fe, ok := exch.(exchange.FundingEnricher); ok {
+		symbols := make([]string, len(universe))
+		for i, item := range universe {
+			symbols[i] = item.symbol
+		}
+		fe.EnrichFunding(ctx, tickers, symbols)
+	}
+
 	btcChange := s.btcChangeFromUniverse(universe)
 	boosts := map[string]float64{}
 	if s.hints != nil {
@@ -323,7 +393,7 @@ func (s *MarketScanner) discoverCandidates(ctx context.Context, exch exchange.Ex
 
 	scored := make([]types.Candidate, len(universe))
 	for i, item := range universe {
-		scored[i] = s.scoreCandidate(item.symbol, exchangeName, item.ticker, btcChange, boosts[item.symbol])
+		scored[i] = s.scoreCandidate(item.symbol, exchangeName, item.ticker, btcChange, boosts[item.symbol], rsiMap)
 	}
 
 	// Sort by candidate score desc, break ties by volume desc
@@ -367,6 +437,23 @@ func (s *MarketScanner) fetchTicker(ctx context.Context, exch exchange.Exchange,
 		return nil
 	}
 	return t
+}
+
+func (s *MarketScanner) loadRSIMap(ctx context.Context) (map[string]data.CoinRSI, string) {
+	if s.rsiLoader != nil {
+		return s.rsiLoader(ctx)
+	}
+	timeout := 8 * time.Second
+	if sec := s.config.Scanner.ExchangeRequestTimeoutSeconds; sec > 0 {
+		timeout = time.Duration(sec) * time.Second
+	}
+	_ = ctx
+	m, err := data.FetchSpotRSIMap(timeout)
+	if err != nil {
+		s.log.Debug("coinglass rsi unavailable", "error", err)
+		return nil, fmt.Sprintf("CoinGlass RSI unavailable: %v", err)
+	}
+	return m, ""
 }
 
 // ---------------------------------------------------------------------------
@@ -424,18 +511,29 @@ func (s *MarketScanner) analyzeCandidate(
 	var warnings []string
 	timeframeData := make(map[string]*types.OHLCVArrays)
 
+	var tfMu sync.Mutex
+	var tfWg sync.WaitGroup
 	for _, tf := range s.config.Scanner.Timeframes {
-		limit := 100
-		if tf == "4h" || tf == "15m" {
-			limit = 120
-		}
-		ohlcv := s.fetchOHLCV(ctx, exch, symbol, tf, limit)
-		if ohlcv == nil || len(ohlcv.Closes) < 30 {
-			warnings = append(warnings, fmt.Sprintf("%s OHLCV unavailable or insufficient", tf))
-			continue
-		}
-		timeframeData[tf] = ohlcv
+		tfWg.Add(1)
+		go func(timeframe string) {
+			defer tfWg.Done()
+			limit := 100
+			if timeframe == "4h" || timeframe == "15m" {
+				limit = 120
+			}
+			ohlcv := s.fetchOHLCV(ctx, exch, symbol, timeframe, limit)
+			if ohlcv == nil || len(ohlcv.Closes) < 30 {
+				tfMu.Lock()
+				warnings = append(warnings, fmt.Sprintf("%s OHLCV unavailable or insufficient", timeframe))
+				tfMu.Unlock()
+				return
+			}
+			tfMu.Lock()
+			timeframeData[timeframe] = ohlcv
+			tfMu.Unlock()
+		}(tf)
 	}
+	tfWg.Wait()
 
 	// Check all required timeframes
 	var missing []string

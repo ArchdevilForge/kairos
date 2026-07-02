@@ -187,11 +187,13 @@ func setDefaults(v *viper.Viper) {
 
 	v.SetDefault("scoring", map[string]any{
 		"candidateWeights": map[string]any{
-			"quoteVolume":      4.0,
-			"priceVelocity":    2.0,
-			"openInterest":     1.0,
-			"funding":          1.0,
-			"relativeStrength": 2.0,
+			"quoteVolume":         4.0,
+			"priceVelocity":       2.0,
+			"openInterest":        1.0,
+			"funding":             1.0,
+			"relativeStrength":    2.0,
+			"btcRelativeStrength": 1.5,
+			"rsiHotness":          1.0,
 		},
 		"setupWeights": map[string]any{
 			"dailyTrend":         1.5,

@@ -5,6 +5,7 @@ import (
 	"math"
 	"strings"
 
+	"github.com/ArchdevilForge/kairos/internal/data"
 	"github.com/ArchdevilForge/kairos/internal/types"
 )
 
@@ -18,6 +19,7 @@ func (s *MarketScanner) scoreCandidate(
 	ticker *types.Ticker,
 	btcChange24h *float64,
 	watchBoost float64,
+	rsiMap map[string]data.CoinRSI,
 ) types.Candidate {
 	cand := types.Candidate{
 		Symbol:       symbol,
@@ -82,6 +84,27 @@ func (s *MarketScanner) scoreCandidate(
 	if watchBoost > 0 {
 		score += watchBoost
 		cand.ScoreReasons = append(cand.ScoreReasons, fmt.Sprintf("watch hint boost=%.2f", watchBoost))
+	}
+
+	// 6. CoinGlass RSI hotness (up to 1 pt) — optional third-party context
+	var rsi *data.CoinRSI
+	if rsiMap != nil {
+		if coin, err := data.NormalizeCoinSymbol(symbol); err == nil {
+			if row, ok := rsiMap[coin]; ok {
+				r := row
+				rsi = &r
+			} else {
+				cand.Warnings = append(cand.Warnings, "CoinGlass RSI unavailable for symbol")
+			}
+		}
+	}
+	if rsi != nil && rsi.RSI4h > 0 {
+		rsiWeight := getWeight(weights, "rsiHotness", 1.0)
+		rsiComponent := data.RSIHotnessScore(rsi.RSI4h, rsiWeight)
+		if rsiComponent > 0 {
+			score += rsiComponent
+			cand.ScoreReasons = append(cand.ScoreReasons, fmt.Sprintf("rsi4h attention component=%.2f (rsi4h=%.1f)", rsiComponent, rsi.RSI4h))
+		}
 	}
 
 	// 4. Open interest (up to 1 pt)

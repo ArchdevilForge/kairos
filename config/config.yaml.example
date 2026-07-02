@@ -103,6 +103,7 @@ scoring:
     funding: 1.0
     relativeStrength: 2.0
     btcRelativeStrength: 1.5
+    rsiHotness: 1.0
   setupWeights:
     dailyTrend: 1.5
     structure: 2.0
@@ -148,6 +149,12 @@ storage:
   jsonlPath: ""
   watchHintRetentionHours: 24
   watchHintScoreBoost: 0.5
+
+# CoinGlass (optional RSI hotness for scanner):
+# Clone https://github.com/ArchdevilForge/coinglass-decrypt as ../coinglass-decrypt
+# or set KAIROS_COINGLASS_DECRYPT=/path/to/coinglass-decrypt
+# KAIROS_COINGLASS_USE_PYTHON=0 disables Python (native Go decrypt fallback)
+# KAIROS_COINGLASS_PYTHON=/path/to/.venv/bin/python overrides python binary
 
 charts:
   defaultChartCount: 1

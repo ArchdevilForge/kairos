@@ -7,7 +7,6 @@ import (
 	"io"
 	"math"
 	"net/http"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -162,7 +161,7 @@ func (o *okxExchange) FetchTickers(ctx context.Context) (map[string]*types.Ticke
 		}
 		result[sym] = t
 	}
-	enrichOKXMetrics(ctx, o.httpCli, result)
+	enrichOKXOpenInterest(ctx, o.httpCli, result)
 	return result, nil
 }
 
@@ -211,7 +210,8 @@ func (o *okxExchange) FetchTicker(ctx context.Context, symbol string) (*types.Ti
 		t.ChangePct = &pct
 	}
 	one := map[string]*types.Ticker{sym: t}
-	enrichOKXMetrics(ctx, o.httpCli, one)
+	enrichOKXOpenInterest(ctx, o.httpCli, one)
+	enrichOKXFunding(ctx, o.httpCli, one, []string{sym})
 	return t, nil
 }
 
@@ -222,8 +222,13 @@ func (o *okxExchange) FetchOHLCV(ctx context.Context, symbol, timeframe string, 
 		limit = 100 // OKX max is 300
 	}
 
-	url := fmt.Sprintf("%s/api/v5/market/candles?instId=%s&bar=%s&limit=%d",
-		okxRESTEndpoint, instID, bar, limit)
+	// Recent bars for scanner; history-candles for backtest pagination (sinceMs = cursor).
+	path := "candles"
+	if sinceMs > 0 {
+		path = "history-candles"
+	}
+	url := fmt.Sprintf("%s/api/v5/market/%s?instId=%s&bar=%s&limit=%d",
+		okxRESTEndpoint, path, instID, bar, limit)
 	if sinceMs > 0 {
 		url += fmt.Sprintf("&after=%d", sinceMs)
 	}
@@ -255,22 +260,8 @@ func (o *okxExchange) FetchOHLCV(ctx context.Context, symbol, timeframe string, 
 		return nil, fmt.Errorf("okx fetch ohlcv: code=%s", okxResp.Code)
 	}
 
-	candles := make([]types.Candle, 0, len(okxResp.Data))
-	for _, row := range okxResp.Data {
-		// row: [ts, o, h, l, c, vol, volCcy, volCcyQuote, confirm]
-		if len(row) < 6 {
-			continue
-		}
-		ts, _ := strconv.ParseInt(row[0], 10, 64)
-		candles = append(candles, types.Candle{
-			Timestamp: ts / 1000, // ms → seconds
-			Open:      parseFloat(row[1]),
-			High:      parseFloat(row[2]),
-			Low:       parseFloat(row[3]),
-			Close:     parseFloat(row[4]),
-			Volume:    parseFloat(row[5]),
-		})
-	}
+	candles := parseOKXCandleRows(okxResp.Data)
+	sortCandlesAscending(candles)
 	return candles, nil
 }
 
@@ -411,7 +402,12 @@ func mapTimeframe(tf string) string {
 	}
 }
 
-func enrichOKXMetrics(ctx context.Context, cli *http.Client, tickers map[string]*types.Ticker) {
+// EnrichFunding fetches funding rates for the given symbols (OKX has no bulk endpoint).
+func (o *okxExchange) EnrichFunding(ctx context.Context, tickers map[string]*types.Ticker, symbols []string) {
+	enrichOKXFunding(ctx, o.httpCli, tickers, symbols)
+}
+
+func enrichOKXOpenInterest(ctx context.Context, cli *http.Client, tickers map[string]*types.Ticker) {
 	body, err := okxGET(ctx, cli, okxRESTEndpoint+"/api/v5/public/open-interest?instType=SWAP")
 	if err != nil {
 		return
@@ -436,29 +432,45 @@ func enrichOKXMetrics(ctx context.Context, cli *http.Client, tickers map[string]
 			t.OpenInterest = &v
 		}
 	}
+}
 
-	for sym, t := range tickers {
-		if t == nil {
-			continue
-		}
-		instID := normalizeSymbol(sym)
-		fBody, err := okxGET(ctx, cli, okxRESTEndpoint+"/api/v5/public/funding-rate?instId="+instID)
-		if err != nil {
-			continue
-		}
-		var fResp struct {
-			Code string `json:"code"`
-			Data []struct {
-				FundingRate string `json:"fundingRate"`
-			} `json:"data"`
-		}
-		if json.Unmarshal(fBody, &fResp) != nil || fResp.Code != "0" || len(fResp.Data) == 0 {
-			continue
-		}
-		if v := parseFloat(fResp.Data[0].FundingRate); v != 0 {
-			t.FundingRate = &v
-		}
+func enrichOKXFunding(ctx context.Context, cli *http.Client, tickers map[string]*types.Ticker, symbols []string) {
+	if len(symbols) == 0 {
+		return
 	}
+	const maxParallel = 8
+	sem := make(chan struct{}, maxParallel)
+	var wg sync.WaitGroup
+	for _, sym := range symbols {
+		t, ok := tickers[sym]
+		if !ok || t == nil {
+			continue
+		}
+		wg.Add(1)
+		go func(sym string, ticker *types.Ticker) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			instID := normalizeSymbol(sym)
+			fBody, err := okxGET(ctx, cli, okxRESTEndpoint+"/api/v5/public/funding-rate?instId="+instID)
+			if err != nil {
+				return
+			}
+			var fResp struct {
+				Code string `json:"code"`
+				Data []struct {
+					FundingRate string `json:"fundingRate"`
+				} `json:"data"`
+			}
+			if json.Unmarshal(fBody, &fResp) != nil || fResp.Code != "0" || len(fResp.Data) == 0 {
+				return
+			}
+			if v := parseFloat(fResp.Data[0].FundingRate); v != 0 {
+				ticker.FundingRate = &v
+			}
+		}(sym, t)
+	}
+	wg.Wait()
 }
 
 func okxGET(ctx context.Context, cli *http.Client, url string) ([]byte, error) {

@@ -27,9 +27,9 @@ cmd/
 
 internal/
 ├── alert/             # scanner alert HTML formatting
-├── backtest/          # backtest engine
+├── backtest/          # backtest engine (OKX OHLCV backward pagination)
 ├── config/            # YAML config loading
-├── data/              # CoinGlass client
+├── data/              # CoinGlass client, RSI map, Python bridge (coinglass_py.go)
 ├── detector/          # anomaly detectors + resonance scorer
 ├── engine/            # WS orchestration pipeline → Telegram
 ├── exchange/          # okx / binance / bybit adapters
@@ -39,6 +39,7 @@ internal/
 ├── types/             # shared types + config structs
 └── utils/             # blacklist, market data, zscore, symbol
 
+scripts/               # coinglass_fetch.py (Python decrypt bridge)
 tests/                 # cross-package equivalence tests
 config/                # config.yaml.example
 docs/                  # architecture + trading system docs

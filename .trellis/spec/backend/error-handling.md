@@ -14,57 +14,52 @@ kairos uses Go idiomatic error handling: functions return `(T, error)` and calle
 
 ### 1. Exchange errors
 
-```python
-try:
-    result = await exchange.fetch_ticker(symbol)
-except ccxt.NetworkError as e:
-    logger.error(f"Network error fetching {symbol}: {e}")
-    return {}
-except Exception as e:
-    logger.warning(f"Failed to fetch ticker for {symbol}: {e}")
-    return {}
+```go
+ticker, err := exch.FetchTicker(ctx, symbol)
+if err != nil {
+    s.log.Warn("ticker fetch failed", "symbol", symbol, "error", err)
+    return nil // degrade; scanner continues with warnings
+}
 ```
 
 ### 2. Configuration errors
 
-```python
-try:
-    config = load_config(path)
-except FileNotFoundError:
-    logger.error(f"Config not found: {path}")
-    raise
-except yaml.YAMLError as e:
-    logger.error(f"Config parse error: {e}")
-    raise
+```go
+cfg, err := config.Load(path)
+if err != nil {
+    return fmt.Errorf("load config: %w", err)
+}
 ```
 
-### 3. Data validation errors
+### 3. Optional third-party data (CoinGlass RSI)
 
-```python
-def _normalize_symbol(symbol: str) -> str:
-    value = symbol.strip().upper()
-    if not value:
-        raise ValueError("symbol is required")
-    # ...
+```go
+m, err := data.FetchSpotRSIMap(timeout)
+if err != nil {
+    s.log.Debug("coinglass rsi unavailable", "error", err)
+    return nil, fmt.Sprintf("CoinGlass RSI unavailable: %v", err)
+}
 ```
+
+Scanner treats optional enrichment as best-effort: log/warn, never panic or block the envelope.
 
 ---
 
 ## Logging Standards
 
-- `logger.info` for normal lifecycle events (start, stop, periodic actions)
-- `logger.warning` for recoverable issues (missing data, degraded confidence)
-- `logger.error` for operation failures (WS disconnect, API error)
-- `logger.exception` (includes traceback) for unexpected exceptions
+- `slog.Info` for normal lifecycle events (start, stop, periodic actions)
+- `slog.Warn` for recoverable issues (missing data, degraded confidence)
+- `slog.Error` for operation failures (WS disconnect, API error)
+- Use structured key/value pairs: `"symbol", symbol, "error", err`
 
 ---
 
 ## Common Mistakes
 
-1. **Broad except**: bare `except:` hides real errors — always name the exception
+1. **Ignored errors**: `_ = err` on required paths — check and log or return
 2. **Missing context**: log what operation failed and with what parameters
-3. **Inconsistent severity**: distinguish WARNING (recoverable) from ERROR (operation failed)
-4. **Silent failures**: don't swallow exceptions without at least a `logger.warning`
+3. **Inconsistent severity**: distinguish Warn (recoverable) from Error (operation failed)
+4. **Silent failures**: optional data paths must still emit Debug/Warn when unavailable
 
 ---
 

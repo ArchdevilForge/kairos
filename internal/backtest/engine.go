@@ -289,10 +289,12 @@ func (r *BacktestRunner) fetchOHLCV(ctx context.Context, symbol, start, end, tim
 	endMs := parseDate(end)
 
 	var all []types.Candle
-	sinceMs := startMs
+	cursor := endMs
 
-	for sinceMs < endMs {
-		candles, err := r.exch.FetchOHLCV(ctx, symbol, timeframe, 300, sinceMs)
+	// ponytail: OKX history-candles paginates backward via `after`; ccxt-style forward
+	// since loops do not work. Walk from end→start, then sort ascending.
+	for {
+		candles, err := r.exch.FetchOHLCV(ctx, symbol, timeframe, 300, cursor)
 		if err != nil {
 			return nil, fmt.Errorf("fetch OHLCV: %w", err)
 		}
@@ -300,21 +302,26 @@ func (r *BacktestRunner) fetchOHLCV(ctx context.Context, symbol, start, end, tim
 			break
 		}
 
-		// OKX returns newest-first with `after` pagination; result is already
-		// chronological (oldest-first) because `after` sorts ascending.
-		// Filter out candles older than context start or newer than end.
 		for _, c := range candles {
-			tsMs := c.Timestamp * 1000 // Candle stores seconds
+			tsMs := c.Timestamp * 1000
 			if tsMs >= startMs && tsMs <= endMs {
 				all = append(all, c)
 			}
 		}
 
-		lastTs := candles[len(candles)-1].Timestamp * 1000 // sec → ms
-		if lastTs <= sinceMs {
+		oldest := candles[0].Timestamp * 1000
+		for _, c := range candles[1:] {
+			if ts := c.Timestamp * 1000; ts < oldest {
+				oldest = ts
+			}
+		}
+		if oldest <= startMs {
 			break
 		}
-		sinceMs = lastTs + 60000 // advance by 1 minute past last
+		if oldest >= cursor {
+			break
+		}
+		cursor = oldest
 	}
 
 	if len(all) == 0 {

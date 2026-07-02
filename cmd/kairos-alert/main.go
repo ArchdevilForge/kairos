@@ -32,9 +32,13 @@ func main() {
 	os.Exit(runOnce(context.Background(), cfg, *exchange, *minState, *limit, *dryRun))
 }
 
+// scanMarketFn is overridden in tests.
+var scanMarketFn = func(ctx context.Context, cfg *types.Config, exchange string) *types.SignalEnvelope {
+	return scanner.NewMarketScanner(cfg).ScanMarket(ctx, exchange)
+}
+
 func runOnce(ctx context.Context, cfg *types.Config, exchangeName, minState string, limit int, dryRun bool) int {
-	sc := scanner.NewMarketScanner(cfg)
-	scan := sc.ScanMarket(ctx, exchangeName)
+	scan := scanMarketFn(ctx, cfg, exchangeName)
 	if scan == nil || !scan.Success {
 		errs := []string{"scan failed"}
 		if scan != nil && len(scan.Errors) > 0 {

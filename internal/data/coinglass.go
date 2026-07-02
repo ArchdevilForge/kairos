@@ -202,13 +202,22 @@ func DecryptCoinGlassResponse(encryptedBody []byte, userTokenB64, v, reqURL stri
 // ---------------------------------------------------------------------------
 
 // FetchCoinGlassEndpoint fetches a CoinGlass endpoint and handles decryption.
-// Ported from coinglass_client.fetch_coinglass_endpoint.
+// Prefers Python coinglass-decrypt when available; falls back to native Go decrypt.
 func FetchCoinGlassEndpoint(path string, params map[string]string, timeout time.Duration) (any, error) {
-	baseURL := coinglassBase
-	if strings.HasPrefix(path, "http") {
-		baseURL = ""
+	if raw, err := fetchCoinGlassViaPython(path, params, timeout); err == nil {
+		return raw, nil
 	}
-	u, err := url.Parse(baseURL + "/" + strings.TrimLeft(path, "/"))
+	return fetchCoinGlassNative(path, params, timeout)
+}
+
+func fetchCoinGlassNative(path string, params map[string]string, timeout time.Duration) (any, error) {
+	var u *url.URL
+	var err error
+	if strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") {
+		u, err = url.Parse(path)
+	} else {
+		u, err = url.Parse(coinglassBase + "/" + strings.TrimLeft(path, "/"))
+	}
 	if err != nil {
 		return nil, &CoinGlassError{msg: fmt.Sprintf("invalid url: %v", err)}
 	}
@@ -258,9 +267,7 @@ func FetchCoinGlassEndpoint(path string, params map[string]string, timeout time.
 	}
 	// If it's a dict with a "data" key and few keys, unwrap.
 	if m, ok := payload.(map[string]any); ok {
-		if d, has := m["data"]; has && len(m) <= 4 {
-			return d, nil
-		}
+		return unwrapCoinGlassPayload(m), nil
 	}
 	return payload, nil
 }

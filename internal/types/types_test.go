@@ -75,3 +75,17 @@ func TestSetup_JSONRoundTrip(t *testing.T) {
 		t.Fatalf("decoded: %+v", decoded)
 	}
 }
+
+func TestBoxPattern_Methods(t *testing.T) {
+	b := BoxPattern{High: 110, Low: 100, SecondTestHigh: true, ConvergencePct: 0.8}
+	if b.Height() != 10 || b.HeightPct() != 10 || b.Midpoint() != 105 {
+		t.Fatalf("geometry: h=%v pct=%v mid=%v", b.Height(), b.HeightPct(), b.Midpoint())
+	}
+	if !b.IsReady() {
+		t.Fatal("expected ready box")
+	}
+	zero := BoxPattern{Low: 0}
+	if zero.HeightPct() != 0 {
+		t.Fatal("zero low")
+	}
+}

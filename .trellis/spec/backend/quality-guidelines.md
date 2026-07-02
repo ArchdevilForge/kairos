@@ -107,10 +107,30 @@ logger.error(f"Failed to execute order: {e}")
 ### Current runnable checks
 
 ```bash
-make check   # go build + vet + golangci-lint + test -race
+make check        # go build + vet + golangci-lint + test -race
+make cover        # internal/* coverage report (excludes internal/types)
+make cover-check  # fails if internal coverage < COVERAGE_MIN (default 70%)
 ```
 
-Run the smallest relevant package test while editing, then run `make check` before finishing architecture-level changes.
+Run the smallest relevant package test while editing, then run `make check` before finishing architecture-level changes. Use `make cover-check` when adding tests across `internal/`.
+
+### Test injection hooks
+
+Prefer package-level function vars over exporting internals:
+
+```go
+// cmd/kairos-alert/main.go
+var scanMarketFn = func(ctx context.Context, cfg *types.Config, exchange string) *types.SignalEnvelope {
+    return scanner.NewMarketScanner(cfg).ScanMarket(ctx, exchange)
+}
+
+// internal/engine/pipeline.go
+var exchangeNew = exchange.New
+
+// internal/scanner/scanner.go — optional rsiLoader / exchangeFactory on MarketScanner
+```
+
+Override these in `_test.go` files instead of mocking entire packages.
 
 ### Mock 规则
 

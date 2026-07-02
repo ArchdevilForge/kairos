@@ -161,27 +161,7 @@ func (b *binanceExchange) FetchOHLCV(ctx context.Context, symbol, timeframe stri
 	if err != nil {
 		return nil, err
 	}
-	var rows [][]any
-	if err := json.Unmarshal(body, &rows); err != nil {
-		return nil, fmt.Errorf("binance fetch ohlcv: decode: %w", err)
-	}
-
-	candles := make([]types.Candle, 0, len(rows))
-	for _, row := range rows {
-		if len(row) < 6 {
-			continue
-		}
-		ts := int64(parseFloat(fmt.Sprint(row[0])))
-		candles = append(candles, types.Candle{
-			Timestamp: ts / 1000,
-			Open:      parseFloat(fmt.Sprint(row[1])),
-			High:      parseFloat(fmt.Sprint(row[2])),
-			Low:       parseFloat(fmt.Sprint(row[3])),
-			Close:     parseFloat(fmt.Sprint(row[4])),
-			Volume:    parseFloat(fmt.Sprint(row[5])),
-		})
-	}
-	return candles, nil
+	return parseBinanceKlines(body)
 }
 
 func (b *binanceExchange) Close() error {

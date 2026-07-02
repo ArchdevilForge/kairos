@@ -34,6 +34,9 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+// exchangeNew creates exchange adapters; overridden in tests.
+var exchangeNew = exchange.New
+
 // ────────────────────────────────────────────────────────────────
 // Pipeline
 // ────────────────────────────────────────────────────────────────
@@ -189,7 +192,7 @@ func (p *Pipeline) Start(ctx context.Context) error {
 
 	// 1. Create exchange instances.
 	for _, name := range exchangeNames {
-		ex, err := exchange.New(name)
+		ex, err := exchangeNew(name)
 		if err != nil {
 			p.log.Warn("exchange creation skipped", "exchange", name, "error", err)
 			continue
