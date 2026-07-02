@@ -33,6 +33,9 @@ alertPolicy:
     - "volume_spike"
     - "open_interest_change"
     - "funding_rate_anomaly"
+    - "long_short_ratio"
+    - "liquidation"
+    - "resonance"
   minSeverity: "MEDIUM"
   minPriceChangePct: 1.2
   minVolumeRatio: 6.0
@@ -71,6 +74,31 @@ futuresMetrics:
     absRateThreshold: 0.0005
     minChangeAbs: 0.0003
     minNotifyInterval: "30m"
+
+longShortRatio:
+  enabled: true
+  pollIntervalSeconds: 300
+  absThreshold: 80.0
+  zscoreThreshold: 2.5
+  zscoreWindow: 48
+  velocityThresholdPct: 15.0
+  minNotifyInterval: "30m"
+
+liquidation:
+  enabled: true
+  pollIntervalSeconds: 300
+  absThresholdUsd: 1000000
+  zscoreThreshold: 2.5
+  zscoreWindow: 48
+  imbalanceThreshold: 0.80
+  minNotifyInterval: "30m"
+
+resonanceScorer:
+  enabled: true
+  windowSeconds: 300
+  minDimensions: 2
+  minScore: 55
+  cooldownSeconds: 600
 
 scanner:
   intervalSeconds: 300

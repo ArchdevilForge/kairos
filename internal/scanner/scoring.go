@@ -305,6 +305,9 @@ func (s *MarketScanner) computeRiskBounds(
 			maxLeverage = math.Min(maxLeverage, 3.0)
 		}
 	}
+	if s.cycleComponent(direction, phase) == 0 {
+		maxPositionPct *= s.config.Risk.InverseCyclePositionMultiplier
+	}
 
 	var entryZone [2]float64
 	var stop float64

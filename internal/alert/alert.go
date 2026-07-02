@@ -260,6 +260,8 @@ func setupTypeZH(setupType string) string {
 		return "区间突破"
 	case "range_breakdown":
 		return "区间跌破"
+	case "box_support":
+		return "箱体支撑"
 	default:
 		return setupType
 	}

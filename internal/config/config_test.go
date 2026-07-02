@@ -97,3 +97,29 @@ func TestLoad_MissingFile(t *testing.T) {
 		t.Fatal("expected error for missing file")
 	}
 }
+
+func TestLoad_ExampleConfigAlignsWithTypes(t *testing.T) {
+	cfg, err := Load(filepath.Join("..", "..", "config", "config.yaml.example"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Scoring.CandidateWeights["rsihotness"] != 1.0 {
+		t.Fatalf("rsiHotness: %v", cfg.Scoring.CandidateWeights)
+	}
+	if cfg.Scoring.CandidateWeights["btcrelativestrength"] != 1.5 {
+		t.Fatalf("btcRelativeStrength: %v", cfg.Scoring.CandidateWeights)
+	}
+	if !cfg.LongShortRatio.Enabled || !cfg.Liquidation.Enabled || !cfg.ResonanceScorer.Enabled {
+		t.Fatalf("detector sections: ls=%v liq=%v res=%v",
+			cfg.LongShortRatio.Enabled, cfg.Liquidation.Enabled, cfg.ResonanceScorer.Enabled)
+	}
+	wantEvents := map[string]bool{
+		"long_short_ratio": true, "liquidation": true, "resonance": true,
+	}
+	for _, ev := range cfg.AlertPolicy.AllowedEventTypes {
+		delete(wantEvents, ev)
+	}
+	if len(wantEvents) != 0 {
+		t.Fatalf("alertPolicy missing events: %v", wantEvents)
+	}
+}

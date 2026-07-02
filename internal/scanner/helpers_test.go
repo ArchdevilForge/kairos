@@ -89,6 +89,9 @@ func TestNumericAndMapHelpers(t *testing.T) {
 	if getWeight(nil, "x", 1.5) != 1.5 {
 		t.Fatal("getWeight nil")
 	}
+	if getWeight(map[string]float64{"rsihotness": 2.5}, "rsiHotness", 1.0) != 2.5 {
+		t.Fatal("getWeight case-insensitive viper keys")
+	}
 	if getMapString(map[string]any{"k": "v"}, "k") != "v" {
 		t.Fatal("getMapString")
 	}

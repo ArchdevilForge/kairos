@@ -173,6 +173,8 @@ func (s *MarketScanner) ScanMarket(ctx context.Context, exchangeName string) *ty
 			}(cand)
 		}
 		analysisWg.Wait()
+		sortSetupsByCandidateOrder(setups, candidates[:limit])
+		sortSetupsByCandidateOrder(qualifiedSetups, candidates[:limit])
 	}
 
 	// Serialize candidates
@@ -254,7 +256,8 @@ func (s *MarketScanner) AnalyzeSymbolSetup(ctx context.Context, symbol, exchange
 	if rsiWarn != "" {
 		warnings = append(warnings, rsiWarn)
 	}
-	cand := s.scoreCandidate(canonical, exchangeName, ticker, nil, 0, rsiMap)
+	btcChange := s.btcChangeFromTicker(ctx, exch)
+	cand := s.scoreCandidate(canonical, exchangeName, ticker, btcChange, 0, rsiMap)
 	minLiq := s.config.Scoring.MinimumLiquidityQuoteVolume
 
 	quoteVolume := 0.0
@@ -411,6 +414,29 @@ func (s *MarketScanner) discoverCandidates(ctx context.Context, exch exchange.Ex
 	return scored, universeSize, warnings
 }
 
+func (s *MarketScanner) btcChangeFromTicker(ctx context.Context, exch exchange.Exchange) *float64 {
+	btcSym, err := utils.NormalizeSymbol("BTC/USDT")
+	if err != nil {
+		return nil
+	}
+	t := s.fetchTicker(ctx, exch, btcSym)
+	if t == nil || t.ChangePct == nil {
+		return nil
+	}
+	v := *t.ChangePct
+	return &v
+}
+
+func sortSetupsByCandidateOrder(setups []types.Setup, candidates []types.Candidate) {
+	order := make(map[string]int, len(candidates))
+	for i, c := range candidates {
+		order[c.Symbol] = i
+	}
+	sort.Slice(setups, func(i, j int) bool {
+		return order[setups[i].Symbol] < order[setups[j].Symbol]
+	})
+}
+
 func (s *MarketScanner) btcChangeFromUniverse(universe []universeItem) *float64 {
 	btcSym, err := utils.NormalizeSymbol("BTC/USDT")
 	if err != nil {
@@ -447,13 +473,31 @@ func (s *MarketScanner) loadRSIMap(ctx context.Context) (map[string]data.CoinRSI
 	if sec := s.config.Scanner.ExchangeRequestTimeoutSeconds; sec > 0 {
 		timeout = time.Duration(sec) * time.Second
 	}
-	_ = ctx
-	m, err := data.FetchSpotRSIMap(timeout)
-	if err != nil {
-		s.log.Debug("coinglass rsi unavailable", "error", err)
-		return nil, fmt.Sprintf("CoinGlass RSI unavailable: %v", err)
+	if deadline, ok := ctx.Deadline(); ok {
+		if remaining := time.Until(deadline); remaining > 0 && remaining < timeout {
+			timeout = remaining
+		}
 	}
-	return m, ""
+	type rsiResult struct {
+		m   map[string]data.CoinRSI
+		err error
+	}
+	ch := make(chan rsiResult, 1)
+	go func() {
+		m, err := data.FetchSpotRSIMap(timeout)
+		ch <- rsiResult{m, err}
+	}()
+	select {
+	case <-ctx.Done():
+		s.log.Debug("coinglass rsi cancelled", "error", ctx.Err())
+		return nil, fmt.Sprintf("CoinGlass RSI unavailable: %v", ctx.Err())
+	case r := <-ch:
+		if r.err != nil {
+			s.log.Debug("coinglass rsi unavailable", "error", r.err)
+			return nil, fmt.Sprintf("CoinGlass RSI unavailable: %v", r.err)
+		}
+		return r.m, ""
+	}
 }
 
 // ---------------------------------------------------------------------------

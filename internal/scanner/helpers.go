@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/ArchdevilForge/kairos/internal/indicators"
@@ -282,6 +283,13 @@ func getWeight(m map[string]float64, key string, def float64) float64 {
 	}
 	if v, ok := m[key]; ok {
 		return v
+	}
+	// ponytail: viper/mapstructure lowercases map keys from YAML; match case-insensitively.
+	lk := strings.ToLower(key)
+	for k, v := range m {
+		if strings.ToLower(k) == lk {
+			return v
+		}
 	}
 	return def
 }

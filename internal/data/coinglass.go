@@ -12,6 +12,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/ArchdevilForge/kairos/internal/utils"
 )
 
 // ---------------------------------------------------------------------------
@@ -277,28 +279,11 @@ func fetchCoinGlassNative(path string, params map[string]string, timeout time.Du
 // ---------------------------------------------------------------------------
 
 // NormalizeCoinSymbol strips exchange suffixes to get the base coin name.
-// Ported from coinglass_client.normalize_coin_symbol.
+// Delegates to utils.NormalizeCoinSymbol so RSI/CoinGlass keys stay aligned.
 func NormalizeCoinSymbol(symbol string) (string, error) {
-	value := strings.ToUpper(strings.TrimSpace(symbol))
-	if value == "" {
+	coin := utils.NormalizeCoinSymbol(symbol)
+	if coin == "" {
 		return "", &CoinGlassError{msg: "symbol is required"}
 	}
-	// Strip after ":".
-	if idx := strings.Index(value, ":"); idx >= 0 {
-		value = value[:idx]
-	}
-	// Strip after first separator.
-	for _, sep := range []string{"/", "-", "_"} {
-		if idx := strings.Index(value, sep); idx >= 0 {
-			value = value[:idx]
-			break
-		}
-	}
-	// Strip known suffixes.
-	for _, suffix := range []string{"USDT", "USDC", "USD", "PERP"} {
-		if strings.HasSuffix(value, suffix) && len(value) > len(suffix) {
-			return value[:len(value)-len(suffix)], nil
-		}
-	}
-	return value, nil
+	return coin, nil
 }

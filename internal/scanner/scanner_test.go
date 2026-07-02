@@ -38,6 +38,41 @@ func TestVolumeConfirmed(t *testing.T) {
 	}
 }
 
+func TestComputeRiskBounds_InverseCycleMultiplier(t *testing.T) {
+	cfg := &types.Config{
+		Risk: types.RiskConfig{
+			MaxPositionPct:                 map[string]float64{"altcoin": 33.0},
+			MaxLeverage:                      map[string]float64{"altcoin": 5.0},
+			InverseCyclePositionMultiplier:   0.5,
+			ShortPositionMultiplier:          0.75,
+			WeakCyclePositionMultiplier:      0.5,
+		},
+	}
+	s := NewMarketScanner(cfg)
+	structure := map[string]any{"high": 110, "low": 100, "height": 10}
+
+	summerLong := s.computeRiskBounds(types.DirectionLong, "ETH/USDT:USDT", structure, 111, "summer", "up")
+	winterLong := s.computeRiskBounds(types.DirectionLong, "ETH/USDT:USDT", structure, 111, "winter", "down")
+	if winterLong.MaxPositionPct >= summerLong.MaxPositionPct {
+		t.Fatalf("inverse cycle should reduce position: summer=%v winter=%v", summerLong.MaxPositionPct, winterLong.MaxPositionPct)
+	}
+}
+
+func TestSortSetupsByCandidateOrder(t *testing.T) {
+	setups := []types.Setup{
+		{Symbol: "ETH/USDT:USDT"},
+		{Symbol: "BTC/USDT:USDT"},
+	}
+	candidates := []types.Candidate{
+		{Symbol: "BTC/USDT:USDT"},
+		{Symbol: "ETH/USDT:USDT"},
+	}
+	sortSetupsByCandidateOrder(setups, candidates)
+	if setups[0].Symbol != "BTC/USDT:USDT" || setups[1].Symbol != "ETH/USDT:USDT" {
+		t.Fatalf("order: %+v", setups)
+	}
+}
+
 func TestComputeRiskBounds_ShortZeroTargets(t *testing.T) {
 	s := NewMarketScanner(&types.Config{})
 	risk := s.computeRiskBounds(

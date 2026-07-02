@@ -119,7 +119,7 @@ func TestDisplayAndTranslations(t *testing.T) {
 	if directionZH("long") != cases["long"] || stateZH("prepare") != cases["prepare"] {
 		t.Fatal("zh maps")
 	}
-	if setupTypeZH("box_breakout") != cases["box_breakout"] {
+	if setupTypeZH("box_breakout") != cases["box_breakout"] || setupTypeZH("box_support") != "箱体支撑" {
 		t.Fatal("setup type")
 	}
 }
