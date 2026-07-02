@@ -1,0 +1,126 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v0.1.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  COMMANDS: kairosd kairos-alert kairos-backtest
+
+jobs:
+  build:
+    name: build ${{ matrix.goos }}-${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+          - goos: windows
+            goarch: arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Resolve version
+        id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build and pack
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          VERSION: ${{ steps.ver.outputs.tag }}
+        run: |
+          set -euo pipefail
+          pkg="kairos-${VERSION}-${GOOS}-${GOARCH}"
+          mkdir -p "dist/${pkg}/config"
+          ext=""
+          if [ "$GOOS" = "windows" ]; then ext=".exe"; fi
+          for cmd in ${COMMANDS}; do
+            go build -trimpath -ldflags="-s -w" \
+              -o "dist/${pkg}/${cmd}${ext}" "./cmd/${cmd}"
+          done
+          cp config/config.yaml.example "dist/${pkg}/config/"
+          cp README.md "dist/${pkg}/"
+          cat > "dist/${pkg}/RUN.txt" <<EOF
+          kairos ${VERSION} (${GOOS}/${GOARCH})
+
+          1. cp config/config.yaml.example ~/.config/kairos/config.yaml  # 或任意路径
+          2. export TELEGRAM_BOT_TOKEN=...
+          3. export TELEGRAM_CHAT_ID=...
+          4. ./kairosd --config ~/.config/kairos/config.yaml
+             ./kairos-alert --config ~/.config/kairos/config.yaml --dry-run
+             ./kairos-backtest --symbol BTC/USDT --start 2024-01-01 --end 2024-06-01
+          EOF
+          if [ "$GOOS" = "windows" ]; then
+            (cd dist && zip -r "${pkg}.zip" "${pkg}")
+          else
+            (cd dist && tar czf "${pkg}.tar.gz" "${pkg}")
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kairos-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/*.{tar.gz,zip}
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: ${{ steps.ver.outputs.tag }}
+          generate_release_notes: true
+          files: dist/*
+          draft: false
+          prerelease: ${{ contains(steps.ver.outputs.tag, '-') }}

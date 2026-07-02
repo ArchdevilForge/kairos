@@ -18,6 +18,31 @@ CoinGlass API  ──→  多空比/爆仓检测器  ──→  共振评分器 
 
 ## Build & Commands
 
+### Download prebuilt binaries
+
+Push a version tag (`v*`) or run the **Release** workflow on GitHub Actions — assets are published to [GitHub Releases](https://github.com/ArchdevilForge/kairos/releases).
+
+```bash
+# 1. Open https://github.com/ArchdevilForge/kairos/releases/latest
+# 2. Download kairos-<version>-linux-amd64.tar.gz (Windows: .zip)
+tar xzf kairos-*-linux-amd64.tar.gz
+cd kairos-*-linux-amd64
+export TELEGRAM_BOT_TOKEN=...
+export TELEGRAM_CHAT_ID=...
+./kairosd --config config/config.yaml.example
+```
+
+Each archive contains `kairosd`, `kairos-alert`, `kairos-backtest`, and `config/config.yaml.example`.
+
+To cut a release from your machine:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+### Build from source
+
 ```bash
 make check   # build + vet + golangci-lint + test -race
 
