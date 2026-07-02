@@ -93,6 +93,13 @@ func TestFormatResonance_NilData(t *testing.T) {
 
 func TestFormatLiquidation_NilReason(t *testing.T) {
 	text := formatLiquidation(types.AlertEvent{Data: map[string]any{}}, "BTC", "高", "00:00")
+	if strings.Contains(text, "<nil>") {
+		t.Fatalf("nil zscore must not leak HTML: %s", text)
+	}
+	text = formatLiquidation(types.AlertEvent{Data: map[string]any{"zscore": nil}}, "BTC", "高", "00:00")
+	if strings.Contains(text, "<nil>") {
+		t.Fatalf("nil zscore field: %s", text)
+	}
 	if !strings.Contains(text, "原因") {
 		t.Fatalf("nil reason: %s", text)
 	}

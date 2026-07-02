@@ -158,8 +158,8 @@ func formatLiquidation(event types.AlertEvent, symbol, severity, ts string) stri
 		reason = "?"
 	}
 	zsText := ""
-	if zs, ok := data["zscore"]; ok {
-		zsText = fmt.Sprintf(" | Z=%v", zs)
+	if _, ok := data["zscore"]; ok {
+		zsText = fmt.Sprintf(" | Z=%s", formatField(data, "zscore", "?"))
 	}
 
 	var b strings.Builder
@@ -184,8 +184,8 @@ func formatLongShort(event types.AlertEvent, symbol, severity, ts string) string
 		reason = "?"
 	}
 	zsText := ""
-	if zs, ok := data["zscore"]; ok {
-		zsText = fmt.Sprintf(" | Z=%v", zs)
+	if _, ok := data["zscore"]; ok {
+		zsText = fmt.Sprintf(" | Z=%s", formatField(data, "zscore", "?"))
 	}
 
 	var b strings.Builder
