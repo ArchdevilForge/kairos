@@ -98,6 +98,20 @@ func TestLoad_MissingFile(t *testing.T) {
 	}
 }
 
+func TestLoadString_DefaultsLiquidityWeight(t *testing.T) {
+	cfg, err := LoadString("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lw := cfg.AlertPolicy.LiquidityWeight
+	if !lw.Enabled || lw.MinWeight != 0.3 {
+		t.Fatalf("defaults: enabled=%v minWeight=%v", lw.Enabled, lw.MinWeight)
+	}
+	if len(lw.MajorSymbols) != 2 {
+		t.Fatalf("majorSymbols: %v", lw.MajorSymbols)
+	}
+}
+
 func TestLoad_ExampleConfigAlignsWithTypes(t *testing.T) {
 	cfg, err := Load(filepath.Join("..", "..", "config", "config.yaml.example"))
 	if err != nil {
@@ -121,5 +135,12 @@ func TestLoad_ExampleConfigAlignsWithTypes(t *testing.T) {
 	}
 	if len(wantEvents) != 0 {
 		t.Fatalf("alertPolicy missing events: %v", wantEvents)
+	}
+	if !cfg.AlertPolicy.LiquidityWeight.Enabled || cfg.AlertPolicy.LiquidityWeight.MinWeight != 0.3 {
+		t.Fatalf("liquidityWeight: enabled=%v minWeight=%v",
+			cfg.AlertPolicy.LiquidityWeight.Enabled, cfg.AlertPolicy.LiquidityWeight.MinWeight)
+	}
+	if len(cfg.AlertPolicy.LiquidityWeight.MajorSymbols) < 2 {
+		t.Fatalf("majorSymbols: %v", cfg.AlertPolicy.LiquidityWeight.MajorSymbols)
 	}
 }

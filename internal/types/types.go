@@ -255,16 +255,25 @@ type DataManagerConfig struct {
 	SymbolCooldownMinutes int     `mapstructure:"symbolCooldownMinutes" json:"symbolCooldownMinutes" yaml:"symbolCooldownMinutes"`
 }
 
+// LiquidityWeightConfig down-weights alerts for low market-cap symbols.
+// Caps are fetched once from CoinGlass at subscribe/refresh (not realtime).
+type LiquidityWeightConfig struct {
+	Enabled      bool     `mapstructure:"enabled" json:"enabled" yaml:"enabled"`
+	MinWeight    float64  `mapstructure:"minWeight" json:"minWeight" yaml:"minWeight"`
+	MajorSymbols []string `mapstructure:"majorSymbols" json:"majorSymbols" yaml:"majorSymbols"`
+}
+
 // AlertPolicyConfig defines which event types and severity thresholds trigger alerts.
 type AlertPolicyConfig struct {
-	Enabled                 bool     `mapstructure:"enabled" json:"enabled" yaml:"enabled"`
-	AllowedEventTypes       []string `mapstructure:"allowedEventTypes" json:"allowedEventTypes" yaml:"allowedEventTypes"`
-	MinSeverity             string   `mapstructure:"minSeverity" json:"minSeverity" yaml:"minSeverity"`
-	MinPriceChangePct       float64  `mapstructure:"minPriceChangePct" json:"minPriceChangePct" yaml:"minPriceChangePct"`
-	MinVolumeRatio          float64  `mapstructure:"minVolumeRatio" json:"minVolumeRatio" yaml:"minVolumeRatio"`
-	MinOpenInterestChangePct float64 `mapstructure:"minOpenInterestChangePct" json:"minOpenInterestChangePct" yaml:"minOpenInterestChangePct"`
-	MinFundingRateAbs       float64  `mapstructure:"minFundingRateAbs" json:"minFundingRateAbs" yaml:"minFundingRateAbs"`
-	MinFundingRateChangeAbs float64  `mapstructure:"minFundingRateChangeAbs" json:"minFundingRateChangeAbs" yaml:"minFundingRateChangeAbs"`
+	Enabled                  bool                  `mapstructure:"enabled" json:"enabled" yaml:"enabled"`
+	AllowedEventTypes        []string              `mapstructure:"allowedEventTypes" json:"allowedEventTypes" yaml:"allowedEventTypes"`
+	MinSeverity              string                `mapstructure:"minSeverity" json:"minSeverity" yaml:"minSeverity"`
+	MinPriceChangePct        float64               `mapstructure:"minPriceChangePct" json:"minPriceChangePct" yaml:"minPriceChangePct"`
+	MinVolumeRatio           float64               `mapstructure:"minVolumeRatio" json:"minVolumeRatio" yaml:"minVolumeRatio"`
+	MinOpenInterestChangePct float64               `mapstructure:"minOpenInterestChangePct" json:"minOpenInterestChangePct" yaml:"minOpenInterestChangePct"`
+	MinFundingRateAbs        float64               `mapstructure:"minFundingRateAbs" json:"minFundingRateAbs" yaml:"minFundingRateAbs"`
+	MinFundingRateChangeAbs  float64               `mapstructure:"minFundingRateChangeAbs" json:"minFundingRateChangeAbs" yaml:"minFundingRateChangeAbs"`
+	LiquidityWeight          LiquidityWeightConfig `mapstructure:"liquidityWeight" json:"liquidityWeight" yaml:"liquidityWeight"`
 }
 
 // PriceVelocityConfig defines short-term price velocity thresholds.

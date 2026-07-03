@@ -42,6 +42,13 @@ alertPolicy:
   minOpenInterestChangePct: 5.0
   minFundingRateAbs: 0.0005
   minFundingRateChangeAbs: 0.0003
+  liquidityWeight:
+    enabled: true
+    minWeight: 0.3
+    # BTC/ETH always weight 1.0; other symbols scaled by CoinGlass market cap at subscribe.
+    majorSymbols:
+      - "BTC/USDT:USDT"
+      - "ETH/USDT:USDT"
 
 priceVelocity:
   enabled: true

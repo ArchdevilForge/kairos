@@ -26,7 +26,8 @@
 - Alert copy must clearly state human control in Chinese, currently `仅供人工判断，不自动交易。`
 - Risk output is bounded context only: entry zone, structural stop, targets, RR, max position percentage, and max leverage. Do not include account-equity sizing or order placement.
 - Telegram credentials come only from `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`; optional scanner filters are `KAIROS_ALERT_MIN_STATE` and `KAIROS_ALERT_LIMIT`.
-- `engine.Pipeline` applies `alertPolicy` before Telegram delivery and before mutating dedup/cooldown state.
+- `engine.Pipeline` applies `alertPolicy` (including optional `liquidityWeight` market-cap gating) before Telegram delivery and before mutating dedup/cooldown state.
+- Market caps load once at subscribe/refresh via CoinGlass `/api/marketCapRank`; BTC is the weight reference; missing coins use `minWeight`.
 - CoinGlass data may enrich hard-data context but must remain optional evidence, not a hard dependency.
 - CoinGlass fetch prefers Python `scripts/coinglass_fetch.py` + sibling `coinglass-decrypt` repo when available; falls back to native Go decrypt in `internal/data/coinglass.go`.
 - CoinGlass env keys (all optional): `KAIROS_COINGLASS_DECRYPT`, `KAIROS_COINGLASS_PYTHON`, `KAIROS_COINGLASS_USE_PYTHON` (`0`/`false` forces Go-only).
@@ -47,9 +48,8 @@
 - `internal/types`: JSON round-trip for `SignalEnvelope`, `AlertEvent`, `Setup`.
 - `internal/notify`: formatted messages include the human-control line.
 - `internal/scanner`: BTC-context/liquidity/threshold gates block `trade_candidate`; RSI unavailable degrades with warning only.
-- `internal/data`: `ParseSpotRSIMap`, `RSIHotnessScore`, CoinGlass Python/Go fetch paths.
-- `internal/alert`: `--dry-run` shape, min-state filtering (see `cmd/kairos-alert` tests).
-- `internal/engine`: alert policy and pipeline wiring tests (`exchangeNew` injectable in tests).
+- `internal/data`: `ParseSpotRSIMap`, `RSIHotnessScore`, `ParseMarketCapRankMap`, CoinGlass Python/Go fetch paths.
+- `internal/engine`: alert policy, liquidity weight, market-cap reference tests.
 - `internal/backtest`: OKX OHLCV backward pagination from `end` cursor (not forward `since`).
 
 ## Wrong vs Correct

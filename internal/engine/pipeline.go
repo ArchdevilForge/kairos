@@ -86,6 +86,11 @@ type Pipeline struct {
 	dedupWindowSeconds    float64
 	symbolCooldownSeconds float64
 
+	// Cached CoinGlass market caps (BTC-denominated weight reference).
+	liqMu           sync.RWMutex
+	marketCapByCoin map[string]float64
+	marketCapRefUSD float64
+
 	// Lifecycle
 	cancel context.CancelFunc
 }
@@ -119,8 +124,9 @@ func NewPipeline(cfg *types.Config, tg *notify.TelegramClient) *Pipeline {
 		exchanges:            make(map[string]exchange.Exchange),
 		symbolsByExchange:    make(map[string][]string),
 		exchangeStates:       make(map[string]*exchangeState),
-		dedupLast:            make(map[string]float64),
-		tg:                   tg,
+		dedupLast:           make(map[string]float64),
+		marketCapByCoin:     make(map[string]float64),
+		tg:                  tg,
 		blacklist:            utils.NewBlacklist(),
 		dedupWindowSeconds:   5,
 		symbolCooldownSeconds: 1800,
@@ -211,6 +217,8 @@ func (p *Pipeline) Start(ctx context.Context) error {
 		p.symbolsByExchange[name] = symbols
 		p.log.Info("symbols discovered", "exchange", name, "count", len(symbols))
 	}
+
+	p.loadMarketCaps(ctx)
 
 	// 3. Create exchange states with detectors.
 	for name, ex := range p.exchanges {
@@ -833,6 +841,18 @@ func (p *Pipeline) sendResonanceAlert(ctx context.Context, re detector.Resonance
 		return
 	}
 
+	weight := p.liquidityWeight(re.Symbol)
+	requiredScore := float64(p.cfg.ResonanceScorer.MinScore)
+	if requiredScore <= 0 {
+		requiredScore = 55
+	}
+	requiredScore = requiredScore / weight
+	if re.SignalScore < requiredScore {
+		p.log.Debug("resonance liquidity drop",
+			"symbol", re.Symbol, "score", re.SignalScore, "required", requiredScore, "weight", weight)
+		return
+	}
+
 	// Cooldown dedup per symbol+score combo.
 	dedupKey := fmt.Sprintf("%s__resonance__%d", re.Symbol, int(math.Round(re.SignalScore)))
 	now := time.Now().Unix()
@@ -856,6 +876,7 @@ func (p *Pipeline) sendResonanceAlert(ctx context.Context, re detector.Resonance
 		"signal_score":     re.SignalScore,
 		"dimension_count":  re.DimensionCount,
 		"dimensions":       dimKeys,
+		"liquidity_weight": math.Round(weight*1000) / 1000,
 	}
 	for dim, ev := range re.Dimensions {
 		data[dim+"_data"] = ev.Data
@@ -969,35 +990,44 @@ func (p *Pipeline) passesAlertPolicy(evt types.AnomalyEvent) bool {
 			return false
 		}
 
-		// Check minimum severity.
-		if severityRank(string(evt.Severity)) < p.minSeverityRank {
-			p.log.Debug("alert policy: severity too low",
-				"severity", evt.Severity, "symbol", evt.Symbol)
+		// Check minimum severity (liquidity-weighted for smaller symbols).
+		weight := p.liquidityWeight(evt.Symbol)
+		adjRank := severityRank(string(evt.Severity)) - liquiditySeverityPenalty(weight)
+		if adjRank < p.minSeverityRank {
+			p.log.Debug("alert policy: severity too low after liquidity weight",
+				"severity", evt.Severity, "symbol", evt.Symbol, "weight", weight)
 			return false
 		}
+
+		strict := liquidityStrictness(weight)
 
 		// Type-specific checks.
 		data := evt.Data
 		switch eventType {
 		case "price_velocity":
 			changePct := math.Abs(floatFromMapDefault(data, "change_pct", 0.0))
-			if changePct < p.minPriceChangePct {
+			if changePct < p.minPriceChangePct*strict {
 				return false
 			}
 		case "volume_spike":
 			ratio := floatFromMapDefault(data, "ratio", 0.0)
-			if ratio < p.minVolumeRatio {
+			if ratio < p.minVolumeRatio*strict {
 				return false
 			}
 		case "open_interest_change":
 			changePct := math.Abs(floatFromMapDefault(data, "change_pct", 0.0))
-			if changePct < p.minOIChangePct {
+			if changePct < p.minOIChangePct*strict {
 				return false
 			}
 		case "funding_rate_anomaly":
 			fundingRate := math.Abs(floatFromMapDefault(data, "funding_rate", 0.0))
 			changeAbs := math.Abs(floatFromMapDefault(data, "change_abs", 0.0))
-			if fundingRate < p.minFundingRateAbs && changeAbs < p.minFundingRateChange {
+			if fundingRate < p.minFundingRateAbs*strict && changeAbs < p.minFundingRateChange*strict {
+				return false
+			}
+		case "liquidation":
+			totalUSD := floatFromMapDefault(data, "total_liquidation_usd", 0.0)
+			if totalUSD > 0 && totalUSD < p.cfg.Liquidation.AbsThresholdUsd*strict {
 				return false
 			}
 		}
@@ -1081,6 +1111,7 @@ func (p *Pipeline) refreshLoop(ctx context.Context) {
 				old := p.symbolsByExchange[name]
 				added := diffSymbols(newSymbols, old)
 				removed := diffSymbols(old, newSymbols)
+				p.symbolsByExchange[name] = newSymbols
 				if len(added) > 0 || len(removed) > 0 {
 					p.log.Warn("symbol universe changed",
 						"exchange", name,
@@ -1089,6 +1120,7 @@ func (p *Pipeline) refreshLoop(ctx context.Context) {
 					)
 				}
 			}
+			p.loadMarketCaps(ctx)
 		}
 	}
 }

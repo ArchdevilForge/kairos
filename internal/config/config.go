@@ -100,6 +100,14 @@ func setDefaults(v *viper.Viper) {
 		"minOpenInterestChangePct": 5.0,
 		"minFundingRateAbs":      0.0005,
 		"minFundingRateChangeAbs": 0.0003,
+		"liquidityWeight": map[string]any{
+			"enabled":   true,
+			"minWeight": 0.3,
+			"majorSymbols": []string{
+				"BTC/USDT:USDT",
+				"ETH/USDT:USDT",
+			},
+		},
 	})
 
 	v.SetDefault("priceVelocity", map[string]any{
