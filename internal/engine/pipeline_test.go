@@ -16,7 +16,7 @@ func TestNewPipeline_Defaults(t *testing.T) {
 	if p == nil {
 		t.Fatal("nil pipeline")
 	}
-	if p.minSeverityRank != severityRank("MEDIUM") {
+	if p.minSeverityRank != severityRank("LOW") {
 		t.Fatalf("min severity rank: %d", p.minSeverityRank)
 	}
 }
