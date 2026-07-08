@@ -152,7 +152,7 @@ func (o *okxExchange) FetchTickers(ctx context.Context) (map[string]*types.Ticke
 		if v := parseFloat(item.Last); v > 0 {
 			t.LastPrice = &v
 		}
-		if v := parseFloat(item.VolCcy24); v > 0 {
+		if v := okxUSDTQuoteVolume(parseFloat(item.VolCcy24), parseFloat(item.Last)); v > 0 {
 			t.QuoteVolume = &v
 		}
 		if o, l := parseFloat(item.Open24h), parseFloat(item.Last); o > 0 && l > 0 {
@@ -202,7 +202,7 @@ func (o *okxExchange) FetchTicker(ctx context.Context, symbol string) (*types.Ti
 	if v := parseFloat(item.Last); v > 0 {
 		t.LastPrice = &v
 	}
-	if v := parseFloat(item.VolCcy24); v > 0 {
+	if v := okxUSDTQuoteVolume(parseFloat(item.VolCcy24), parseFloat(item.Last)); v > 0 {
 		t.QuoteVolume = &v
 	}
 	if o, l := parseFloat(item.Open24h), parseFloat(item.Last); o > 0 && l > 0 {
@@ -325,7 +325,7 @@ func (o *okxExchange) readTickers(ctx context.Context, conn *websocket.Conn, tic
 			if v := parseFloat(tick.Last); v > 0 {
 				t.LastPrice = &v
 			}
-			if v := parseFloat(tick.VolCcy24); v > 0 {
+			if v := okxUSDTQuoteVolume(parseFloat(tick.VolCcy24), parseFloat(tick.Last)); v > 0 {
 				t.QuoteVolume = &v
 			}
 			if o, l := parseFloat(tick.Open24h), parseFloat(tick.Last); o > 0 && l > 0 {
@@ -471,6 +471,14 @@ func enrichOKXFunding(ctx context.Context, cli *http.Client, tickers map[string]
 		}(sym, t)
 	}
 	wg.Wait()
+}
+
+// okxUSDTQuoteVolume converts OKX volCcy24h (24h base-coin volume) to USDT notional.
+func okxUSDTQuoteVolume(volCcy24, last float64) float64 {
+	if volCcy24 <= 0 || last <= 0 {
+		return 0
+	}
+	return volCcy24 * last
 }
 
 func okxGET(ctx context.Context, cli *http.Client, url string) ([]byte, error) {

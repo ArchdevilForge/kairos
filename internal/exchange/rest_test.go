@@ -120,6 +120,10 @@ func TestOKXFetchTickersAndOHLCV_Mock(t *testing.T) {
 	if tickers["BTC/USDT:USDT"] == nil || tickers["BTC/USDT:USDT"].OpenInterest == nil {
 		t.Fatalf("okx tickers: %+v", tickers["BTC/USDT:USDT"])
 	}
+	wantVol := 65000.0 * 5_000_000
+	if got := *tickers["BTC/USDT:USDT"].QuoteVolume; got != wantVol {
+		t.Fatalf("quote volume USDT: got %v want %v", got, wantVol)
+	}
 
 	candles, err := o.FetchOHLCV(context.Background(), "BTC/USDT:USDT", "4h", 10, 0)
 	if err != nil || len(candles) != 1 {
