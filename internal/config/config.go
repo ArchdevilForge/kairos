@@ -94,7 +94,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("alertPolicy", map[string]any{
 		"enabled":                true,
 		"allowedEventTypes":      []string{"price_velocity"},
-		"minSeverity":            "MEDIUM",
+		"minSeverity":            "LOW",
 		"minPriceChangePct":      1.2,
 		"minVolumeRatio":         6.0,
 		"minOpenInterestChangePct": 5.0,
@@ -113,8 +113,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("priceVelocity", map[string]any{
 		"enabled": true,
 		"windows": []map[string]any{
-			{"seconds": 60, "threshold": 0.8},
-			{"seconds": 120, "threshold": 1.2},
+			{"seconds": 60, "threshold": 1.2},
+			{"seconds": 120, "threshold": 1.8},
 		},
 		"cooldownSeconds": 120,
 	})
