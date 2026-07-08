@@ -122,8 +122,10 @@ func aesDecrypt(ciphertext, key []byte) ([]byte, error) {
 }
 
 // DecryptCoinGlassResponse decrypts an encrypted CoinGlass response body.
-// Ported from coinglass_client.decrypt_coinglass_response.
-func DecryptCoinGlassResponse(encryptedBody []byte, userTokenB64, v, reqURL string) (any, error) {
+// Ported from coinglass-decrypt/decrypt.py (v=0/1/2 daily rotation + legacy 55/66/77).
+// cacheTs is the request header cache-ts-v2 (required when v=0).
+// timeHeader is the response header time (required when v=2).
+func DecryptCoinGlassResponse(encryptedBody []byte, userTokenB64, v, reqURL, cacheTs, timeHeader string) (any, error) {
 	// Parse outer JSON to get the base64-encoded payload.
 	outer := make(map[string]any)
 	if err := json.Unmarshal(encryptedBody, &outer); err != nil {
@@ -142,24 +144,10 @@ func DecryptCoinGlassResponse(encryptedBody []byte, userTokenB64, v, reqURL stri
 		return nil, &CoinGlassDecodeError{CoinGlassError{msg: fmt.Sprintf("base64 decode user token: %v", err)}}
 	}
 
-	// Derive key0: for v=1, key is derived from the URL path.
-	var key0 string
-	if v == "1" {
-		parsed, err := url.Parse(reqURL)
-		if err == nil {
-			path := parsed.Path
-			if path == "" {
-				path = strings.SplitN(reqURL, "?", 2)[0]
-			}
-			key0 = base64.StdEncoding.EncodeToString([]byte(path))[:16]
-		}
-	}
-	if key0 == "" {
-		seed, ok := keyTable[v]
-		if !ok {
-			return nil, &CoinGlassDecodeError{CoinGlassError{msg: fmt.Sprintf("unknown encryption version: %s", v)}}
-		}
-		key0 = base64.StdEncoding.EncodeToString([]byte(seed))[:16]
+	// Derive key0 from v header (CoinGlass webpack module 12471, function Xt).
+	key0, err := deriveKey0(v, reqURL, cacheTs, timeHeader)
+	if err != nil {
+		return nil, &CoinGlassDecodeError{CoinGlassError{msg: err.Error()}}
 	}
 
 	// Step 1: decrypt token using key0 to get the actual AES key.
@@ -199,6 +187,38 @@ func DecryptCoinGlassResponse(encryptedBody []byte, userTokenB64, v, reqURL stri
 	return result, nil
 }
 
+func deriveKey0(v, reqURL, cacheTs, timeHeader string) (string, error) {
+	var constant string
+	switch v {
+	case "0":
+		if cacheTs == "" {
+			return "", fmt.Errorf("v=0 requires cache-ts-v2 request header")
+		}
+		constant = cacheTs
+	case "1":
+		parsed, err := url.Parse(reqURL)
+		if err != nil {
+			return "", fmt.Errorf("v=1 invalid url: %v", err)
+		}
+		constant = parsed.Path
+		if constant == "" {
+			constant = strings.SplitN(reqURL, "?", 2)[0]
+		}
+	case "2":
+		if timeHeader == "" {
+			return "", fmt.Errorf("v=2 requires time response header")
+		}
+		constant = timeHeader
+	default:
+		seed, ok := keyTable[v]
+		if !ok {
+			return "", fmt.Errorf("unknown encryption version: %s", v)
+		}
+		constant = seed
+	}
+	return base64.StdEncoding.EncodeToString([]byte(constant))[:16], nil
+}
+
 // ---------------------------------------------------------------------------
 // HTTP fetch
 // ---------------------------------------------------------------------------
@@ -236,7 +256,8 @@ func fetchCoinGlassNative(path string, params map[string]string, timeout time.Du
 		return nil, &CoinGlassError{msg: fmt.Sprintf("create request: %v", err)}
 	}
 	req.Header.Set("Accept", "application/json, text/plain, */*")
-	req.Header.Set("cache-ts-v2", fmt.Sprintf("%d", time.Now().UnixMilli()))
+	cacheTs := fmt.Sprintf("%d", time.Now().UnixMilli())
+	req.Header.Set("cache-ts-v2", cacheTs)
 	req.Header.Set("encryption", "true")
 	req.Header.Set("language", "en")
 	req.Header.Set("Origin", "https://www.coinglass.com")
@@ -259,7 +280,7 @@ func fetchCoinGlassNative(path string, params map[string]string, timeout time.Du
 	user := resp.Header.Get("user")
 	version := resp.Header.Get("v")
 	if user != "" && version != "" {
-		return DecryptCoinGlassResponse(body, user, version, resp.Request.URL.String())
+		return DecryptCoinGlassResponse(body, user, version, resp.Request.URL.String(), cacheTs, resp.Header.Get("time"))
 	}
 
 	// Otherwise, try plain JSON.

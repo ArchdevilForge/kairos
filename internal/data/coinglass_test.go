@@ -101,7 +101,7 @@ func TestDecryptCoinGlassResponse_Version55(t *testing.T) {
 		t.Fatalf("build response: %v", err)
 	}
 
-	result, err := DecryptCoinGlassResponse(body, userToken, "55", "")
+	result, err := DecryptCoinGlassResponse(body, userToken, "55", "", "", "")
 	if err != nil {
 		t.Fatalf("decrypt: %v", err)
 	}
@@ -128,7 +128,7 @@ func TestDecryptCoinGlassResponse_Version66(t *testing.T) {
 		t.Fatalf("build response: %v", err)
 	}
 
-	result, err := DecryptCoinGlassResponse(body, userToken, "66", "")
+	result, err := DecryptCoinGlassResponse(body, userToken, "66", "", "", "")
 	if err != nil {
 		t.Fatalf("decrypt: %v", err)
 	}
@@ -160,7 +160,7 @@ func TestDecryptCoinGlassResponse_Version77(t *testing.T) {
 		t.Fatalf("build response: %v", err)
 	}
 
-	result, err := DecryptCoinGlassResponse(body, userToken, "77", "")
+	result, err := DecryptCoinGlassResponse(body, userToken, "77", "", "", "")
 	if err != nil {
 		t.Fatalf("decrypt: %v", err)
 	}
@@ -186,7 +186,7 @@ func TestDecryptCoinGlassResponse_Version1_URLPath(t *testing.T) {
 		t.Fatalf("build response: %v", err)
 	}
 
-	result, err := DecryptCoinGlassResponse(body, userToken, "1", "https://capi.coinglass.com"+urlPath)
+	result, err := DecryptCoinGlassResponse(body, userToken, "1", "https://capi.coinglass.com"+urlPath, "", "")
 	if err != nil {
 		t.Fatalf("decrypt: %v", err)
 	}
@@ -200,9 +200,49 @@ func TestDecryptCoinGlassResponse_Version1_URLPath(t *testing.T) {
 	}
 }
 
+func TestDecryptCoinGlassResponse_Version0_CacheTs(t *testing.T) {
+	expectedJSON := `{"rank":1}`
+	actualKey := "0123456789abcdef0123456789abcdef"
+	cacheTs := "1752000000123"
+
+	body, userToken, err := buildCoinGlassResponse(expectedJSON, actualKey, cacheTs, "0")
+	if err != nil {
+		t.Fatalf("build response: %v", err)
+	}
+
+	result, err := DecryptCoinGlassResponse(body, userToken, "0", "", cacheTs, "")
+	if err != nil {
+		t.Fatalf("decrypt: %v", err)
+	}
+	m, ok := result.(map[string]any)
+	if !ok || m["rank"] != float64(1) {
+		t.Fatalf("result = %v", result)
+	}
+}
+
+func TestDecryptCoinGlassResponse_Version2_TimeHeader(t *testing.T) {
+	expectedJSON := `{"ok":true}`
+	actualKey := "0123456789abcdef0123456789abcdef"
+	timeHeader := "1752000000456"
+
+	body, userToken, err := buildCoinGlassResponse(expectedJSON, actualKey, timeHeader, "2")
+	if err != nil {
+		t.Fatalf("build response: %v", err)
+	}
+
+	result, err := DecryptCoinGlassResponse(body, userToken, "2", "", "", timeHeader)
+	if err != nil {
+		t.Fatalf("decrypt: %v", err)
+	}
+	m, ok := result.(map[string]any)
+	if !ok || m["ok"] != true {
+		t.Fatalf("result = %v", result)
+	}
+}
+
 func TestDecryptCoinGlassResponse_InvalidVersion(t *testing.T) {
 	body := []byte(`{"data":"dGVzdA=="}`)
-	_, err := DecryptCoinGlassResponse(body, "dXNlcg==", "99", "")
+	_, err := DecryptCoinGlassResponse(body, "dXNlcg==", "99", "", "", "")
 	if err == nil {
 		t.Fatal("expected error for unknown version, got nil")
 	}
@@ -213,7 +253,7 @@ func TestDecryptCoinGlassResponse_InvalidVersion(t *testing.T) {
 
 func TestDecryptCoinGlassResponse_MissingData(t *testing.T) {
 	body := []byte(`{"foo":"bar"}`)
-	_, err := DecryptCoinGlassResponse(body, "dXNlcg==", "55", "")
+	_, err := DecryptCoinGlassResponse(body, "dXNlcg==", "55", "", "", "")
 	if err == nil {
 		t.Fatal("expected error for missing data, got nil")
 	}
@@ -224,7 +264,7 @@ func TestDecryptCoinGlassResponse_MissingData(t *testing.T) {
 
 func TestDecryptCoinGlassResponse_InvalidBase64(t *testing.T) {
 	body := []byte(`{"data":"!!!invalid-base64!!!"}`)
-	_, err := DecryptCoinGlassResponse(body, "dXNlcg==", "55", "")
+	_, err := DecryptCoinGlassResponse(body, "dXNlcg==", "55", "", "", "")
 	if err == nil {
 		t.Fatal("expected error for invalid base64, got nil")
 	}

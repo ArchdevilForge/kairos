@@ -123,18 +123,12 @@ func TestLoad_ExampleConfigAlignsWithTypes(t *testing.T) {
 	if cfg.Scoring.CandidateWeights["btcrelativestrength"] != 1.5 {
 		t.Fatalf("btcRelativeStrength: %v", cfg.Scoring.CandidateWeights)
 	}
-	if !cfg.LongShortRatio.Enabled || !cfg.Liquidation.Enabled || !cfg.ResonanceScorer.Enabled {
+	if cfg.LongShortRatio.Enabled || cfg.Liquidation.Enabled || cfg.ResonanceScorer.Enabled {
 		t.Fatalf("detector sections: ls=%v liq=%v res=%v",
 			cfg.LongShortRatio.Enabled, cfg.Liquidation.Enabled, cfg.ResonanceScorer.Enabled)
 	}
-	wantEvents := map[string]bool{
-		"long_short_ratio": true, "liquidation": true, "resonance": true,
-	}
-	for _, ev := range cfg.AlertPolicy.AllowedEventTypes {
-		delete(wantEvents, ev)
-	}
-	if len(wantEvents) != 0 {
-		t.Fatalf("alertPolicy missing events: %v", wantEvents)
+	if len(cfg.AlertPolicy.AllowedEventTypes) != 1 || cfg.AlertPolicy.AllowedEventTypes[0] != "price_velocity" {
+		t.Fatalf("allowedEventTypes: %v", cfg.AlertPolicy.AllowedEventTypes)
 	}
 	if !cfg.AlertPolicy.LiquidityWeight.Enabled || cfg.AlertPolicy.LiquidityWeight.MinWeight != 0.3 {
 		t.Fatalf("liquidityWeight: enabled=%v minWeight=%v",

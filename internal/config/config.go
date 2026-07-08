@@ -84,16 +84,16 @@ func setDefaults(v *viper.Viper) {
 	})
 
 	v.SetDefault("dataManager", map[string]any{
-		"exchanges":             []string{"okx", "binance", "bybit"},
+		"exchanges":             []string{"okx"},
 		"topSymbols":            30,
 		"refreshIntervalHours":  4,
 		"dedupWindowSeconds":    5,
-		"symbolCooldownMinutes": 30,
+		"symbolCooldownMinutes": 45,
 	})
 
 	v.SetDefault("alertPolicy", map[string]any{
 		"enabled":                true,
-		"allowedEventTypes":      []string{"price_velocity", "volume_spike", "open_interest_change", "funding_rate_anomaly", "long_short_ratio", "liquidation", "resonance"},
+		"allowedEventTypes":      []string{"price_velocity"},
 		"minSeverity":            "MEDIUM",
 		"minPriceChangePct":      1.2,
 		"minVolumeRatio":         6.0,
@@ -113,15 +113,14 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("priceVelocity", map[string]any{
 		"enabled": true,
 		"windows": []map[string]any{
-			{"seconds": 30, "threshold": 0.5},
 			{"seconds": 60, "threshold": 0.8},
 			{"seconds": 120, "threshold": 1.2},
 		},
-		"cooldownSeconds": 60,
+		"cooldownSeconds": 120,
 	})
 
 	v.SetDefault("volumeSpike", map[string]any{
-		"enabled":           true,
+		"enabled":           false,
 		"multiplier":        3.0,
 		"windowMinutes":     10,
 		"minHistorySeconds": 600,
@@ -129,16 +128,16 @@ func setDefaults(v *viper.Viper) {
 	})
 
 	v.SetDefault("futuresMetrics", map[string]any{
-		"enabled":               true,
+		"enabled":               false,
 		"pollIntervalSeconds":   300,
 		"fetchFundingPerSymbol": true,
 		"openInterest": map[string]any{
-			"enabled":          true,
+			"enabled":          false,
 			"minChangePct":     5.0,
 			"minNotifyInterval": "30m",
 		},
 		"fundingRate": map[string]any{
-			"enabled":            true,
+			"enabled":            false,
 			"absRateThreshold":   0.0005,
 			"minChangeAbs":       0.0003,
 			"minNotifyInterval":  "30m",
@@ -146,7 +145,7 @@ func setDefaults(v *viper.Viper) {
 	})
 
 	v.SetDefault("longShortRatio", map[string]any{
-		"enabled":              true,
+		"enabled":              false,
 		"pollIntervalSeconds":  300,
 		"absThreshold":         80.0,
 		"zscoreThreshold":      2.5,
@@ -156,7 +155,7 @@ func setDefaults(v *viper.Viper) {
 	})
 
 	v.SetDefault("liquidation", map[string]any{
-		"enabled":              true,
+		"enabled":              false,
 		"pollIntervalSeconds":  300,
 		"absThresholdUsd":      1_000_000,
 		"zscoreThreshold":      2.5,
@@ -166,7 +165,7 @@ func setDefaults(v *viper.Viper) {
 	})
 
 	v.SetDefault("resonanceScorer", map[string]any{
-		"enabled":          true,
+		"enabled":          false,
 		"windowSeconds":    300,
 		"minDimensions":    2,
 		"minScore":         55,
@@ -187,7 +186,7 @@ func setDefaults(v *viper.Viper) {
 
 	v.SetDefault("exchanges", map[string]any{
 		"primary":        "okx",
-		"backups":        []string{"binance", "bybit"},
+		"backups":        []string{},
 		"rateLimit":      true,
 		"canonicalQuote": "USDT",
 		"settle":       "USDT",

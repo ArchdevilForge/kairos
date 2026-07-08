@@ -1,5 +1,9 @@
 # Kairos human-controlled futures alert config
 #
+# Default profile: price-velocity Telegram alerts only (human opens chart).
+# CoinGlass is optional enrichment (market-cap weight, scanner RSI); enable
+# longShortRatio / liquidation / resonance in alertPolicy if you want them back.
+#
 # Usage:
 #   1. Copy this file to your Kairos config path.
 #   2. Export TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.
@@ -19,23 +23,15 @@ telegram:
 dataManager:
   exchanges:
     - "okx"
-    - "binance"
-    - "bybit"
   topSymbols: 30
   refreshIntervalHours: 4
   dedupWindowSeconds: 5
-  symbolCooldownMinutes: 30
+  symbolCooldownMinutes: 45
 
 alertPolicy:
   enabled: true
   allowedEventTypes:
     - "price_velocity"
-    - "volume_spike"
-    - "open_interest_change"
-    - "funding_rate_anomaly"
-    - "long_short_ratio"
-    - "liquidation"
-    - "resonance"
   minSeverity: "MEDIUM"
   minPriceChangePct: 1.2
   minVolumeRatio: 6.0
@@ -53,37 +49,35 @@ alertPolicy:
 priceVelocity:
   enabled: true
   windows:
-    - seconds: 30
-      threshold: 0.5
     - seconds: 60
       threshold: 0.8
     - seconds: 120
       threshold: 1.2
-  cooldownSeconds: 60
+  cooldownSeconds: 120
 
 volumeSpike:
-  enabled: true
+  enabled: false
   multiplier: 3.0
   windowMinutes: 10
   minHistorySeconds: 600
   minNotifyInterval: "2m"
 
 futuresMetrics:
-  enabled: true
+  enabled: false
   pollIntervalSeconds: 300
   fetchFundingPerSymbol: true
   openInterest:
-    enabled: true
+    enabled: false
     minChangePct: 5.0
     minNotifyInterval: "30m"
   fundingRate:
-    enabled: true
+    enabled: false
     absRateThreshold: 0.0005
     minChangeAbs: 0.0003
     minNotifyInterval: "30m"
 
 longShortRatio:
-  enabled: true
+  enabled: false
   pollIntervalSeconds: 300
   absThreshold: 80.0
   zscoreThreshold: 2.5
@@ -92,7 +86,7 @@ longShortRatio:
   minNotifyInterval: "30m"
 
 liquidation:
-  enabled: true
+  enabled: false
   pollIntervalSeconds: 300
   absThresholdUsd: 1000000
   zscoreThreshold: 2.5
@@ -101,7 +95,7 @@ liquidation:
   minNotifyInterval: "30m"
 
 resonanceScorer:
-  enabled: true
+  enabled: false
   windowSeconds: 300
   minDimensions: 2
   minScore: 55
@@ -123,9 +117,7 @@ scanner:
 
 exchanges:
   primary: "okx"
-  backups:
-    - "binance"
-    - "bybit"
+  backups: []
   rateLimit: true
   canonicalQuote: "USDT"
   settle: "USDT"
@@ -185,11 +177,13 @@ storage:
   watchHintRetentionHours: 24
   watchHintScoreBoost: 0.5
 
-# CoinGlass (optional RSI hotness for scanner):
+# CoinGlass (optional: market-cap weight at subscribe, scanner RSI hotness):
 # Clone https://github.com/ArchdevilForge/coinglass-decrypt as ../coinglass-decrypt
 # or set KAIROS_COINGLASS_DECRYPT=/path/to/coinglass-decrypt
-# KAIROS_COINGLASS_USE_PYTHON=0 disables Python (native Go decrypt fallback)
-# KAIROS_COINGLASS_PYTHON=/path/to/.venv/bin/python overrides python binary
+# Prefer Python decrypt (handles rotating v=0/1/2 keys):
+#   KAIROS_COINGLASS_USE_PYTHON=1
+#   KAIROS_COINGLASS_PYTHON=/path/to/coinglass-decrypt/.venv/bin/python
+# KAIROS_COINGLASS_USE_PYTHON=0 forces native Go decrypt (legacy v only)
 
 charts:
   defaultChartCount: 1
