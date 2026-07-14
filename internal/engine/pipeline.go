@@ -153,7 +153,7 @@ func NewPipeline(cfg *types.Config, tg *notify.TelegramClient) *Pipeline {
 	p.minSeverityRank = severityRank(policy.MinSeverity)
 	p.minPriceChangePct = policy.MinPriceChangePct
 	if p.minPriceChangePct <= 0 {
-		p.minPriceChangePct = 1.2
+		p.minPriceChangePct = 0.9
 	}
 	p.minVolumeRatio = policy.MinVolumeRatio
 	if p.minVolumeRatio <= 0 {
@@ -944,13 +944,13 @@ func (p *Pipeline) deliverEvent(ctx context.Context, evt types.AnomalyEvent) {
 	last := p.dedupLast[dedupKey]
 	if float64(now)-last < p.dedupWindowSeconds {
 		p.dedupMu.Unlock()
-		p.log.Debug("dedup drop", "key", dedupKey)
+		p.log.Info("alert gated", "reason", "dedup", "symbol", evt.Symbol, "event", evt.EventType)
 		return
 	}
 	symbolEventLast := p.dedupLast[dedupKey]
 	if float64(now)-symbolEventLast < p.symbolCooldownSeconds {
 		p.dedupMu.Unlock()
-		p.log.Debug("cooldown drop", "key", dedupKey)
+		p.log.Info("alert gated", "reason", "cooldown", "symbol", evt.Symbol, "event", evt.EventType)
 		return
 	}
 	p.dedupLast[dedupKey] = float64(now)
@@ -964,6 +964,8 @@ func (p *Pipeline) deliverEvent(ctx context.Context, evt types.AnomalyEvent) {
 		if err := p.tg.SendEvent(alert); err != nil {
 			p.log.Warn("telegram send failed", "symbol", evt.Symbol, "event", evt.EventType, "error", err)
 		} else {
+			p.log.Info("telegram sent", "symbol", evt.Symbol, "event", evt.EventType,
+				"severity", evt.Severity, "change_pct", floatFromMapDefault(evt.Data, "change_pct", 0))
 			p.recordWatchHint(evt.Symbol, evt.EventType, p.cfg.Exchanges.Primary)
 		}
 	}
@@ -981,55 +983,66 @@ func (p *Pipeline) recordWatchHint(symbol, eventType, exchange string) {
 // ── Alert Policy ───────────────────────────────────────────────
 
 func (p *Pipeline) passesAlertPolicy(evt types.AnomalyEvent) bool {
-	if p.cfg.AlertPolicy.Enabled {
-		// Check allowed event types.
-		eventType := evt.EventType
-		if p.allowedEventTypes != nil && !p.allowedEventTypes[eventType] {
-			p.log.Debug("alert policy: event type not allowed",
-				"event_type", eventType, "symbol", evt.Symbol)
+	if !p.cfg.AlertPolicy.Enabled {
+		return true
+	}
+
+	eventType := evt.EventType
+	if p.allowedEventTypes != nil && !p.allowedEventTypes[eventType] {
+		p.log.Info("alert gated", "reason", "event_type", "symbol", evt.Symbol, "event", eventType)
+		return false
+	}
+
+	weight := p.liquidityWeight(evt.Symbol)
+	adjRank := severityRank(string(evt.Severity)) - liquiditySeverityPenalty(weight)
+	if adjRank < p.minSeverityRank {
+		p.log.Info("alert gated", "reason", "severity", "symbol", evt.Symbol, "event", eventType,
+			"severity", evt.Severity, "weight", weight)
+		return false
+	}
+
+	strict := liquidityStrictness(weight)
+	data := evt.Data
+	switch eventType {
+	case "price_velocity":
+		changePct := math.Abs(floatFromMapDefault(data, "change_pct", 0.0))
+		need := p.minPriceChangePct * strict
+		if changePct < need {
+			p.log.Info("alert gated", "reason", "price_change", "symbol", evt.Symbol, "event", eventType,
+				"change_pct", changePct, "need", need, "weight", weight)
 			return false
 		}
-
-		// Check minimum severity (liquidity-weighted for smaller symbols).
-		weight := p.liquidityWeight(evt.Symbol)
-		adjRank := severityRank(string(evt.Severity)) - liquiditySeverityPenalty(weight)
-		if adjRank < p.minSeverityRank {
-			p.log.Debug("alert policy: severity too low after liquidity weight",
-				"severity", evt.Severity, "symbol", evt.Symbol, "weight", weight)
+	case "volume_spike":
+		ratio := floatFromMapDefault(data, "ratio", 0.0)
+		need := p.minVolumeRatio * strict
+		if ratio < need {
+			p.log.Info("alert gated", "reason", "volume_ratio", "symbol", evt.Symbol, "event", eventType,
+				"ratio", ratio, "need", need, "weight", weight)
 			return false
 		}
-
-		strict := liquidityStrictness(weight)
-
-		// Type-specific checks.
-		data := evt.Data
-		switch eventType {
-		case "price_velocity":
-			changePct := math.Abs(floatFromMapDefault(data, "change_pct", 0.0))
-			if changePct < p.minPriceChangePct*strict {
-				return false
-			}
-		case "volume_spike":
-			ratio := floatFromMapDefault(data, "ratio", 0.0)
-			if ratio < p.minVolumeRatio*strict {
-				return false
-			}
-		case "open_interest_change":
-			changePct := math.Abs(floatFromMapDefault(data, "change_pct", 0.0))
-			if changePct < p.minOIChangePct*strict {
-				return false
-			}
-		case "funding_rate_anomaly":
-			fundingRate := math.Abs(floatFromMapDefault(data, "funding_rate", 0.0))
-			changeAbs := math.Abs(floatFromMapDefault(data, "change_abs", 0.0))
-			if fundingRate < p.minFundingRateAbs*strict && changeAbs < p.minFundingRateChange*strict {
-				return false
-			}
-		case "liquidation":
-			totalUSD := floatFromMapDefault(data, "total_liquidation_usd", 0.0)
-			if totalUSD > 0 && totalUSD < p.cfg.Liquidation.AbsThresholdUsd*strict {
-				return false
-			}
+	case "open_interest_change":
+		changePct := math.Abs(floatFromMapDefault(data, "change_pct", 0.0))
+		need := p.minOIChangePct * strict
+		if changePct < need {
+			p.log.Info("alert gated", "reason", "oi_change", "symbol", evt.Symbol, "event", eventType,
+				"change_pct", changePct, "need", need, "weight", weight)
+			return false
+		}
+	case "funding_rate_anomaly":
+		fundingRate := math.Abs(floatFromMapDefault(data, "funding_rate", 0.0))
+		changeAbs := math.Abs(floatFromMapDefault(data, "change_abs", 0.0))
+		if fundingRate < p.minFundingRateAbs*strict && changeAbs < p.minFundingRateChange*strict {
+			p.log.Info("alert gated", "reason", "funding", "symbol", evt.Symbol, "event", eventType,
+				"funding_rate", fundingRate, "change_abs", changeAbs, "weight", weight)
+			return false
+		}
+	case "liquidation":
+		totalUSD := floatFromMapDefault(data, "total_liquidation_usd", 0.0)
+		need := p.cfg.Liquidation.AbsThresholdUsd * strict
+		if totalUSD > 0 && totalUSD < need {
+			p.log.Info("alert gated", "reason", "liquidation_usd", "symbol", evt.Symbol, "event", eventType,
+				"total_usd", totalUSD, "need", need, "weight", weight)
+			return false
 		}
 	}
 	return true

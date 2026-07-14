@@ -95,14 +95,14 @@ func setDefaults(v *viper.Viper) {
 		"enabled":                true,
 		"allowedEventTypes":      []string{"price_velocity"},
 		"minSeverity":            "LOW",
-		"minPriceChangePct":      1.2,
+		"minPriceChangePct":      0.9,
 		"minVolumeRatio":         6.0,
 		"minOpenInterestChangePct": 5.0,
 		"minFundingRateAbs":      0.0005,
 		"minFundingRateChangeAbs": 0.0003,
 		"liquidityWeight": map[string]any{
 			"enabled":   true,
-			"minWeight": 0.3,
+			"minWeight": 0.5,
 			"majorSymbols": []string{
 				"BTC/USDT:USDT",
 				"ETH/USDT:USDT",
@@ -113,8 +113,8 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("priceVelocity", map[string]any{
 		"enabled": true,
 		"windows": []map[string]any{
-			{"seconds": 60, "threshold": 1.2},
-			{"seconds": 120, "threshold": 1.8},
+			{"seconds": 60, "threshold": 0.9},
+			{"seconds": 120, "threshold": 1.4},
 		},
 		"cooldownSeconds": 120,
 	})

@@ -104,7 +104,7 @@ func TestLoadString_DefaultsLiquidityWeight(t *testing.T) {
 		t.Fatal(err)
 	}
 	lw := cfg.AlertPolicy.LiquidityWeight
-	if !lw.Enabled || lw.MinWeight != 0.3 {
+	if !lw.Enabled || lw.MinWeight != 0.5 {
 		t.Fatalf("defaults: enabled=%v minWeight=%v", lw.Enabled, lw.MinWeight)
 	}
 	if len(lw.MajorSymbols) != 2 {
@@ -130,7 +130,7 @@ func TestLoad_ExampleConfigAlignsWithTypes(t *testing.T) {
 	if len(cfg.AlertPolicy.AllowedEventTypes) != 1 || cfg.AlertPolicy.AllowedEventTypes[0] != "price_velocity" {
 		t.Fatalf("allowedEventTypes: %v", cfg.AlertPolicy.AllowedEventTypes)
 	}
-	if !cfg.AlertPolicy.LiquidityWeight.Enabled || cfg.AlertPolicy.LiquidityWeight.MinWeight != 0.3 {
+	if !cfg.AlertPolicy.LiquidityWeight.Enabled || cfg.AlertPolicy.LiquidityWeight.MinWeight != 0.5 {
 		t.Fatalf("liquidityWeight: enabled=%v minWeight=%v",
 			cfg.AlertPolicy.LiquidityWeight.Enabled, cfg.AlertPolicy.LiquidityWeight.MinWeight)
 	}
