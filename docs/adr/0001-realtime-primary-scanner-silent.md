@@ -12,4 +12,4 @@ Operator confirmed scanner `prepare` noise is useless for them; only realtime pr
 ## Consequences
 - Production attention path is `kairosd` only.
 - Manual `kairos-alert` remains a research tool, not a signal source.
-- Hermes is not part of the alert path and is stopped on the host.
+- Hermes is not part of the alert path; the ccs host install (gateway, MCP, `~/.hermes`) was removed entirely.
