@@ -22,6 +22,9 @@ import (
 const (
 	okxWSEndpoint   = "wss://ws.okx.com:8443/ws/v5/public"
 	okxRESTEndpoint = "https://www.okx.com"
+	// OKX public instruments: 1=crypto, 3=stock/ETF, 4=commodity.
+	okxInstCategoryCrypto = "1"
+	okxCryptoIDCacheTTL   = 1 * time.Hour
 )
 
 type okxExchange struct {
@@ -30,6 +33,9 @@ type okxExchange struct {
 	mu      sync.Mutex
 	cancel  context.CancelFunc
 	closed  bool
+
+	cryptoIDs   map[string]struct{} // instId set, e.g. BTC-USDT-SWAP
+	cryptoIDsAt time.Time
 }
 
 func newOKX() *okxExchange {
@@ -131,6 +137,8 @@ func (o *okxExchange) FetchTickers(ctx context.Context) (map[string]*types.Ticke
 		return nil, fmt.Errorf("okx fetch tickers: code=%s", okxResp.Code)
 	}
 
+	cryptoIDs := o.cryptoUSDTSwapIDs(ctx)
+
 	result := make(map[string]*types.Ticker, len(okxResp.Data))
 	for _, raw := range okxResp.Data {
 		var item struct {
@@ -141,6 +149,9 @@ func (o *okxExchange) FetchTickers(ctx context.Context) (map[string]*types.Ticke
 			Open24h  string `json:"open24h"`
 		}
 		if err := json.Unmarshal(raw, &item); err != nil {
+			continue
+		}
+		if !okxIsCryptoUSDTSwap(item.InstID, cryptoIDs) {
 			continue
 		}
 		sym := denormalizeSymbol(item.InstID)
@@ -163,6 +174,76 @@ func (o *okxExchange) FetchTickers(ctx context.Context) (map[string]*types.Ticke
 	}
 	enrichOKXOpenInterest(ctx, o.httpCli, result)
 	return result, nil
+}
+
+// cryptoUSDTSwapIDs returns OKX USDT-SWAP instIds with instCategory=crypto.
+// nil means filter unavailable → allow all (fail-open).
+func (o *okxExchange) cryptoUSDTSwapIDs(ctx context.Context) map[string]struct{} {
+	o.mu.Lock()
+	if o.cryptoIDs != nil && time.Since(o.cryptoIDsAt) < okxCryptoIDCacheTTL {
+		out := o.cryptoIDs
+		o.mu.Unlock()
+		return out
+	}
+	o.mu.Unlock()
+
+	ids, err := fetchOKXCryptoUSDTSwapIDs(ctx, o.httpCli)
+	if err != nil || len(ids) == 0 {
+		// Keep stale cache if present.
+		o.mu.Lock()
+		out := o.cryptoIDs
+		o.mu.Unlock()
+		return out
+	}
+	o.mu.Lock()
+	o.cryptoIDs = ids
+	o.cryptoIDsAt = time.Now()
+	o.mu.Unlock()
+	return ids
+}
+
+func fetchOKXCryptoUSDTSwapIDs(ctx context.Context, cli *http.Client) (map[string]struct{}, error) {
+	body, err := okxGET(ctx, cli, okxRESTEndpoint+"/api/v5/public/instruments?instType=SWAP")
+	if err != nil {
+		return nil, err
+	}
+	var okxResp struct {
+		Code string `json:"code"`
+		Data []struct {
+			InstID       string `json:"instId"`
+			InstCategory string `json:"instCategory"`
+			State        string `json:"state"`
+			SettleCcy    string `json:"settleCcy"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &okxResp); err != nil {
+		return nil, err
+	}
+	if okxResp.Code != "0" {
+		return nil, fmt.Errorf("okx instruments: code=%s", okxResp.Code)
+	}
+	out := make(map[string]struct{}, len(okxResp.Data))
+	for _, item := range okxResp.Data {
+		if item.State != "live" || item.SettleCcy != "USDT" {
+			continue
+		}
+		if item.InstCategory != okxInstCategoryCrypto {
+			continue
+		}
+		if !strings.HasSuffix(item.InstID, "-USDT-SWAP") {
+			continue
+		}
+		out[item.InstID] = struct{}{}
+	}
+	return out, nil
+}
+
+func okxIsCryptoUSDTSwap(instID string, cryptoIDs map[string]struct{}) bool {
+	if cryptoIDs == nil {
+		return true // filter unavailable
+	}
+	_, ok := cryptoIDs[instID]
+	return ok
 }
 
 func (o *okxExchange) FetchTicker(ctx context.Context, symbol string) (*types.Ticker, error) {
@@ -290,7 +371,7 @@ func (o *okxExchange) readTickers(ctx context.Context, conn *websocket.Conn, tic
 		}
 
 		var raw struct {
-			Event string          `json:"event"`
+			Event string            `json:"event"`
 			Data  []json.RawMessage `json:"data"`
 		}
 		if err := json.Unmarshal(msg, &raw); err != nil {

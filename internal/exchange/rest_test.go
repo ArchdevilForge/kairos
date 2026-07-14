@@ -75,11 +75,22 @@ func TestBinanceFetchTickersAndOHLCV_Mock(t *testing.T) {
 func TestOKXFetchTickersAndOHLCV_Mock(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case strings.Contains(r.URL.Path, "/public/instruments"):
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"code": "0",
+				"data": []map[string]string{
+					{"instId": "BTC-USDT-SWAP", "instCategory": "1", "state": "live", "settleCcy": "USDT"},
+					{"instId": "AAPL-USDT-SWAP", "instCategory": "3", "state": "live", "settleCcy": "USDT"},
+					{"instId": "XAU-USDT-SWAP", "instCategory": "4", "state": "live", "settleCcy": "USDT"},
+				},
+			})
 		case strings.Contains(r.URL.Path, "/market/tickers"):
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"code": "0",
 				"data": []map[string]string{
 					{"instId": "BTC-USDT-SWAP", "last": "65000", "volCcy24h": "5000000", "open24h": "64000"},
+					{"instId": "AAPL-USDT-SWAP", "last": "200", "volCcy24h": "999999999", "open24h": "190"},
+					{"instId": "XAU-USDT-SWAP", "last": "2000", "volCcy24h": "999999999", "open24h": "1900"},
 				},
 			})
 		case strings.Contains(r.URL.Path, "open-interest"):
@@ -119,6 +130,12 @@ func TestOKXFetchTickersAndOHLCV_Mock(t *testing.T) {
 	}
 	if tickers["BTC/USDT:USDT"] == nil || tickers["BTC/USDT:USDT"].OpenInterest == nil {
 		t.Fatalf("okx tickers: %+v", tickers["BTC/USDT:USDT"])
+	}
+	if _, ok := tickers["AAPL/USDT:USDT"]; ok {
+		t.Fatal("stock perpetual should be filtered out")
+	}
+	if _, ok := tickers["XAU/USDT:USDT"]; ok {
+		t.Fatal("commodity perpetual should be filtered out")
 	}
 	wantVol := 65000.0 * 5_000_000
 	if got := *tickers["BTC/USDT:USDT"].QuoteVolume; got != wantVol {

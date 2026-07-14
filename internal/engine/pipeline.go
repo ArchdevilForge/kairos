@@ -215,7 +215,7 @@ func (p *Pipeline) Start(ctx context.Context) error {
 			symbols = nil
 		}
 		p.symbolsByExchange[name] = symbols
-		p.log.Info("symbols discovered", "exchange", name, "count", len(symbols))
+		p.log.Info("symbols discovered", "exchange", name, "count", len(symbols), "symbols", strings.Join(symbols, ","))
 	}
 
 	p.loadMarketCaps(ctx)

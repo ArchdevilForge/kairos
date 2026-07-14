@@ -10,3 +10,16 @@ func TestOKXUSDTQuoteVolume(t *testing.T) {
 		t.Fatal("zero input should return 0")
 	}
 }
+
+func TestOKXIsCryptoUSDTSwap(t *testing.T) {
+	if !okxIsCryptoUSDTSwap("BTC-USDT-SWAP", nil) {
+		t.Fatal("nil set should allow all")
+	}
+	set := map[string]struct{}{"BTC-USDT-SWAP": {}}
+	if !okxIsCryptoUSDTSwap("BTC-USDT-SWAP", set) {
+		t.Fatal("crypto should pass")
+	}
+	if okxIsCryptoUSDTSwap("AAPL-USDT-SWAP", set) {
+		t.Fatal("stock should fail")
+	}
+}
