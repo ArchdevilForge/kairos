@@ -1,0 +1,6 @@
+.trellis/spec/backend/signal-alert-contracts.md
+.trellis/spec/backend/logging-guidelines.md
+docs/architecture.md
+config/config.yaml.example
+internal/engine/pipeline.go
+internal/engine/liquidity.go
