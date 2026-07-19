@@ -50,15 +50,15 @@ const (
 
 // SignalEnvelope is the top-level response wrapper returned by the scanner.
 type SignalEnvelope struct {
-	Success      bool              `json:"success" yaml:"success"`
-	SchemaVersion string            `json:"schema_version" yaml:"schema_version"`
-	Timestamp    string             `json:"timestamp" yaml:"timestamp"`
-	Symbol       *string            `json:"symbol" yaml:"symbol"`
-	Data         map[string]any     `json:"data" yaml:"data"`
-	Score        map[string]any     `json:"score" yaml:"score"`
-	Reasons      []string           `json:"reasons" yaml:"reasons"`
-	Warnings     []string           `json:"warnings" yaml:"warnings"`
-	Errors       []string           `json:"errors" yaml:"errors"`
+	Success       bool           `json:"success" yaml:"success"`
+	SchemaVersion string         `json:"schema_version" yaml:"schema_version"`
+	Timestamp     string         `json:"timestamp" yaml:"timestamp"`
+	Symbol        *string        `json:"symbol" yaml:"symbol"`
+	Data          map[string]any `json:"data" yaml:"data"`
+	Score         map[string]any `json:"score" yaml:"score"`
+	Reasons       []string       `json:"reasons" yaml:"reasons"`
+	Warnings      []string       `json:"warnings" yaml:"warnings"`
+	Errors        []string       `json:"errors" yaml:"errors"`
 }
 
 // Candle represents a single OHLCV candle.
@@ -73,12 +73,12 @@ type Candle struct {
 
 // Ticker represents normalized market data from an exchange ticker.
 type Ticker struct {
-	Symbol       string   `json:"symbol" yaml:"symbol"`
-	LastPrice    *float64 `json:"last_price,omitempty" yaml:"last_price,omitempty"`
-	QuoteVolume  *float64 `json:"quote_volume_24h,omitempty" yaml:"quote_volume_24h,omitempty"`
-	ChangePct    *float64 `json:"change_24h_pct,omitempty" yaml:"change_24h_pct,omitempty"`
-	OpenInterest *float64 `json:"open_interest,omitempty" yaml:"open_interest,omitempty"`
-	FundingRate  *float64 `json:"funding_rate,omitempty" yaml:"funding_rate,omitempty"`
+	Symbol       string         `json:"symbol" yaml:"symbol"`
+	LastPrice    *float64       `json:"last_price,omitempty" yaml:"last_price,omitempty"`
+	QuoteVolume  *float64       `json:"quote_volume_24h,omitempty" yaml:"quote_volume_24h,omitempty"`
+	ChangePct    *float64       `json:"change_24h_pct,omitempty" yaml:"change_24h_pct,omitempty"`
+	OpenInterest *float64       `json:"open_interest,omitempty" yaml:"open_interest,omitempty"`
+	FundingRate  *float64       `json:"funding_rate,omitempty" yaml:"funding_rate,omitempty"`
 	Info         map[string]any `json:"info,omitempty" yaml:"info,omitempty"`
 }
 
@@ -96,17 +96,17 @@ type Candidate struct {
 
 // RiskBounds represents structure-based risk boundaries for a setup.
 type RiskBounds struct {
-	MaxPositionPct  float64   `json:"max_position_pct" yaml:"max_position_pct"`
-	MaxLeverage     float64   `json:"max_leverage" yaml:"max_leverage"`
-	EntryZone       []float64 `json:"entry_zone" yaml:"entry_zone"`
-	StructuralStop  *float64  `json:"structural_stop,omitempty" yaml:"structural_stop,omitempty"`
-	Targets         []float64 `json:"targets" yaml:"targets"`
-	RiskReward      float64   `json:"risk_reward" yaml:"risk_reward"`
-	RiskRewardTarget *float64 `json:"risk_reward_target,omitempty" yaml:"risk_reward_target,omitempty"`
-	Invalidation    *string   `json:"invalidation,omitempty" yaml:"invalidation,omitempty"`
-	Triggered       bool      `json:"triggered" yaml:"triggered"`
-	NearTrigger     bool      `json:"near_trigger" yaml:"near_trigger"`
-	AccountSizing   bool      `json:"account_sizing" yaml:"account_sizing"`
+	MaxPositionPct   float64   `json:"max_position_pct" yaml:"max_position_pct"`
+	MaxLeverage      float64   `json:"max_leverage" yaml:"max_leverage"`
+	EntryZone        []float64 `json:"entry_zone" yaml:"entry_zone"`
+	StructuralStop   *float64  `json:"structural_stop,omitempty" yaml:"structural_stop,omitempty"`
+	Targets          []float64 `json:"targets" yaml:"targets"`
+	RiskReward       float64   `json:"risk_reward" yaml:"risk_reward"`
+	RiskRewardTarget *float64  `json:"risk_reward_target,omitempty" yaml:"risk_reward_target,omitempty"`
+	Invalidation     *string   `json:"invalidation,omitempty" yaml:"invalidation,omitempty"`
+	Triggered        bool      `json:"triggered" yaml:"triggered"`
+	NearTrigger      bool      `json:"near_trigger" yaml:"near_trigger"`
+	AccountSizing    bool      `json:"account_sizing" yaml:"account_sizing"`
 }
 
 // Setup represents a fully analyzed setup for one symbol and direction.
@@ -143,21 +143,21 @@ type MarketCycle struct {
 
 // BoxPattern represents a detected box pattern.
 type BoxPattern struct {
-	Symbol          string     `json:"symbol" yaml:"symbol"`
-	Timeframe       string     `json:"timeframe" yaml:"timeframe"`
-	High            float64    `json:"high" yaml:"high"`
-	Low             float64    `json:"low" yaml:"low"`
-	StartTime       float64    `json:"start_time" yaml:"start_time"`
-	EndTime         float64    `json:"end_time" yaml:"end_time"`
-	Status          BoxStatus  `json:"status" yaml:"status"`
-	TouchHigh       int        `json:"touch_high" yaml:"touch_high"`
-	TouchLow        int        `json:"touch_low" yaml:"touch_low"`
-	SecondTestHigh  bool       `json:"second_test_high" yaml:"second_test_high"`
-	SecondTestLow   bool       `json:"second_test_low" yaml:"second_test_low"`
-	ConvergencePct  float64    `json:"convergence_pct" yaml:"convergence_pct"`
-	VolumeDeclining bool       `json:"volume_declining" yaml:"volume_declining"`
-	BreakoutPrice   *float64   `json:"breakout_price,omitempty" yaml:"breakout_price,omitempty"`
-	BreakoutTime    *float64   `json:"breakout_time,omitempty" yaml:"breakout_time,omitempty"`
+	Symbol          string    `json:"symbol" yaml:"symbol"`
+	Timeframe       string    `json:"timeframe" yaml:"timeframe"`
+	High            float64   `json:"high" yaml:"high"`
+	Low             float64   `json:"low" yaml:"low"`
+	StartTime       float64   `json:"start_time" yaml:"start_time"`
+	EndTime         float64   `json:"end_time" yaml:"end_time"`
+	Status          BoxStatus `json:"status" yaml:"status"`
+	TouchHigh       int       `json:"touch_high" yaml:"touch_high"`
+	TouchLow        int       `json:"touch_low" yaml:"touch_low"`
+	SecondTestHigh  bool      `json:"second_test_high" yaml:"second_test_high"`
+	SecondTestLow   bool      `json:"second_test_low" yaml:"second_test_low"`
+	ConvergencePct  float64   `json:"convergence_pct" yaml:"convergence_pct"`
+	VolumeDeclining bool      `json:"volume_declining" yaml:"volume_declining"`
+	BreakoutPrice   *float64  `json:"breakout_price,omitempty" yaml:"breakout_price,omitempty"`
+	BreakoutTime    *float64  `json:"breakout_time,omitempty" yaml:"breakout_time,omitempty"`
 }
 
 // Height returns the box height (high - low).
@@ -213,24 +213,25 @@ type OHLCVArrays struct {
 
 // Config is the top-level Kairos configuration, loaded from config.yaml.
 type Config struct {
-	Exchange             string              `mapstructure:"exchange" json:"exchange" yaml:"exchange"`
-	DefaultTimeframe     string              `mapstructure:"defaultTimeframe" json:"defaultTimeframe" yaml:"defaultTimeframe"`
-	NotificationTimezone string              `mapstructure:"notificationTimezone" json:"notificationTimezone" yaml:"notificationTimezone"`
-	Telegram             TelegramConfig      `mapstructure:"telegram" json:"telegram" yaml:"telegram"`
-	DataManager          DataManagerConfig   `mapstructure:"dataManager" json:"dataManager" yaml:"dataManager"`
-	AlertPolicy          AlertPolicyConfig   `mapstructure:"alertPolicy" json:"alertPolicy" yaml:"alertPolicy"`
-	PriceVelocity        PriceVelocityConfig `mapstructure:"priceVelocity" json:"priceVelocity" yaml:"priceVelocity"`
-	VolumeSpike          VolumeSpikeConfig   `mapstructure:"volumeSpike" json:"volumeSpike" yaml:"volumeSpike"`
-	FuturesMetrics       FuturesMetricsConfig `mapstructure:"futuresMetrics" json:"futuresMetrics" yaml:"futuresMetrics"`
-	LongShortRatio       LongShortRatioConfig `mapstructure:"longShortRatio" json:"longShortRatio" yaml:"longShortRatio"`
-	Liquidation          LiquidationConfig   `mapstructure:"liquidation" json:"liquidation" yaml:"liquidation"`
+	Exchange             string                `mapstructure:"exchange" json:"exchange" yaml:"exchange"`
+	DefaultTimeframe     string                `mapstructure:"defaultTimeframe" json:"defaultTimeframe" yaml:"defaultTimeframe"`
+	NotificationTimezone string                `mapstructure:"notificationTimezone" json:"notificationTimezone" yaml:"notificationTimezone"`
+	Telegram             TelegramConfig        `mapstructure:"telegram" json:"telegram" yaml:"telegram"`
+	DataManager          DataManagerConfig     `mapstructure:"dataManager" json:"dataManager" yaml:"dataManager"`
+	AlertPolicy          AlertPolicyConfig     `mapstructure:"alertPolicy" json:"alertPolicy" yaml:"alertPolicy"`
+	PriceVelocity        PriceVelocityConfig   `mapstructure:"priceVelocity" json:"priceVelocity" yaml:"priceVelocity"`
+	VolumeSpike          VolumeSpikeConfig     `mapstructure:"volumeSpike" json:"volumeSpike" yaml:"volumeSpike"`
+	FuturesMetrics       FuturesMetricsConfig  `mapstructure:"futuresMetrics" json:"futuresMetrics" yaml:"futuresMetrics"`
+	LongShortRatio       LongShortRatioConfig  `mapstructure:"longShortRatio" json:"longShortRatio" yaml:"longShortRatio"`
+	Liquidation          LiquidationConfig     `mapstructure:"liquidation" json:"liquidation" yaml:"liquidation"`
 	ResonanceScorer      ResonanceScorerConfig `mapstructure:"resonanceScorer" json:"resonanceScorer" yaml:"resonanceScorer"`
-	Scanner              ScannerConfig       `mapstructure:"scanner" json:"scanner" yaml:"scanner"`
-	Exchanges            ExchangesConfig     `mapstructure:"exchanges" json:"exchanges" yaml:"exchanges"`
-	Scoring              ScoringConfig       `mapstructure:"scoring" json:"scoring" yaml:"scoring"`
-	Risk                 RiskConfig          `mapstructure:"risk" json:"risk" yaml:"risk"`
-	Storage              StorageConfig       `mapstructure:"storage" json:"storage" yaml:"storage"`
-	Charts               ChartConfig         `mapstructure:"charts" json:"charts" yaml:"charts"`
+	Scanner              ScannerConfig         `mapstructure:"scanner" json:"scanner" yaml:"scanner"`
+	Exchanges            ExchangesConfig       `mapstructure:"exchanges" json:"exchanges" yaml:"exchanges"`
+	Scoring              ScoringConfig         `mapstructure:"scoring" json:"scoring" yaml:"scoring"`
+	Risk                 RiskConfig            `mapstructure:"risk" json:"risk" yaml:"risk"`
+	Storage              StorageConfig         `mapstructure:"storage" json:"storage" yaml:"storage"`
+	Charts               ChartConfig           `mapstructure:"charts" json:"charts" yaml:"charts"`
+	MarketPulse          MarketPulseConfig     `mapstructure:"marketPulse" json:"marketPulse" yaml:"marketPulse"`
 	// AlertMinState is the minimum action state for alerting (env: KAIROS_ALERT_MIN_STATE).
 	AlertMinState string `mapstructure:"-" json:"alert_min_state,omitempty" yaml:"-"`
 	// AlertLimit is the max number of alerts per cycle (env: KAIROS_ALERT_LIMIT).
@@ -248,11 +249,11 @@ type TelegramConfig struct {
 // DataManagerConfig controls kairos-watch ticker polling and deduplication.
 // Deprecated name: use alertPolicy for delivery gates; this block configures watch runtime only.
 type DataManagerConfig struct {
-	Exchanges            []string `mapstructure:"exchanges" json:"exchanges" yaml:"exchanges"`
-	TopSymbols           int      `mapstructure:"topSymbols" json:"topSymbols" yaml:"topSymbols"`
-	RefreshIntervalHours int      `mapstructure:"refreshIntervalHours" json:"refreshIntervalHours" yaml:"refreshIntervalHours"`
-	DedupWindowSeconds   int      `mapstructure:"dedupWindowSeconds" json:"dedupWindowSeconds" yaml:"dedupWindowSeconds"`
-	SymbolCooldownMinutes int     `mapstructure:"symbolCooldownMinutes" json:"symbolCooldownMinutes" yaml:"symbolCooldownMinutes"`
+	Exchanges             []string `mapstructure:"exchanges" json:"exchanges" yaml:"exchanges"`
+	TopSymbols            int      `mapstructure:"topSymbols" json:"topSymbols" yaml:"topSymbols"`
+	RefreshIntervalHours  int      `mapstructure:"refreshIntervalHours" json:"refreshIntervalHours" yaml:"refreshIntervalHours"`
+	DedupWindowSeconds    int      `mapstructure:"dedupWindowSeconds" json:"dedupWindowSeconds" yaml:"dedupWindowSeconds"`
+	SymbolCooldownMinutes int      `mapstructure:"symbolCooldownMinutes" json:"symbolCooldownMinutes" yaml:"symbolCooldownMinutes"`
 }
 
 // LiquidityWeightConfig down-weights alerts for low market-cap symbols.
@@ -278,9 +279,9 @@ type AlertPolicyConfig struct {
 
 // PriceVelocityConfig defines short-term price velocity thresholds.
 type PriceVelocityConfig struct {
-	Enabled         bool               `mapstructure:"enabled" json:"enabled" yaml:"enabled"`
-	Windows         []PriceWindow      `mapstructure:"windows" json:"windows" yaml:"windows"`
-	CooldownSeconds int                `mapstructure:"cooldownSeconds" json:"cooldownSeconds" yaml:"cooldownSeconds"`
+	Enabled         bool          `mapstructure:"enabled" json:"enabled" yaml:"enabled"`
+	Windows         []PriceWindow `mapstructure:"windows" json:"windows" yaml:"windows"`
+	CooldownSeconds int           `mapstructure:"cooldownSeconds" json:"cooldownSeconds" yaml:"cooldownSeconds"`
 }
 
 // PriceWindow defines a single velocity observation window.
@@ -291,46 +292,46 @@ type PriceWindow struct {
 
 // VolumeSpikeConfig defines volume spike detection parameters.
 type VolumeSpikeConfig struct {
-	Enabled          bool   `mapstructure:"enabled" json:"enabled" yaml:"enabled"`
-	Multiplier       float64 `mapstructure:"multiplier" json:"multiplier" yaml:"multiplier"`
-	WindowMinutes    int    `mapstructure:"windowMinutes" json:"windowMinutes" yaml:"windowMinutes"`
-	MinHistorySeconds int   `mapstructure:"minHistorySeconds" json:"minHistorySeconds" yaml:"minHistorySeconds"`
-	MinNotifyInterval string `mapstructure:"minNotifyInterval" json:"minNotifyInterval" yaml:"minNotifyInterval"`
+	Enabled           bool    `mapstructure:"enabled" json:"enabled" yaml:"enabled"`
+	Multiplier        float64 `mapstructure:"multiplier" json:"multiplier" yaml:"multiplier"`
+	WindowMinutes     int     `mapstructure:"windowMinutes" json:"windowMinutes" yaml:"windowMinutes"`
+	MinHistorySeconds int     `mapstructure:"minHistorySeconds" json:"minHistorySeconds" yaml:"minHistorySeconds"`
+	MinNotifyInterval string  `mapstructure:"minNotifyInterval" json:"minNotifyInterval" yaml:"minNotifyInterval"`
 }
 
 // FuturesMetricsConfig controls open interest and funding rate polling.
 type FuturesMetricsConfig struct {
-	Enabled              bool                    `mapstructure:"enabled" json:"enabled" yaml:"enabled"`
-	PollIntervalSeconds  int                     `mapstructure:"pollIntervalSeconds" json:"pollIntervalSeconds" yaml:"pollIntervalSeconds"`
-	FetchFundingPerSymbol bool                   `mapstructure:"fetchFundingPerSymbol" json:"fetchFundingPerSymbol" yaml:"fetchFundingPerSymbol"`
-	OpenInterest         OIConfig                `mapstructure:"openInterest" json:"openInterest" yaml:"openInterest"`
-	FundingRate          FundingRateConfig       `mapstructure:"fundingRate" json:"fundingRate" yaml:"fundingRate"`
+	Enabled               bool              `mapstructure:"enabled" json:"enabled" yaml:"enabled"`
+	PollIntervalSeconds   int               `mapstructure:"pollIntervalSeconds" json:"pollIntervalSeconds" yaml:"pollIntervalSeconds"`
+	FetchFundingPerSymbol bool              `mapstructure:"fetchFundingPerSymbol" json:"fetchFundingPerSymbol" yaml:"fetchFundingPerSymbol"`
+	OpenInterest          OIConfig          `mapstructure:"openInterest" json:"openInterest" yaml:"openInterest"`
+	FundingRate           FundingRateConfig `mapstructure:"fundingRate" json:"fundingRate" yaml:"fundingRate"`
 }
 
 // OIConfig controls open interest change detection.
 type OIConfig struct {
-	Enabled         bool   `mapstructure:"enabled" json:"enabled" yaml:"enabled"`
-	MinChangePct    float64 `mapstructure:"minChangePct" json:"minChangePct" yaml:"minChangePct"`
-	MinNotifyInterval string `mapstructure:"minNotifyInterval" json:"minNotifyInterval" yaml:"minNotifyInterval"`
+	Enabled           bool    `mapstructure:"enabled" json:"enabled" yaml:"enabled"`
+	MinChangePct      float64 `mapstructure:"minChangePct" json:"minChangePct" yaml:"minChangePct"`
+	MinNotifyInterval string  `mapstructure:"minNotifyInterval" json:"minNotifyInterval" yaml:"minNotifyInterval"`
 }
 
 // FundingRateConfig controls funding rate anomaly detection.
 type FundingRateConfig struct {
-	Enabled         bool    `mapstructure:"enabled" json:"enabled" yaml:"enabled"`
-	AbsRateThreshold float64 `mapstructure:"absRateThreshold" json:"absRateThreshold" yaml:"absRateThreshold"`
-	MinChangeAbs    float64 `mapstructure:"minChangeAbs" json:"minChangeAbs" yaml:"minChangeAbs"`
-	MinNotifyInterval string `mapstructure:"minNotifyInterval" json:"minNotifyInterval" yaml:"minNotifyInterval"`
+	Enabled           bool    `mapstructure:"enabled" json:"enabled" yaml:"enabled"`
+	AbsRateThreshold  float64 `mapstructure:"absRateThreshold" json:"absRateThreshold" yaml:"absRateThreshold"`
+	MinChangeAbs      float64 `mapstructure:"minChangeAbs" json:"minChangeAbs" yaml:"minChangeAbs"`
+	MinNotifyInterval string  `mapstructure:"minNotifyInterval" json:"minNotifyInterval" yaml:"minNotifyInterval"`
 }
 
 // LongShortRatioConfig controls long/short ratio anomaly detection.
 type LongShortRatioConfig struct {
-	Enabled             bool    `mapstructure:"enabled" json:"enabled" yaml:"enabled"`
-	PollIntervalSeconds int     `mapstructure:"pollIntervalSeconds" json:"pollIntervalSeconds" yaml:"pollIntervalSeconds"`
-	AbsThreshold        float64 `mapstructure:"absThreshold" json:"absThreshold" yaml:"absThreshold"`
-	ZscoreThreshold     float64 `mapstructure:"zscoreThreshold" json:"zscoreThreshold" yaml:"zscoreThreshold"`
-	ZscoreWindow        int     `mapstructure:"zscoreWindow" json:"zscoreWindow" yaml:"zscoreWindow"`
+	Enabled              bool    `mapstructure:"enabled" json:"enabled" yaml:"enabled"`
+	PollIntervalSeconds  int     `mapstructure:"pollIntervalSeconds" json:"pollIntervalSeconds" yaml:"pollIntervalSeconds"`
+	AbsThreshold         float64 `mapstructure:"absThreshold" json:"absThreshold" yaml:"absThreshold"`
+	ZscoreThreshold      float64 `mapstructure:"zscoreThreshold" json:"zscoreThreshold" yaml:"zscoreThreshold"`
+	ZscoreWindow         int     `mapstructure:"zscoreWindow" json:"zscoreWindow" yaml:"zscoreWindow"`
 	VelocityThresholdPct float64 `mapstructure:"velocityThresholdPct" json:"velocityThresholdPct" yaml:"velocityThresholdPct"`
-	MinNotifyInterval   string  `mapstructure:"minNotifyInterval" json:"minNotifyInterval" yaml:"minNotifyInterval"`
+	MinNotifyInterval    string  `mapstructure:"minNotifyInterval" json:"minNotifyInterval" yaml:"minNotifyInterval"`
 }
 
 // LiquidationConfig controls liquidation event detection.
@@ -346,22 +347,22 @@ type LiquidationConfig struct {
 
 // ResonanceScorerConfig controls multi-dimension signal resonance scoring.
 type ResonanceScorerConfig struct {
-	Enabled         bool   `mapstructure:"enabled" json:"enabled" yaml:"enabled"`
-	WindowSeconds   int    `mapstructure:"windowSeconds" json:"windowSeconds" yaml:"windowSeconds"`
-	MinDimensions   int    `mapstructure:"minDimensions" json:"minDimensions" yaml:"minDimensions"`
+	Enabled         bool    `mapstructure:"enabled" json:"enabled" yaml:"enabled"`
+	WindowSeconds   int     `mapstructure:"windowSeconds" json:"windowSeconds" yaml:"windowSeconds"`
+	MinDimensions   int     `mapstructure:"minDimensions" json:"minDimensions" yaml:"minDimensions"`
 	MinScore        float64 `mapstructure:"minScore" json:"minScore" yaml:"minScore"`
-	CooldownSeconds int    `mapstructure:"cooldownSeconds" json:"cooldownSeconds" yaml:"cooldownSeconds"`
+	CooldownSeconds int     `mapstructure:"cooldownSeconds" json:"cooldownSeconds" yaml:"cooldownSeconds"`
 }
 
 // ScannerConfig defines scanner workflow limits and timeout budgets.
 type ScannerConfig struct {
-	IntervalSeconds              int      `mapstructure:"intervalSeconds" json:"intervalSeconds" yaml:"intervalSeconds"`
-	UniverseSize                 int      `mapstructure:"universeSize" json:"universeSize" yaml:"universeSize"`
-	CandidateLimit               int      `mapstructure:"candidateLimit" json:"candidateLimit" yaml:"candidateLimit"`
-	DeepAnalysisLimit            int      `mapstructure:"deepAnalysisLimit" json:"deepAnalysisLimit" yaml:"deepAnalysisLimit"`
-	TotalTimeoutSeconds          int      `mapstructure:"totalTimeoutSeconds" json:"totalTimeoutSeconds" yaml:"totalTimeoutSeconds"`
-	ExchangeRequestTimeoutSeconds int     `mapstructure:"exchangeRequestTimeoutSeconds" json:"exchangeRequestTimeoutSeconds" yaml:"exchangeRequestTimeoutSeconds"`
-	SymbolAnalysisTimeoutSeconds  int     `mapstructure:"symbolAnalysisTimeoutSeconds" json:"symbolAnalysisTimeoutSeconds" yaml:"symbolAnalysisTimeoutSeconds"`
+	IntervalSeconds               int      `mapstructure:"intervalSeconds" json:"intervalSeconds" yaml:"intervalSeconds"`
+	UniverseSize                  int      `mapstructure:"universeSize" json:"universeSize" yaml:"universeSize"`
+	CandidateLimit                int      `mapstructure:"candidateLimit" json:"candidateLimit" yaml:"candidateLimit"`
+	DeepAnalysisLimit             int      `mapstructure:"deepAnalysisLimit" json:"deepAnalysisLimit" yaml:"deepAnalysisLimit"`
+	TotalTimeoutSeconds           int      `mapstructure:"totalTimeoutSeconds" json:"totalTimeoutSeconds" yaml:"totalTimeoutSeconds"`
+	ExchangeRequestTimeoutSeconds int      `mapstructure:"exchangeRequestTimeoutSeconds" json:"exchangeRequestTimeoutSeconds" yaml:"exchangeRequestTimeoutSeconds"`
+	SymbolAnalysisTimeoutSeconds  int      `mapstructure:"symbolAnalysisTimeoutSeconds" json:"symbolAnalysisTimeoutSeconds" yaml:"symbolAnalysisTimeoutSeconds"`
 	Timeframes                    []string `mapstructure:"timeframes" json:"timeframes" yaml:"timeframes"`
 	GenerateChartsByDefault       bool     `mapstructure:"generateChartsByDefault" json:"generateChartsByDefault" yaml:"generateChartsByDefault"`
 }
@@ -377,14 +378,14 @@ type ExchangesConfig struct {
 
 // ScoringConfig defines deterministic scoring thresholds and weights.
 type ScoringConfig struct {
-	CandidateWeights             map[string]float64      `mapstructure:"candidateWeights" json:"candidateWeights" yaml:"candidateWeights"`
-	SetupWeights                 map[string]float64      `mapstructure:"setupWeights" json:"setupWeights" yaml:"setupWeights"`
-	CycleThresholds              map[string]float64      `mapstructure:"cycleThresholds" json:"cycleThresholds" yaml:"cycleThresholds"`
-	CycleDetector                CycleDetectorYAMLConfig `mapstructure:"cycleDetector" json:"cycleDetector" yaml:"cycleDetector"`
-	MinimumLiquidityQuoteVolume  float64                 `mapstructure:"minimumLiquidityQuoteVolume" json:"minimumLiquidityQuoteVolume" yaml:"minimumLiquidityQuoteVolume"`
-	MinimumRiskReward            float64                 `mapstructure:"minimumRiskReward" json:"minimumRiskReward" yaml:"minimumRiskReward"`
-	StrictRiskReward             float64                 `mapstructure:"strictRiskReward" json:"strictRiskReward" yaml:"strictRiskReward"`
-	ShortThresholdPremium        float64                 `mapstructure:"shortThresholdPremium" json:"shortThresholdPremium" yaml:"shortThresholdPremium"`
+	CandidateWeights            map[string]float64      `mapstructure:"candidateWeights" json:"candidateWeights" yaml:"candidateWeights"`
+	SetupWeights                map[string]float64      `mapstructure:"setupWeights" json:"setupWeights" yaml:"setupWeights"`
+	CycleThresholds             map[string]float64      `mapstructure:"cycleThresholds" json:"cycleThresholds" yaml:"cycleThresholds"`
+	CycleDetector               CycleDetectorYAMLConfig `mapstructure:"cycleDetector" json:"cycleDetector" yaml:"cycleDetector"`
+	MinimumLiquidityQuoteVolume float64                 `mapstructure:"minimumLiquidityQuoteVolume" json:"minimumLiquidityQuoteVolume" yaml:"minimumLiquidityQuoteVolume"`
+	MinimumRiskReward           float64                 `mapstructure:"minimumRiskReward" json:"minimumRiskReward" yaml:"minimumRiskReward"`
+	StrictRiskReward            float64                 `mapstructure:"strictRiskReward" json:"strictRiskReward" yaml:"strictRiskReward"`
+	ShortThresholdPremium       float64                 `mapstructure:"shortThresholdPremium" json:"shortThresholdPremium" yaml:"shortThresholdPremium"`
 }
 
 // CycleDetectorYAMLConfig maps yaml thresholds to indicators.CycleDetectorConfig.
@@ -401,11 +402,11 @@ type CycleDetectorYAMLConfig struct {
 
 // RiskConfig defines signal-only risk bounds (not execution commands).
 type RiskConfig struct {
-	MaxPositionPct              map[string]float64 `mapstructure:"maxPositionPct" json:"maxPositionPct" yaml:"maxPositionPct"`
-	MaxLeverage                 map[string]float64 `mapstructure:"maxLeverage" json:"maxLeverage" yaml:"maxLeverage"`
-	WeakCyclePositionMultiplier float64            `mapstructure:"weakCyclePositionMultiplier" json:"weakCyclePositionMultiplier" yaml:"weakCyclePositionMultiplier"`
-	ShortPositionMultiplier     float64            `mapstructure:"shortPositionMultiplier" json:"shortPositionMultiplier" yaml:"shortPositionMultiplier"`
-	InverseCyclePositionMultiplier float64          `mapstructure:"inverseCyclePositionMultiplier" json:"inverseCyclePositionMultiplier" yaml:"inverseCyclePositionMultiplier"`
+	MaxPositionPct                 map[string]float64 `mapstructure:"maxPositionPct" json:"maxPositionPct" yaml:"maxPositionPct"`
+	MaxLeverage                    map[string]float64 `mapstructure:"maxLeverage" json:"maxLeverage" yaml:"maxLeverage"`
+	WeakCyclePositionMultiplier    float64            `mapstructure:"weakCyclePositionMultiplier" json:"weakCyclePositionMultiplier" yaml:"weakCyclePositionMultiplier"`
+	ShortPositionMultiplier        float64            `mapstructure:"shortPositionMultiplier" json:"shortPositionMultiplier" yaml:"shortPositionMultiplier"`
+	InverseCyclePositionMultiplier float64            `mapstructure:"inverseCyclePositionMultiplier" json:"inverseCyclePositionMultiplier" yaml:"inverseCyclePositionMultiplier"`
 }
 
 // StorageConfig defines persistence configuration.
@@ -421,8 +422,8 @@ type StorageConfig struct {
 
 // ChartConfig defines chart generation policy.
 type ChartConfig struct {
-	DefaultChartCount          int     `mapstructure:"defaultChartCount" json:"defaultChartCount" yaml:"defaultChartCount"`
-	OutputPath                 string  `mapstructure:"outputPath" json:"outputPath" yaml:"outputPath"`
-	CleanupDays                int     `mapstructure:"cleanupDays" json:"cleanupDays" yaml:"cleanupDays"`
+	DefaultChartCount            int     `mapstructure:"defaultChartCount" json:"defaultChartCount" yaml:"defaultChartCount"`
+	OutputPath                   string  `mapstructure:"outputPath" json:"outputPath" yaml:"outputPath"`
+	CleanupDays                  int     `mapstructure:"cleanupDays" json:"cleanupDays" yaml:"cleanupDays"`
 	MultiTimeframeScoreThreshold float64 `mapstructure:"multiTimeframeScoreThreshold" json:"multiTimeframeScoreThreshold" yaml:"multiTimeframeScoreThreshold"`
 }

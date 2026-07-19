@@ -112,6 +112,53 @@ func TestLoadString_DefaultsLiquidityWeight(t *testing.T) {
 	}
 }
 
+func TestLoadString_DefaultsMarketPulse(t *testing.T) {
+	cfg, err := LoadString("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mp := cfg.MarketPulse
+	if mp.Enabled {
+		t.Fatal("marketPulse.enabled default should be false")
+	}
+	if !mp.ShadowMode {
+		t.Fatal("shadowMode default should be true")
+	}
+	if mp.MinValidSymbols != 15 {
+		t.Fatalf("minValidSymbols=%d", mp.MinValidSymbols)
+	}
+	if mp.Impulse.MinBreadth != 0.65 {
+		t.Fatalf("impulse.minBreadth=%v", mp.Impulse.MinBreadth)
+	}
+	if mp.GateIndividualAlertsWhenQuiet {
+		t.Fatal("gate should be off by default in Phase 1")
+	}
+}
+
+func TestLoadString_MarketPulseOverride(t *testing.T) {
+	yaml := `
+marketPulse:
+  enabled: true
+  shadowMode: true
+  minValidSymbols: 12
+  impulse:
+    minBreadth: 0.7
+`
+	cfg, err := LoadString(yaml)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.MarketPulse.Enabled || !cfg.MarketPulse.ShadowMode {
+		t.Fatalf("enabled/shadow: %+v", cfg.MarketPulse)
+	}
+	if cfg.MarketPulse.MinValidSymbols != 12 {
+		t.Fatalf("minValidSymbols=%d", cfg.MarketPulse.MinValidSymbols)
+	}
+	if cfg.MarketPulse.Impulse.MinBreadth != 0.7 {
+		t.Fatalf("minBreadth=%v", cfg.MarketPulse.Impulse.MinBreadth)
+	}
+}
+
 func TestLoad_ExampleConfigAlignsWithTypes(t *testing.T) {
 	cfg, err := Load(filepath.Join("..", "..", "config", "config.yaml.example"))
 	if err != nil {
@@ -136,5 +183,12 @@ func TestLoad_ExampleConfigAlignsWithTypes(t *testing.T) {
 	}
 	if len(cfg.AlertPolicy.LiquidityWeight.MajorSymbols) < 2 {
 		t.Fatalf("majorSymbols: %v", cfg.AlertPolicy.LiquidityWeight.MajorSymbols)
+	}
+	// Example keeps marketPulse disabled (Phase 1 opt-in).
+	if cfg.MarketPulse.Enabled {
+		t.Fatal("example marketPulse.enabled should be false")
+	}
+	if !cfg.MarketPulse.ShadowMode {
+		t.Fatal("example marketPulse.shadowMode should be true")
 	}
 }

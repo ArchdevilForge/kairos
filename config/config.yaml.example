@@ -185,6 +185,61 @@ storage:
 #   KAIROS_COINGLASS_PYTHON=/path/to/coinglass-decrypt/.venv/bin/python
 # KAIROS_COINGLASS_USE_PYTHON=0 forces native Go decrypt (legacy v only)
 
+# MarketPulse: cross-sectional market state (Phase 1 = shadow only).
+# Keep allowedEventTypes as price_velocity until Phase 2 Telegram rollout.
+marketPulse:
+  enabled: false
+  shadowMode: true
+  snapshotIntervalSeconds: 5
+  freshnessSeconds: 10
+  maxLookupGapSeconds: 15
+  warmupSeconds: 300
+  historyRetentionSeconds: 900
+  minFreshRatio: 0.80
+  minValidSymbols: 15
+  noiseReturnPct: 0.08
+  primarySymbols:
+    - "BTC/USDT:USDT"
+    - "ETH/USDT:USDT"
+  requirePrimaryConfirmation: true
+  volatility:
+    enabled: true
+    ewmaAlpha: 0.10
+    floorPct: 0.03
+  impulse:
+    windowSeconds: 60
+    minBreadth: 0.65
+    minMedianReturnPct: 0.18
+    minMedianZ: 1.5
+    confirmationSamples: 3
+    confirmationWindowSamples: 4
+  trend:
+    windowSeconds: 300
+    minBreadth: 0.60
+    minMedianReturnPct: 0.45
+    minPersistSeconds: 180
+    confirmationSamples: 5
+    confirmationWindowSamples: 6
+  stress:
+    windowSeconds: 60
+    minBreadth: 0.80
+    minMedianReturnPct: 0.35
+    minMedianZ: 2.5
+  decay:
+    enabled: true
+    maxBreadth: 0.50
+    maxMedianReturnPct: 0.08
+    persistSeconds: 60
+    notify: false
+    quietResetSeconds: 60
+  leaders:
+    limit: 5
+  cooldownSeconds: 600
+  stressCooldownSeconds: 300
+  gateIndividualAlertsWhenQuiet: false
+  allowIsolatedExtremeWhenQuiet: false
+  isolatedExtremeMinZ: 4.0
+
 charts:
   defaultChartCount: 1
   outputPath: "~/.local/share/kairos/charts"

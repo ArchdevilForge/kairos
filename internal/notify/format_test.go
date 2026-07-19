@@ -104,3 +104,81 @@ func TestFormatLiquidation_NilReason(t *testing.T) {
 		t.Fatalf("nil reason: %s", text)
 	}
 }
+
+func TestFormatMarketPulse_Impulse(t *testing.T) {
+	btc := 0.31
+	eth := 0.37
+	text := formatEvent(types.AlertEvent{
+		Event:    "market_impulse",
+		Symbol:   "MARKET",
+		Severity: types.SeverityHigh,
+		Data: map[string]any{
+			"direction":             "up",
+			"state_from":            "QUIET",
+			"state_to":              "IMPULSE_UP",
+			"median_return_60s_pct": 0.23,
+			"breadth":               0.76,
+			"advancers":             22,
+			"valid_symbols":         29,
+			"median_z_60s":          1.82,
+			"btc_return_pct":        btc,
+			"eth_return_pct":        eth,
+			"leaders":               []string{"SOL/USDT:USDT", "DOGE/USDT:USDT"},
+		},
+	})
+	for _, want := range []string{
+		"市场向上启动",
+		"仅供人工判断",
+		"不自动交易",
+		"QUIET",
+		"IMPULSE_UP",
+		"SOL",
+		"打开盘面观察",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("missing %q in:\n%s", want, text)
+		}
+	}
+	// Forbidden trading language.
+	for _, bad := range []string{"开多", "开空", "买入", "卖出", "必涨"} {
+		if strings.Contains(text, bad) {
+			t.Fatalf("forbidden %q in %s", bad, text)
+		}
+	}
+}
+
+func TestFormatMarketPulse_TrendAndStress(t *testing.T) {
+	trend := formatEvent(types.AlertEvent{
+		Event:    "market_trend",
+		Severity: types.SeverityMedium,
+		Data: map[string]any{
+			"direction":              "up",
+			"state_from":             "IMPULSE_UP",
+			"state_to":               "TRENDING_UP",
+			"median_return_300s_pct": 0.61,
+			"breadth":                0.69,
+			"leaders":                []string{"SOL/USDT:USDT"},
+		},
+	})
+	if !strings.Contains(trend, "趋势确认") || !strings.Contains(trend, "强于市场") {
+		t.Fatalf("trend: %s", trend)
+	}
+	stress := formatEvent(types.AlertEvent{
+		Event:    "market_stress",
+		Severity: types.SeverityHigh,
+		Data: map[string]any{
+			"direction":             "down",
+			"state_from":            "TRENDING_UP",
+			"state_to":              "STRESS_DOWN",
+			"median_return_60s_pct": -0.48,
+			"breadth":               0.86,
+			"advancers":             0,
+			"valid_symbols":         29,
+			"median_z_60s":          -3.12,
+			"leaders":               []string{"SUI/USDT:USDT"},
+		},
+	})
+	if !strings.Contains(stress, "快速下跌") || !strings.Contains(stress, "系统性快速波动") {
+		t.Fatalf("stress: %s", stress)
+	}
+}

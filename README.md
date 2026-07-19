@@ -9,12 +9,13 @@ Go 单体仓库：`cmd/` 入口 + `internal/` 实现。
 ## Architecture
 
 ```text
-Exchange WebSocket  ──→  价格/成交量/OI/资金费率检测器
+Exchange WebSocket  ──→  单币检测器（价格/成交量/OI/资金费率）
+                    ──→  MarketPulse（市场广度/状态机，primary only）
                              ↓
 CoinGlass API  ──→  多空比/爆仓检测器  ──→  共振评分器  ──→  Telegram
 ```
 
-六维异动 + Z-score 动态阈值 + 多维度共振聚合。
+单币异动 + 市场级 MarketPulse（何时值得看盘）+ 可选共振聚合。详见 `docs/GOAL_MARKET_PULSE.md`。
 
 ## Build & Commands
 
@@ -54,12 +55,15 @@ go run ./cmd/kairos-alert --config config/config.yaml --dry-run
 
 # Backtest
 go run ./cmd/kairos-backtest --symbol BTC/USDT --start 2024-01-01 --end 2024-06-01
+
+# MarketPulse fixture replay (shadow algorithm, no Telegram)
+go run ./cmd/kairos-market-replay --input internal/detector/testdata/broad_rally.jsonl
 ```
 
 ## Project layout
 
 ```text
-cmd/           CLI 入口（kairosd、kairos-alert、kairos-backtest）
+cmd/           CLI 入口（kairosd、kairos-alert、kairos-backtest、kairos-market-replay）
 internal/      业务实现（detector、scanner、engine、exchange…）
 tests/         跨包等价性测试
 config/        运行时配置示例
@@ -78,6 +82,7 @@ deploy/        部署相关
 | `long_short_ratio` | CoinGlass | 绝对阈值 + Z-score + 变化速度 |
 | `liquidation` | CoinGlass | 金额阈值 + Z-score + 多空主导判定 |
 | `resonance` | 聚合 | 信号质量分 ≥55（基于 Z-score 极端度 + 维度共振 + 方向一致性） |
+| `market_impulse` / `market_trend` / `market_stress` | 横截面 | 广度 + 中位收益 + BTC/ETH 确认 + 状态机（默认 shadow） |
 
 Scanner 输出 `watch`/`prepare`/`trade_candidate` 状态、评分、入场区间、止损、目标、风险回报比。
 

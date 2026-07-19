@@ -78,6 +78,8 @@ func formatEvent(event types.AlertEvent) string {
 		return formatLiquidation(event, symbol, severity, ts)
 	case "long_short_ratio":
 		return formatLongShort(event, symbol, severity, ts)
+	case "market_impulse", "market_trend", "market_stress", "market_decay":
+		return formatMarketPulse(event, severity, ts)
 	}
 
 	condition := html.EscapeString(event.Condition)
@@ -200,6 +202,179 @@ func formatLongShort(event types.AlertEvent, symbol, severity, ts string) string
 // Small helpers
 // ---------------------------------------------------------------------------
 
+func formatMarketPulse(event types.AlertEvent, severity, ts string) string {
+	data := event.Data
+	if data == nil {
+		data = map[string]any{}
+	}
+	dir := fmt.Sprint(data["direction"])
+	if dir == "<nil>" {
+		dir = ""
+	}
+	from := fmt.Sprint(data["state_from"])
+	to := fmt.Sprint(data["state_to"])
+	med60 := anyFloat(data, "median_return_60s_pct")
+	med300 := anyFloat(data, "median_return_300s_pct")
+	breadth := anyFloat(data, "breadth")
+	adv := anyInt(data, "advancers")
+	valid := anyInt(data, "valid_symbols")
+	medZ := anyFloat(data, "median_z_60s")
+	btc := anyFloatPtr(data, "btc_return_pct")
+	eth := anyFloatPtr(data, "eth_return_pct")
+
+	title := marketPulseTitle(event.Event, dir)
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("<b>%s</b>\n", html.EscapeString(title)))
+	b.WriteString("<b>非指令</b> 仅供人工判断，不自动交易。\n")
+	if from != "<nil>" && to != "<nil>" && from != "" && to != "" {
+		b.WriteString(fmt.Sprintf("状态：%s → %s\n", html.EscapeString(from), html.EscapeString(to)))
+	}
+
+	switch event.Event {
+	case "market_trend":
+		b.WriteString(fmt.Sprintf("5分钟市场中位涨幅：%+.2f%%\n", med300))
+		b.WriteString(fmt.Sprintf("上涨广度：%.0f%%\n", breadth*100))
+	default:
+		label := "1分钟市场中位涨幅"
+		if dir == "down" {
+			label = "1分钟市场中位跌幅"
+		}
+		b.WriteString(fmt.Sprintf("%s：%+.2f%%\n", label, med60))
+		b.WriteString(fmt.Sprintf("广度：%.0f%%（%d / %d）\n", breadth*100, adv, valid))
+		if medZ != 0 {
+			b.WriteString(fmt.Sprintf("标准化强度：%+.2fσ\n", medZ))
+		}
+	}
+	if btc != nil {
+		b.WriteString(fmt.Sprintf("BTC：%+.2f%%\n", *btc))
+	}
+	if eth != nil {
+		b.WriteString(fmt.Sprintf("ETH：%+.2f%%\n", *eth))
+	}
+
+	leaders := anyStringSlice(data, "leaders")
+	if len(leaders) > 0 {
+		head := "领涨"
+		if dir == "down" {
+			head = "领跌"
+		}
+		if event.Event == "market_trend" {
+			head = "强于市场"
+		}
+		b.WriteString(head + "：\n")
+		for _, s := range leaders {
+			b.WriteString(fmt.Sprintf("%s\n", html.EscapeString(shortSymbol(s))))
+		}
+	}
+
+	switch event.Event {
+	case "market_impulse":
+		b.WriteString("结论：市场出现同步异动，值得打开盘面观察。\n")
+	case "market_trend":
+		b.WriteString("结论：趋势确认，建议打开盘面观察。\n")
+	case "market_stress":
+		b.WriteString("注意：市场出现系统性快速波动。\n")
+	case "market_decay":
+		b.WriteString("结论：趋势广度衰减，继续盯盘价值下降。\n")
+	}
+	b.WriteString(fmt.Sprintf("%s UTC | [%s]\n", ts, html.EscapeString(severity)))
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func marketPulseTitle(eventType, dir string) string {
+	switch eventType {
+	case "market_impulse":
+		if dir == "down" {
+			return "🌊 市场向下启动"
+		}
+		return "🌊 市场向上启动"
+	case "market_trend":
+		if dir == "down" {
+			return "📉 市场下跌趋势确认"
+		}
+		return "📈 市场上涨趋势确认"
+	case "market_stress":
+		if dir == "down" {
+			return "🚨 市场快速下跌"
+		}
+		return "🚨 市场快速上涨"
+	case "market_decay":
+		return "💤 市场趋势衰减"
+	default:
+		return "市场异动"
+	}
+}
+
+func shortSymbol(sym string) string {
+	s := strings.ReplaceAll(sym, "/USDT:USDT", "")
+	s = strings.ReplaceAll(s, "/USDT", "")
+	return s
+}
+
+func anyFloat(m map[string]any, key string) float64 {
+	v, ok := m[key]
+	if !ok || v == nil {
+		return 0
+	}
+	switch n := v.(type) {
+	case float64:
+		return n
+	case float32:
+		return float64(n)
+	case int:
+		return float64(n)
+	case int64:
+		return float64(n)
+	default:
+		return 0
+	}
+}
+
+func anyFloatPtr(m map[string]any, key string) *float64 {
+	v, ok := m[key]
+	if !ok || v == nil {
+		return nil
+	}
+	f := anyFloat(m, key)
+	return &f
+}
+
+func anyInt(m map[string]any, key string) int {
+	v, ok := m[key]
+	if !ok || v == nil {
+		return 0
+	}
+	switch n := v.(type) {
+	case int:
+		return n
+	case int64:
+		return int(n)
+	case float64:
+		return int(n)
+	default:
+		return 0
+	}
+}
+
+func anyStringSlice(m map[string]any, key string) []string {
+	v, ok := m[key]
+	if !ok || v == nil {
+		return nil
+	}
+	switch xs := v.(type) {
+	case []string:
+		return xs
+	case []any:
+		out := make([]string, 0, len(xs))
+		for _, x := range xs {
+			out = append(out, fmt.Sprint(x))
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
 func eventNameZh(event string) string {
 	m := map[string]string{
 		"price_velocity":       "价格异动",
@@ -209,6 +384,10 @@ func eventNameZh(event string) string {
 		"long_short_ratio":     "多空比异动",
 		"liquidation":          "爆仓异动",
 		"resonance":            "多维度共振",
+		"market_impulse":       "市场启动",
+		"market_trend":         "市场趋势确认",
+		"market_stress":        "市场快速波动",
+		"market_decay":         "市场趋势衰减",
 	}
 	if v, ok := m[event]; ok {
 		return v

@@ -92,14 +92,14 @@ func setDefaults(v *viper.Viper) {
 	})
 
 	v.SetDefault("alertPolicy", map[string]any{
-		"enabled":                true,
-		"allowedEventTypes":      []string{"price_velocity"},
-		"minSeverity":            "LOW",
-		"minPriceChangePct":      0.9,
-		"minVolumeRatio":         6.0,
+		"enabled":                  true,
+		"allowedEventTypes":        []string{"price_velocity"},
+		"minSeverity":              "LOW",
+		"minPriceChangePct":        0.9,
+		"minVolumeRatio":           6.0,
 		"minOpenInterestChangePct": 5.0,
-		"minFundingRateAbs":      0.0005,
-		"minFundingRateChangeAbs": 0.0003,
+		"minFundingRateAbs":        0.0005,
+		"minFundingRateChangeAbs":  0.0003,
 		"liquidityWeight": map[string]any{
 			"enabled":   true,
 			"minWeight": 0.5,
@@ -132,15 +132,15 @@ func setDefaults(v *viper.Viper) {
 		"pollIntervalSeconds":   300,
 		"fetchFundingPerSymbol": true,
 		"openInterest": map[string]any{
-			"enabled":          false,
-			"minChangePct":     5.0,
+			"enabled":           false,
+			"minChangePct":      5.0,
 			"minNotifyInterval": "30m",
 		},
 		"fundingRate": map[string]any{
-			"enabled":            false,
-			"absRateThreshold":   0.0005,
-			"minChangeAbs":       0.0003,
-			"minNotifyInterval":  "30m",
+			"enabled":           false,
+			"absRateThreshold":  0.0005,
+			"minChangeAbs":      0.0003,
+			"minNotifyInterval": "30m",
 		},
 	})
 
@@ -155,33 +155,33 @@ func setDefaults(v *viper.Viper) {
 	})
 
 	v.SetDefault("liquidation", map[string]any{
-		"enabled":              false,
-		"pollIntervalSeconds":  300,
-		"absThresholdUsd":      1_000_000,
-		"zscoreThreshold":      2.5,
-		"zscoreWindow":         48,
-		"imbalanceThreshold":   0.80,
-		"minNotifyInterval":    "30m",
+		"enabled":             false,
+		"pollIntervalSeconds": 300,
+		"absThresholdUsd":     1_000_000,
+		"zscoreThreshold":     2.5,
+		"zscoreWindow":        48,
+		"imbalanceThreshold":  0.80,
+		"minNotifyInterval":   "30m",
 	})
 
 	v.SetDefault("resonanceScorer", map[string]any{
-		"enabled":          false,
-		"windowSeconds":    300,
-		"minDimensions":    2,
-		"minScore":         55,
-		"cooldownSeconds":  600,
+		"enabled":         false,
+		"windowSeconds":   300,
+		"minDimensions":   2,
+		"minScore":        55,
+		"cooldownSeconds": 600,
 	})
 
 	v.SetDefault("scanner", map[string]any{
-		"intervalSeconds":              300,
-		"universeSize":                 30,
-		"candidateLimit":               20,
-		"deepAnalysisLimit":            10,
-		"totalTimeoutSeconds":          75,
+		"intervalSeconds":               300,
+		"universeSize":                  30,
+		"candidateLimit":                20,
+		"deepAnalysisLimit":             10,
+		"totalTimeoutSeconds":           75,
 		"exchangeRequestTimeoutSeconds": 8,
 		"symbolAnalysisTimeoutSeconds":  12,
-		"timeframes":                   []string{"1d", "4h", "15m"},
-		"generateChartsByDefault":      false,
+		"timeframes":                    []string{"1d", "4h", "15m"},
+		"generateChartsByDefault":       false,
 	})
 
 	v.SetDefault("exchanges", map[string]any{
@@ -189,7 +189,7 @@ func setDefaults(v *viper.Viper) {
 		"backups":        []string{},
 		"rateLimit":      true,
 		"canonicalQuote": "USDT",
-		"settle":       "USDT",
+		"settle":         "USDT",
 	})
 
 	v.SetDefault("scoring", map[string]any{
@@ -242,9 +242,9 @@ func setDefaults(v *viper.Viper) {
 			"major":   10.0,
 			"altcoin": 5.0,
 		},
-		"weakCyclePositionMultiplier":     0.5,
-		"shortPositionMultiplier":         0.75,
-		"inverseCyclePositionMultiplier":  0.5,
+		"weakCyclePositionMultiplier":    0.5,
+		"shortPositionMultiplier":        0.75,
+		"inverseCyclePositionMultiplier": 0.5,
 	})
 
 	v.SetDefault("storage", map[string]any{
@@ -257,9 +257,72 @@ func setDefaults(v *viper.Viper) {
 	})
 
 	v.SetDefault("charts", map[string]any{
-		"defaultChartCount":           1,
-		"outputPath":                  "~/.local/share/kairos/charts",
-		"cleanupDays":                 7,
+		"defaultChartCount":            1,
+		"outputPath":                   "~/.local/share/kairos/charts",
+		"cleanupDays":                  7,
 		"multiTimeframeScoreThreshold": 8.0,
+	})
+
+	// MarketPulse defaults: disabled unless explicitly enabled. Shadow mode is
+	// the safe first-run profile (compute + log, no Telegram policy change).
+	v.SetDefault("marketPulse", map[string]any{
+		"enabled":                 false,
+		"shadowMode":              true,
+		"snapshotIntervalSeconds": 5,
+		"freshnessSeconds":        10,
+		"maxLookupGapSeconds":     15,
+		"warmupSeconds":           300,
+		"historyRetentionSeconds": 900,
+		"minFreshRatio":           0.80,
+		"minValidSymbols":         15,
+		"noiseReturnPct":          0.08,
+		"primarySymbols": []string{
+			"BTC/USDT:USDT",
+			"ETH/USDT:USDT",
+		},
+		"requirePrimaryConfirmation": true,
+		"volatility": map[string]any{
+			"enabled":   true,
+			"ewmaAlpha": 0.10,
+			"floorPct":  0.03,
+		},
+		"impulse": map[string]any{
+			"windowSeconds":             60,
+			"minBreadth":                0.65,
+			"minMedianReturnPct":        0.18,
+			"minMedianZ":                1.5,
+			"confirmationSamples":       3,
+			"confirmationWindowSamples": 4,
+		},
+		"trend": map[string]any{
+			"windowSeconds":             300,
+			"minBreadth":                0.60,
+			"minMedianReturnPct":        0.45,
+			"minPersistSeconds":         180,
+			"confirmationSamples":       5,
+			"confirmationWindowSamples": 6,
+		},
+		"stress": map[string]any{
+			"windowSeconds":      60,
+			"minBreadth":         0.80,
+			"minMedianReturnPct": 0.35,
+			"minMedianZ":         2.5,
+		},
+		"decay": map[string]any{
+			"enabled":            true,
+			"maxBreadth":         0.50,
+			"maxMedianReturnPct": 0.08,
+			"persistSeconds":     60,
+			"notify":             false,
+			"quietResetSeconds":  60,
+		},
+		"leaders": map[string]any{
+			"limit": 5,
+		},
+		"cooldownSeconds":               600,
+		"stressCooldownSeconds":         300,
+		"gateIndividualAlertsWhenQuiet": false, // Phase 3 switch; off in Phase 1
+		"allowIsolatedExtremeWhenQuiet": false,
+		"isolatedExtremeMinZ":           4.0,
 	})
 }

@@ -62,6 +62,9 @@ type Pipeline struct {
 	// Resonance scorer (aggregates all detectors)
 	resonanceScorer *detector.ResonanceScorer
 
+	// Market-level cross-sectional detector (primary exchange only).
+	marketPulseDet *detector.MarketPulseDetector
+
 	// Telegram client
 	tg *notify.TelegramClient
 
@@ -70,6 +73,9 @@ type Pipeline struct {
 
 	// Watch hints for scanner boosting (cross-runtime).
 	hints *storage.HintStore
+
+	// Market pulse event log (JSONL; works in shadow mode).
+	mpStore *storage.MarketPulseStore
 
 	// Dedup state: "symbol__event_type" → timestamp
 	dedupMu   sync.Mutex
@@ -119,16 +125,16 @@ func NewPipeline(cfg *types.Config, tg *notify.TelegramClient) *Pipeline {
 	log := slog.Default().With("component", "pipeline")
 
 	p := &Pipeline{
-		cfg:                  cfg,
-		log:                  log,
-		exchanges:            make(map[string]exchange.Exchange),
-		symbolsByExchange:    make(map[string][]string),
-		exchangeStates:       make(map[string]*exchangeState),
-		dedupLast:           make(map[string]float64),
-		marketCapByCoin:     make(map[string]float64),
-		tg:                  tg,
-		blacklist:            utils.NewBlacklist(),
-		dedupWindowSeconds:   5,
+		cfg:                   cfg,
+		log:                   log,
+		exchanges:             make(map[string]exchange.Exchange),
+		symbolsByExchange:     make(map[string][]string),
+		exchangeStates:        make(map[string]*exchangeState),
+		dedupLast:             make(map[string]float64),
+		marketCapByCoin:       make(map[string]float64),
+		tg:                    tg,
+		blacklist:             utils.NewBlacklist(),
+		dedupWindowSeconds:    5,
 		symbolCooldownSeconds: 1800,
 	}
 
@@ -179,6 +185,16 @@ func NewPipeline(cfg *types.Config, tg *notify.TelegramClient) *Pipeline {
 		p.hints = hints
 	}
 
+	if cfg.MarketPulse.Enabled {
+		mpStore, err := storage.NewMarketPulseStore(cfg.Storage)
+		if err != nil {
+			log.Warn("market pulse store disabled", "error", err)
+		} else {
+			p.mpStore = mpStore
+			log.Info("market pulse store ready", "path", mpStore.Path())
+		}
+	}
+
 	return p
 }
 
@@ -224,10 +240,10 @@ func (p *Pipeline) Start(ctx context.Context) error {
 	for name, ex := range p.exchanges {
 		symbols := p.symbolsByExchange[name]
 		es := &exchangeState{
-			name:      name,
-			ex:        ex,
-			symbols:   symbols,
-			tickerCh:  make(chan types.Ticker, 512),
+			name:     name,
+			ex:       ex,
+			symbols:  symbols,
+			tickerCh: make(chan types.Ticker, 512),
 		}
 		p.registerDetectors(es)
 		p.exchangeStates[name] = es
@@ -242,6 +258,23 @@ func (p *Pipeline) Start(ctx context.Context) error {
 		p.resonanceScorer = detector.NewResonanceScorer(p.cfg.ResonanceScorer)
 		p.log.Info("resonance scorer registered",
 			"min_score", p.cfg.ResonanceScorer.MinScore,
+		)
+	}
+
+	// 3d. Market pulse (primary exchange only; after symbol discovery).
+	if p.cfg.MarketPulse.Enabled {
+		p.marketPulseDet = detector.NewMarketPulseDetector(p.cfg.MarketPulse)
+		primary := p.cfg.Exchanges.Primary
+		if primary == "" {
+			primary = p.cfg.Exchange
+		}
+		if syms := p.symbolsByExchange[primary]; len(syms) > 0 {
+			p.marketPulseDet.UpdateUniverse(syms)
+		}
+		p.log.Info("market pulse detector registered",
+			"shadow", p.cfg.MarketPulse.ShadowMode,
+			"primary", primary,
+			"universe", len(p.symbolsByExchange[primary]),
 		)
 	}
 
@@ -263,6 +296,9 @@ func (p *Pipeline) Start(ctx context.Context) error {
 	}
 	if p.liqDet != nil {
 		eventChs = append(eventChs, p.liqDet.Events())
+	}
+	if p.marketPulseDet != nil {
+		eventChs = append(eventChs, p.marketPulseDet.Events())
 	}
 
 	// 5. Launch goroutines via errgroup.
@@ -345,6 +381,14 @@ func (p *Pipeline) Start(ctx context.Context) error {
 		p.refreshLoop(gCtx)
 		return nil
 	})
+
+	// 5j. Market pulse snapshot loop.
+	if p.marketPulseDet != nil {
+		g.Go(func() error {
+			p.marketPulseDet.Start(gCtx)
+			return nil
+		})
+	}
 
 	p.log.Info("pipeline started",
 		"exchanges", len(p.exchangeStates),
@@ -497,6 +541,16 @@ func (p *Pipeline) consumeTickers(ctx context.Context, es *exchangeState) {
 			}
 			if es.spike != nil {
 				es.spike.OnTicker(ctx, t)
+			}
+			// Market pulse: primary exchange only.
+			if p.marketPulseDet != nil {
+				primary := p.cfg.Exchanges.Primary
+				if primary == "" {
+					primary = p.cfg.Exchange
+				}
+				if es.name == primary {
+					p.marketPulseDet.OnTicker(ctx, t)
+				}
 			}
 		}
 	}
@@ -764,6 +818,13 @@ func (p *Pipeline) eventAggregator(
 				p.resonanceScorer.OnEvent(evt)
 			}
 
+			// Persist market events even in shadow mode (for calibration).
+			if isMarketPulseEvent(evt.EventType) && p.mpStore != nil {
+				if err := p.mpStore.Record(evt); err != nil {
+					p.log.Warn("market pulse store failed", "error", err)
+				}
+			}
+
 			// Send to delivery channel (dedup + policy applied downstream).
 			select {
 			case deliveryCh <- evt:
@@ -925,9 +986,21 @@ func (p *Pipeline) deliverEvent(ctx context.Context, evt types.AnomalyEvent) {
 		return
 	}
 
+	// Phase 1 shadow: market events are computed/logged only.
+	if isMarketPulseEvent(evt.EventType) && p.marketPulseDet != nil && p.marketPulseDet.ShadowMode() {
+		p.log.Info("alert gated", "reason", "market_pulse_shadow", "event", evt.EventType)
+		return
+	}
+
 	// Blacklist check.
 	if p.blacklist.IsBlocked(evt.Symbol) {
 		p.log.Debug("blacklist drop", "symbol", evt.Symbol)
+		return
+	}
+
+	// Quiet-market gate for ordinary single-symbol velocity (Phase 3).
+	if evt.EventType == "price_velocity" && p.shouldGateIndividualAlert(evt) {
+		p.log.Info("alert gated", "reason", "market_quiet", "symbol", evt.Symbol, "event", evt.EventType)
 		return
 	}
 
@@ -975,9 +1048,32 @@ func (p *Pipeline) recordWatchHint(symbol, eventType, exchange string) {
 	if p.hints == nil || symbol == "" {
 		return
 	}
+	// MARKET is not a tradeable symbol for scanner boost.
+	if symbol == "MARKET" || isMarketPulseEvent(eventType) {
+		return
+	}
 	if err := p.hints.Record(symbol, eventType, exchange); err != nil {
 		p.log.Warn("watch hint record failed", "symbol", symbol, "error", err)
 	}
+}
+
+func isMarketPulseEvent(eventType string) bool {
+	switch eventType {
+	case "market_impulse", "market_trend", "market_stress", "market_decay":
+		return true
+	default:
+		return false
+	}
+}
+
+// passesMarketEventPolicy applies severity allow-list only — no liquidity weight.
+func (p *Pipeline) passesMarketEventPolicy(evt types.AnomalyEvent) bool {
+	if severityRank(string(evt.Severity)) < p.minSeverityRank {
+		p.log.Info("alert gated", "reason", "severity", "symbol", evt.Symbol, "event", evt.EventType,
+			"severity", evt.Severity)
+		return false
+	}
+	return true
 }
 
 // ── Alert Policy ───────────────────────────────────────────────
@@ -991,6 +1087,11 @@ func (p *Pipeline) passesAlertPolicy(evt types.AnomalyEvent) bool {
 	if p.allowedEventTypes != nil && !p.allowedEventTypes[eventType] {
 		p.log.Info("alert gated", "reason", "event_type", "symbol", evt.Symbol, "event", eventType)
 		return false
+	}
+
+	// Market-level events: no per-symbol liquidity weight (Phase 2 path).
+	if isMarketPulseEvent(eventType) {
+		return p.passesMarketEventPolicy(evt)
 	}
 
 	weight := p.liquidityWeight(evt.Symbol)
@@ -1073,9 +1174,40 @@ func (p *Pipeline) buildAlert(evt types.AnomalyEvent) types.AlertEvent {
 	}
 }
 
+// shouldGateIndividualAlert reports whether a single-symbol alert should be
+// suppressed because the market is QUIET (Phase 3).
+func (p *Pipeline) shouldGateIndividualAlert(evt types.AnomalyEvent) bool {
+	if p.marketPulseDet == nil || !p.cfg.MarketPulse.GateIndividualAlertsWhenQuiet {
+		return false
+	}
+	st := p.marketPulseDet.State()
+	if st != types.MarketStateQuiet {
+		return false
+	}
+	if p.cfg.MarketPulse.AllowIsolatedExtremeWhenQuiet {
+		// Optional escape hatch: very large single-name z may pass (not wired
+		// from price_velocity data yet — reserved for future enrichment).
+		_ = p.cfg.MarketPulse.IsolatedExtremeMinZ
+	}
+	return true
+}
+
+// MarketState returns the current MarketPulse state, or QUIET if disabled.
+func (p *Pipeline) MarketState() types.MarketState {
+	if p.marketPulseDet == nil {
+		return types.MarketStateQuiet
+	}
+	return p.marketPulseDet.State()
+}
+
 func buildCondition(evt types.AnomalyEvent) string {
 	data := evt.Data
 	switch evt.EventType {
+	case "market_impulse", "market_trend", "market_stress", "market_decay":
+		dir := fmt.Sprintf("%v", data["direction"])
+		from := fmt.Sprintf("%v", data["state_from"])
+		to := fmt.Sprintf("%v", data["state_to"])
+		return dir + "_" + from + "_" + to
 	case "price_velocity":
 		ws := fmt.Sprintf("%v", data["window_seconds"])
 		th := fmt.Sprintf("%v", data["threshold"])
@@ -1131,6 +1263,13 @@ func (p *Pipeline) refreshLoop(ctx context.Context) {
 						"added", len(added),
 						"removed", len(removed),
 					)
+				}
+				primary := p.cfg.Exchanges.Primary
+				if primary == "" {
+					primary = p.cfg.Exchange
+				}
+				if p.marketPulseDet != nil && name == primary {
+					p.marketPulseDet.UpdateUniverse(newSymbols)
 				}
 			}
 			p.loadMarketCaps(ctx)
