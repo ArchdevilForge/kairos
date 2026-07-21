@@ -269,7 +269,7 @@ func setDefaults(v *viper.Viper) {
 		"enabled":                 false,
 		"shadowMode":              true,
 		"snapshotIntervalSeconds": 5,
-		"freshnessSeconds":        10,
+		"freshnessSeconds":        30,
 		"maxLookupGapSeconds":     15,
 		"warmupSeconds":           300,
 		"historyRetentionSeconds": 900,
@@ -281,8 +281,10 @@ func setDefaults(v *viper.Viper) {
 			"ETH/USDT:USDT",
 		},
 		"requirePrimaryConfirmation": true,
+		// Z is recorded for enrichment; hard-gate off by default (P0 production lesson:
+		// EWMA sigma often blocks real breadth moves). Enable after calibration.
 		"volatility": map[string]any{
-			"enabled":   true,
+			"enabled":   false,
 			"ewmaAlpha": 0.10,
 			"floorPct":  0.03,
 		},

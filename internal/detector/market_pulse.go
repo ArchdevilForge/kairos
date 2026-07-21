@@ -104,7 +104,8 @@ func normalizeMarketPulseConfig(cfg types.MarketPulseConfig) types.MarketPulseCo
 		cfg.SnapshotIntervalSeconds = 5
 	}
 	if cfg.FreshnessSeconds <= 0 {
-		cfg.FreshnessSeconds = 10
+		// OKX tickers often skip quiet symbols for >10s; 30s is the practical floor.
+		cfg.FreshnessSeconds = 30
 	}
 	if cfg.MaxLookupGapSeconds <= 0 {
 		cfg.MaxLookupGapSeconds = 15
@@ -610,15 +611,41 @@ func (d *MarketPulseDetector) advanceStateLocked(now float64, snap types.MarketS
 	// Shadow-friendly heartbeat so operators can see live metrics without DEBUG.
 	if now-d.lastHeartbeat >= 60 {
 		d.lastHeartbeat = now
+		rawDir, rawOK := impulseRawCondition(snap, d.cfg)
 		d.log.Info("market snapshot ok",
 			"state", d.state,
 			"valid", snap.ValidSymbols,
 			"fresh", round(snap.FreshRatio, 3),
 			"med60", round(snap.MedianReturn60s, 4),
+			"medZ", round(snap.MedianZ60s, 3),
 			"upB", round(snap.UpBreadth60s, 3),
 			"downB", round(snap.DownBreadth60s, 3),
+			"raw_impulse", rawOK,
+			"raw_dir", rawDir,
 			"shadow", d.cfg.ShadowMode,
 		)
+		// Near-miss: high breadth but raw impulse still false — log why.
+		if !rawOK && (snap.UpBreadth60s >= d.cfg.Impulse.MinBreadth || snap.DownBreadth60s >= d.cfg.Impulse.MinBreadth) {
+			btcV, ethV := 0.0, 0.0
+			hasBTC, hasETH := false, false
+			if snap.BTCReturn60s != nil {
+				btcV, hasBTC = *snap.BTCReturn60s, true
+			}
+			if snap.ETHReturn60s != nil {
+				ethV, hasETH = *snap.ETHReturn60s, true
+			}
+			d.log.Info("market impulse near-miss",
+				"upB", round(snap.UpBreadth60s, 3),
+				"downB", round(snap.DownBreadth60s, 3),
+				"med60", round(snap.MedianReturn60s, 4),
+				"medZ", round(snap.MedianZ60s, 3),
+				"btc", round(btcV, 4), "has_btc", hasBTC,
+				"eth", round(ethV, 4), "has_eth", hasETH,
+				"vol_gate", d.cfg.Volatility.Enabled,
+				"need_med", d.cfg.Impulse.MinMedianReturnPct,
+				"need_z", d.cfg.Impulse.MinMedianZ,
+			)
+		}
 	}
 
 	impulseDir, impulseOK := d.impulseConfirmedLocked()

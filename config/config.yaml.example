@@ -191,7 +191,7 @@ marketPulse:
   enabled: false
   shadowMode: true
   snapshotIntervalSeconds: 5
-  freshnessSeconds: 10
+  freshnessSeconds: 30
   maxLookupGapSeconds: 15
   warmupSeconds: 300
   historyRetentionSeconds: 900
@@ -203,7 +203,8 @@ marketPulse:
     - "ETH/USDT:USDT"
   requirePrimaryConfirmation: true
   volatility:
-    enabled: true
+    # Z is computed for logs/events; hard gate off until calibrated on live tape.
+    enabled: false
     ewmaAlpha: 0.10
     floorPct: 0.03
   impulse:

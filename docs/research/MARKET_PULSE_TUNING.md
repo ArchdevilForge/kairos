@@ -47,6 +47,27 @@ stress:
 
 No false impulse during quiet tape. Continue to 48h.
 
+### v1 — production calibration 2026-07-21 (ccs ~46h)
+
+Findings from live logs (`shadow=false`, market-only Telegram):
+
+| Observation | Evidence |
+| --- | --- |
+| Process healthy | PID uptime ~46h, RSS ~27MB, NRestarts=0 |
+| Zero market events | No `market state changed` / JSONL file |
+| High breadth seen but no impulse | e.g. upB=0.875 med60=0.26, downB=0.917 med60=-0.29 |
+| Freshness too strict | often `fresh_ratio=0.733` with `valid=22` → gated |
+| Z hard gate likely blocking | vol enabled; EWMA sigma dilutes 60s Z below 1.5 |
+
+Parameter changes (v1):
+
+```yaml
+freshnessSeconds: 30      # was 10
+volatility.enabled: false # Z soft-only until calibrated
+```
+
+Rationale: OKX quiet symbols do not tick every 10s; price breadth must work without Z as single point of failure (goal §10.3 / §30).
+
 ## Event outcome template
 
 ```text
