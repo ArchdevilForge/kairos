@@ -62,6 +62,12 @@ func LoadEnvOverrides(cfg *types.Config) {
 	if chatID := os.Getenv("TELEGRAM_CHAT_ID"); chatID != "" {
 		cfg.Telegram.ChatID = chatID
 	}
+	if webhook := os.Getenv("DINGTALK_WEBHOOK_URL"); webhook != "" {
+		cfg.DingTalk.WebhookURL = webhook
+	}
+	if secret := os.Getenv("DINGTALK_SECRET"); secret != "" {
+		cfg.DingTalk.Secret = secret
+	}
 	if minState := os.Getenv("KAIROS_ALERT_MIN_STATE"); minState != "" {
 		cfg.AlertMinState = minState
 	}
@@ -81,6 +87,11 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("telegram", map[string]any{
 		"enabled":   true,
 		"parseMode": "HTML",
+	})
+
+	// DingTalk custom-robot mirror; off until webhook env is set and enabled=true.
+	v.SetDefault("dingTalk", map[string]any{
+		"enabled": false,
 	})
 
 	v.SetDefault("dataManager", map[string]any{

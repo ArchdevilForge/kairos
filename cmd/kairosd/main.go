@@ -45,12 +45,29 @@ func main() {
 		}
 	}
 
+	var ding *notify.DingTalkClient
+	if cfg.DingTalk.Enabled && cfg.DingTalk.WebhookURL != "" {
+		var err error
+		ding, err = notify.NewDingTalkClient(cfg.DingTalk.WebhookURL, cfg.DingTalk.Secret)
+		if err != nil {
+			slog.Warn("dingtalk disabled", "error", err)
+			ding = nil
+		}
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
 	pipeline := engine.NewPipeline(cfg, tg)
+	if ding != nil {
+		pipeline.SetDingTalk(ding)
+	}
+	startMsg := "🟢 kairosd started — monitoring pipeline"
 	if tg != nil {
-		_ = tg.SendText("🟢 kairosd started — monitoring pipeline")
+		_ = tg.SendText(startMsg)
+	}
+	if ding != nil {
+		_ = ding.SendText(startMsg)
 	}
 
 	errCh := make(chan error, 1)
@@ -78,8 +95,12 @@ func main() {
 		slog.Warn("shutdown timed out, forcing exit")
 	}
 
+	stopMsg := "🔴 kairosd stopped"
 	if tg != nil {
-		_ = tg.SendText("🔴 kairosd stopped")
+		_ = tg.SendText(stopMsg)
+	}
+	if ding != nil {
+		_ = ding.SendText(stopMsg)
 	}
 	slog.Info("shutdown complete")
 }

@@ -12,7 +12,7 @@ Go 单体仓库：`cmd/` 入口 + `internal/` 实现。
 Exchange WebSocket  ──→  单币检测器（价格/成交量/OI/资金费率）
                     ──→  MarketPulse（市场广度/状态机，primary only）
                              ↓
-CoinGlass API  ──→  多空比/爆仓检测器  ──→  共振评分器  ──→  Telegram
+CoinGlass API  ──→  多空比/爆仓检测器  ──→  共振评分器  ──→  Telegram / DingTalk
 ```
 
 单币异动 + 市场级 MarketPulse（何时值得看盘）+ 可选共振聚合。详见 `docs/GOAL_MARKET_PULSE.md`。
@@ -30,6 +30,10 @@ tar xzf kairos-*-linux-amd64.tar.gz
 cd kairos-*-linux-amd64
 export TELEGRAM_BOT_TOKEN=...
 export TELEGRAM_CHAT_ID=...
+# Optional DingTalk mirror (custom robot webhook):
+# export DINGTALK_WEBHOOK_URL=https://oapi.dingtalk.com/robot/send?access_token=...
+# export DINGTALK_SECRET=SECxxx   # 加签
+# set dingTalk.enabled: true in config
 ./kairosd --config config/config.yaml.example
 ```
 

@@ -183,7 +183,7 @@ func (b *BoxPattern) IsReady() bool {
 	return (b.SecondTestHigh || b.SecondTestLow) && b.ConvergencePct > 0.7
 }
 
-// AlertEvent represents a hard-data market alert for Telegram delivery.
+// AlertEvent represents a hard-data market alert for Delivery Channel fan-out.
 type AlertEvent struct {
 	Event     string         `json:"event" yaml:"event"`
 	Symbol    string         `json:"symbol" yaml:"symbol"`
@@ -217,6 +217,7 @@ type Config struct {
 	DefaultTimeframe     string                `mapstructure:"defaultTimeframe" json:"defaultTimeframe" yaml:"defaultTimeframe"`
 	NotificationTimezone string                `mapstructure:"notificationTimezone" json:"notificationTimezone" yaml:"notificationTimezone"`
 	Telegram             TelegramConfig        `mapstructure:"telegram" json:"telegram" yaml:"telegram"`
+	DingTalk             DingTalkConfig        `mapstructure:"dingTalk" json:"dingTalk" yaml:"dingTalk"`
 	DataManager          DataManagerConfig     `mapstructure:"dataManager" json:"dataManager" yaml:"dataManager"`
 	AlertPolicy          AlertPolicyConfig     `mapstructure:"alertPolicy" json:"alertPolicy" yaml:"alertPolicy"`
 	PriceVelocity        PriceVelocityConfig   `mapstructure:"priceVelocity" json:"priceVelocity" yaml:"priceVelocity"`
@@ -244,6 +245,14 @@ type TelegramConfig struct {
 	ParseMode string `mapstructure:"parseMode" json:"parseMode" yaml:"parseMode"`
 	BotToken  string `mapstructure:"-" json:"bot_token,omitempty" yaml:"-"` // env: TELEGRAM_BOT_TOKEN
 	ChatID    string `mapstructure:"-" json:"chat_id,omitempty" yaml:"-"`   // env: TELEGRAM_CHAT_ID
+}
+
+// DingTalkConfig holds DingTalk custom-robot webhook delivery settings.
+// Secrets come from env only (not YAML).
+type DingTalkConfig struct {
+	Enabled    bool   `mapstructure:"enabled" json:"enabled" yaml:"enabled"`
+	WebhookURL string `mapstructure:"-" json:"webhook_url,omitempty" yaml:"-"` // env: DINGTALK_WEBHOOK_URL
+	Secret     string `mapstructure:"-" json:"secret,omitempty" yaml:"-"`      // env: DINGTALK_SECRET (optional sign)
 }
 
 // DataManagerConfig controls kairos-watch ticker polling and deduplication.

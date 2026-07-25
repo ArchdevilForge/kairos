@@ -41,7 +41,7 @@ var exchangeNew = exchange.New
 // Pipeline
 // ────────────────────────────────────────────────────────────────
 
-// Pipeline orchestrates exchange WebSocket feeds → detectors → Telegram.
+// Pipeline orchestrates exchange WebSocket feeds → detectors → Delivery Channels.
 type Pipeline struct {
 	cfg *types.Config
 	log *slog.Logger
@@ -65,8 +65,9 @@ type Pipeline struct {
 	// Market-level cross-sectional detector (primary exchange only).
 	marketPulseDet *detector.MarketPulseDetector
 
-	// Telegram client
-	tg *notify.TelegramClient
+	// Delivery channels (optional, independent).
+	tg       *notify.TelegramClient
+	dingTalk *notify.DingTalkClient
 
 	// Blacklist
 	blacklist *utils.Blacklist
@@ -120,7 +121,8 @@ type exchangeState struct {
 }
 
 // NewPipeline creates a Pipeline from config and optional Telegram client.
-// When tg is nil, alerts are logged but not delivered.
+// When no Delivery Channel is configured, gated events are not sent.
+// Call SetDingTalk to attach a DingTalk mirror client.
 func NewPipeline(cfg *types.Config, tg *notify.TelegramClient) *Pipeline {
 	log := slog.Default().With("component", "pipeline")
 
@@ -394,6 +396,7 @@ func (p *Pipeline) Start(ctx context.Context) error {
 		"exchanges", len(p.exchangeStates),
 		"symbols_total", p.totalSymbols(),
 		"telegram", p.tg != nil && p.tg.IsConfigured(),
+		"dingtalk", p.dingTalk != nil && p.dingTalk.IsConfigured(),
 	)
 
 	// Wait for all goroutines.
@@ -908,8 +911,42 @@ func (p *Pipeline) resonanceDeliverer(ctx context.Context) {
 	}
 }
 
+// SetDingTalk attaches an optional DingTalk Delivery Channel (mirror fan-out).
+func (p *Pipeline) SetDingTalk(d *notify.DingTalkClient) {
+	p.dingTalk = d
+}
+
+func (p *Pipeline) hasDeliveryChannel() bool {
+	return (p.tg != nil && p.tg.IsConfigured()) || (p.dingTalk != nil && p.dingTalk.IsConfigured())
+}
+
+// sendToChannels fans out one AlertEvent to every configured channel.
+// Failures are independent; returns true if any channel succeeded.
+func (p *Pipeline) sendToChannels(alert types.AlertEvent) bool {
+	anyOK := false
+	if p.tg != nil && p.tg.IsConfigured() {
+		if err := p.tg.SendEvent(alert); err != nil {
+			p.log.Warn("telegram send failed", "symbol", alert.Symbol, "event", alert.Event, "error", err)
+		} else {
+			anyOK = true
+			p.log.Info("telegram sent", "symbol", alert.Symbol, "event", alert.Event,
+				"severity", alert.Severity, "change_pct", alert.ChangePct)
+		}
+	}
+	if p.dingTalk != nil && p.dingTalk.IsConfigured() {
+		if err := p.dingTalk.SendEvent(alert); err != nil {
+			p.log.Warn("dingtalk send failed", "symbol", alert.Symbol, "event", alert.Event, "error", err)
+		} else {
+			anyOK = true
+			p.log.Info("dingtalk sent", "symbol", alert.Symbol, "event", alert.Event,
+				"severity", alert.Severity)
+		}
+	}
+	return anyOK
+}
+
 func (p *Pipeline) sendResonanceAlert(ctx context.Context, re detector.ResonanceEvent) {
-	if p.tg == nil || !p.tg.IsConfigured() {
+	if !p.hasDeliveryChannel() {
 		return
 	}
 
@@ -966,18 +1003,16 @@ func (p *Pipeline) sendResonanceAlert(ctx context.Context, re detector.Resonance
 	select {
 	case <-ctx.Done():
 	default:
-		if err := p.tg.SendEvent(alert); err != nil {
-			p.log.Warn("telegram send failed", "symbol", re.Symbol, "error", err)
-		} else {
+		if p.sendToChannels(alert) {
 			p.recordWatchHint(re.Symbol, "resonance", p.cfg.Exchanges.Primary)
 		}
 	}
 }
 
-// ── Telegram Deliverer ─────────────────────────────────────────
+// ── Alert Deliverer ────────────────────────────────────────────
 
 // telegramDeliverer reads from the delivery channel, applies dedup + alert
-// policy, and sends qualifying events to Telegram.
+// policy, and fans out qualifying events to Delivery Channels.
 func (p *Pipeline) telegramDeliverer(ctx context.Context, deliveryCh <-chan types.AnomalyEvent) {
 	for {
 		select {
@@ -993,7 +1028,7 @@ func (p *Pipeline) telegramDeliverer(ctx context.Context, deliveryCh <-chan type
 }
 
 func (p *Pipeline) deliverEvent(ctx context.Context, evt types.AnomalyEvent) {
-	if p.tg == nil || !p.tg.IsConfigured() {
+	if !p.hasDeliveryChannel() {
 		return
 	}
 
@@ -1050,11 +1085,7 @@ func (p *Pipeline) deliverEvent(ctx context.Context, evt types.AnomalyEvent) {
 	select {
 	case <-ctx.Done():
 	default:
-		if err := p.tg.SendEvent(alert); err != nil {
-			p.log.Warn("telegram send failed", "symbol", evt.Symbol, "event", evt.EventType, "error", err)
-		} else {
-			p.log.Info("telegram sent", "symbol", evt.Symbol, "event", evt.EventType,
-				"severity", evt.Severity, "change_pct", floatFromMapDefault(evt.Data, "change_pct", 0))
+		if p.sendToChannels(alert) {
 			p.recordWatchHint(evt.Symbol, evt.EventType, p.cfg.Exchanges.Primary)
 		}
 	}

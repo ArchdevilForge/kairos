@@ -7,8 +7,9 @@
 # Usage:
 #   1. Copy this file to your Kairos config path.
 #   2. Export TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.
-#   3. Run `go run ./cmd/kairosd` (or built binary) for realtime alerts.
-#   4. Run `go run ./cmd/kairos-alert` from cron/systemd timer for scanner summaries.
+#   3. Optional DingTalk mirror: DINGTALK_WEBHOOK_URL + DINGTALK_SECRET, dingTalk.enabled=true.
+#   4. Run `go run ./cmd/kairosd` (or built binary) for realtime alerts.
+#   5. Run `go run ./cmd/kairos-alert` from cron/systemd timer for scanner summaries.
 
 exchange: "okx"
 defaultTimeframe: "1d"
@@ -19,6 +20,12 @@ notificationTimezone: "Asia/Shanghai"
 telegram:
   enabled: true
   parseMode: "HTML"
+
+# DingTalk custom-robot webhook (mirror of gated alerts). Secrets via env only.
+# DINGTALK_WEBHOOK_URL=https://oapi.dingtalk.com/robot/send?access_token=...
+# DINGTALK_SECRET=SECxxx   # recommended: robot security = 加签
+dingTalk:
+  enabled: false
 
 dataManager:
   exchanges:
