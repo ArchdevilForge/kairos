@@ -68,6 +68,18 @@ volatility.enabled: false # Z soft-only until calibrated
 
 Rationale: OKX quiet symbols do not tick every 10s; price breadth must work without Z as single point of failure (goal §10.3 / §30).
 
+### v1.1 — outcome tracking (Phase 4 tooling)
+
+Engineering (no parameter change):
+
+- After each `market_impulse` / `market_trend` / `market_stress`, detector tracks post-event median extension.
+- Horizons: +1m / +3m / +5m / +15m from event prices.
+- Also records MFE, MAE, max breadth, trend duration, reverse flag.
+- Emits `market_outcome` (never Telegram); persisted to `market-pulse-outcomes.jsonl`.
+- Precision flags: impulse = same-dir extension ≥0.20% by 5m; trend = ≥0.30% by 15m.
+
+Default allow-list now includes market event types so `shadowMode: false` can deliver Telegram without custom config.
+
 ## Event outcome template
 
 ```text
@@ -76,12 +88,14 @@ event=
 direction=
 median_return_60s=
 breadth=
-+1m=
++1m=   # auto: market-pulse-outcomes.jsonl median_return_1m
 +3m=
 +5m=
 +15m=
 MFE=
 MAE=
-worth_open= yes|no|unsure
+impulse_precision=  # auto flag
+trend_precision=    # auto flag
+worth_open= yes|no|unsure   # still human
 notes=
 ```

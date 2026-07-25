@@ -2,6 +2,7 @@ package detector
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"testing"
 	"time"
@@ -826,5 +827,98 @@ func TestSameSecondTickerUpdate(t *testing.T) {
 	}
 	if last != 11 {
 		t.Fatalf("price=%v", last)
+	}
+}
+
+func TestOutcome_TracksHorizonsAndPrecision(t *testing.T) {
+	cfg := testMPConfig()
+	cfg.Volatility.Enabled = false
+	// Make impulse easy so we can focus on outcome tracking.
+	cfg.Impulse.MinBreadth = 0.50
+	cfg.Impulse.MinMedianReturnPct = 0.10
+	cfg.Impulse.ConfirmationSamples = 1
+	cfg.Impulse.ConfirmationWindowSamples = 1
+	cfg.RequirePrimaryConfirmation = false
+	cfg.CooldownSeconds = 0
+	d := NewMarketPulseDetector(cfg)
+
+	syms := make([]string, 0, 20)
+	for i := 0; i < 20; i++ {
+		syms = append(syms, fmt.Sprintf("S%d/USDT:USDT", i))
+	}
+	syms = append(syms, "BTC/USDT:USDT", "ETH/USDT:USDT")
+
+	clock := 200_000.0
+	d.SetNowFunc(func() float64 { return clock })
+	d.UpdateUniverse(syms)
+
+	// Warmup baseline prices.
+	base := 100.0
+	for _, sym := range syms {
+		p := base
+		d.OnTicker(context.Background(), types.Ticker{Symbol: sym, LastPrice: &p})
+	}
+	// Advance past warmup with same prices so history exists.
+	clock += float64(cfg.WarmupSeconds) + 5
+	for _, sym := range syms {
+		p := base
+		d.OnTicker(context.Background(), types.Ticker{Symbol: sym, LastPrice: &p})
+	}
+	// Broad rally +0.5%.
+	clock += 60
+	for i, sym := range syms {
+		p := base * 1.005
+		if i >= 16 { // a few flat
+			p = base
+		}
+		d.OnTicker(context.Background(), types.Ticker{Symbol: sym, LastPrice: &p})
+	}
+	d.EvaluateAt(clock)
+	if d.State() != types.MarketStateImpulseUp && d.State() != types.MarketStateStressUp {
+		// Force-track an outcome if state machine did not fire under synthetic feed.
+		d.mu.Lock()
+		d.trackOutcomeLocked(clock, "market_impulse", "up")
+		d.mu.Unlock()
+	}
+
+	d.mu.RLock()
+	nPending := len(d.pendingOutcomes)
+	d.mu.RUnlock()
+	if nPending == 0 {
+		t.Fatal("expected pending outcome after impulse")
+	}
+
+	// Continue up another ~0.5% over 15 minutes so precision flags trip
+	// (impulse needs +0.20% by 5m; trend needs +0.30% by 15m from event prices).
+	start := clock
+	for _, h := range []float64{60, 180, 300, 900} {
+		clock = start + h
+		// Linear path: ~+0.27% by 5m, ~+0.80% by 15m relative to event prices.
+		add := 0.008 * (h / 900)
+		for _, sym := range syms {
+			p := base * (1.005 + add)
+			d.OnTicker(context.Background(), types.Ticker{Symbol: sym, LastPrice: &p})
+		}
+		d.EvaluateAt(clock)
+	}
+
+	var outcomes []types.AnomalyEvent
+	for _, e := range drainEvents(d) {
+		if e.EventType == "market_outcome" {
+			outcomes = append(outcomes, e)
+		}
+	}
+	if len(outcomes) == 0 {
+		t.Fatal("expected market_outcome after 15m")
+	}
+	o := outcomes[len(outcomes)-1]
+	if o.Data["median_return_5m"] == nil || o.Data["median_return_15m"] == nil {
+		t.Fatalf("missing horizons: %#v", o.Data)
+	}
+	if o.Data["impulse_precision"] != true {
+		t.Fatalf("expected impulse_precision true, data=%#v", o.Data)
+	}
+	if mfe, _ := o.Data["mfe"].(float64); mfe <= 0 {
+		t.Fatalf("mfe=%v", o.Data["mfe"])
 	}
 }

@@ -32,6 +32,10 @@ alertPolicy:
   enabled: true
   allowedEventTypes:
     - "price_velocity"
+    - "market_impulse"
+    - "market_trend"
+    - "market_stress"
+    - "market_decay"
   minSeverity: "LOW"
   minPriceChangePct: 0.9
   minVolumeRatio: 6.0
@@ -185,8 +189,9 @@ storage:
 #   KAIROS_COINGLASS_PYTHON=/path/to/coinglass-decrypt/.venv/bin/python
 # KAIROS_COINGLASS_USE_PYTHON=0 forces native Go decrypt (legacy v only)
 
-# MarketPulse: cross-sectional market state (Phase 1 = shadow only).
-# Keep allowedEventTypes as price_velocity until Phase 2 Telegram rollout.
+# MarketPulse: cross-sectional market state detector.
+# Defaults stay disabled; set enabled=true and shadowMode=false to send Telegram.
+# Quiet-market single-coin gate is independent (gateIndividualAlertsWhenQuiet).
 marketPulse:
   enabled: false
   shadowMode: true

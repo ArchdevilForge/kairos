@@ -93,7 +93,13 @@ func setDefaults(v *viper.Viper) {
 
 	v.SetDefault("alertPolicy", map[string]any{
 		"enabled":                  true,
-		"allowedEventTypes":        []string{"price_velocity"},
+		"allowedEventTypes": []string{
+			"price_velocity",
+			"market_impulse",
+			"market_trend",
+			"market_stress",
+			"market_decay",
+		},
 		"minSeverity":              "LOW",
 		"minPriceChangePct":        0.9,
 		"minVolumeRatio":           6.0,

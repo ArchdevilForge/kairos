@@ -174,8 +174,20 @@ func TestLoad_ExampleConfigAlignsWithTypes(t *testing.T) {
 		t.Fatalf("detector sections: ls=%v liq=%v res=%v",
 			cfg.LongShortRatio.Enabled, cfg.Liquidation.Enabled, cfg.ResonanceScorer.Enabled)
 	}
-	if len(cfg.AlertPolicy.AllowedEventTypes) != 1 || cfg.AlertPolicy.AllowedEventTypes[0] != "price_velocity" {
+	wantTypes := map[string]bool{
+		"price_velocity": true,
+		"market_impulse": true,
+		"market_trend":   true,
+		"market_stress":  true,
+		"market_decay":   true,
+	}
+	if len(cfg.AlertPolicy.AllowedEventTypes) != len(wantTypes) {
 		t.Fatalf("allowedEventTypes: %v", cfg.AlertPolicy.AllowedEventTypes)
+	}
+	for _, tpe := range cfg.AlertPolicy.AllowedEventTypes {
+		if !wantTypes[tpe] {
+			t.Fatalf("unexpected allowedEventType %q in %v", tpe, cfg.AlertPolicy.AllowedEventTypes)
+		}
 	}
 	if !cfg.AlertPolicy.LiquidityWeight.Enabled || cfg.AlertPolicy.LiquidityWeight.MinWeight != 0.5 {
 		t.Fatalf("liquidityWeight: enabled=%v minWeight=%v",

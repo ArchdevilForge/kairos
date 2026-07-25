@@ -52,10 +52,30 @@ type MarketPulseDetector struct {
 	lastGateReason string
 	lastHeartbeat  float64
 
+	// pendingOutcomes tracks post-event median extension for Phase 4 tuning.
+	pendingOutcomes []pendingOutcome
+
 	events chan types.AnomalyEvent
 
 	// nowFunc is overridable in tests (unix seconds, float).
 	nowFunc func() float64
+}
+
+// outcomeHorizons are seconds after an event at which median extension is recorded.
+var outcomeHorizons = []int{60, 180, 300, 900}
+
+// pendingOutcome accumulates post-event market performance for calibration.
+type pendingOutcome struct {
+	eventTS     float64
+	eventType   string
+	direction   string
+	eventPrices map[string]float64
+	horizons    map[int]float64 // seconds after event -> median return pct from event
+	mfe         float64         // max favorable extension (signed by direction)
+	mae         float64         // max adverse extension
+	maxBreadth  float64
+	reversed    bool
+	activeUntil float64 // last time still in same-direction active state
 }
 
 type mpPricePoint struct {
@@ -258,6 +278,7 @@ func (d *MarketPulseDetector) Reset() {
 	d.universeChangedAt = 0
 	clear(d.lastEmitted)
 	d.lastSnap = types.MarketSnapshot{}
+	d.pendingOutcomes = nil
 }
 
 // UpdateUniverse replaces the eligible symbol set. New symbols start a warmup
@@ -383,6 +404,7 @@ func (d *MarketPulseDetector) EvaluateAt(now float64) *types.MarketSnapshot {
 	defer d.mu.Unlock()
 	d.lastSnap = snap
 	d.advanceStateLocked(now, snap)
+	d.updateOutcomesLocked(now, snap)
 	return &snap
 }
 
@@ -998,9 +1020,182 @@ func (d *MarketPulseDetector) emitLocked(
 		d.log.Info("market event emitted",
 			"event", eventType, "direction", dir,
 			"from", from, "to", to, "shadow", d.cfg.ShadowMode)
+		d.trackOutcomeLocked(now, eventType, dir)
 	default:
 		d.log.Warn("market_pulse event channel full, dropping event",
 			"event", eventType)
+	}
+}
+
+// trackOutcomeLocked starts Phase 4 post-event performance tracking.
+func (d *MarketPulseDetector) trackOutcomeLocked(now float64, eventType, dir string) {
+	switch eventType {
+	case "market_impulse", "market_trend", "market_stress":
+	default:
+		return
+	}
+	if dir == "" {
+		return
+	}
+	prices := make(map[string]float64, len(d.eligible))
+	for sym := range d.eligible {
+		if px := lastPrice(d.symbols[sym]); px > 0 {
+			prices[sym] = px
+		}
+	}
+	if len(prices) == 0 {
+		return
+	}
+	d.pendingOutcomes = append(d.pendingOutcomes, pendingOutcome{
+		eventTS:     now,
+		eventType:   eventType,
+		direction:   dir,
+		eventPrices: prices,
+		horizons:    make(map[int]float64, len(outcomeHorizons)),
+		activeUntil: now,
+	})
+	if len(d.pendingOutcomes) > 32 {
+		d.pendingOutcomes = append([]pendingOutcome(nil), d.pendingOutcomes[len(d.pendingOutcomes)-32:]...)
+	}
+}
+
+// updateOutcomesLocked fills horizon samples and emits market_outcome when done.
+func (d *MarketPulseDetector) updateOutcomesLocked(now float64, snap types.MarketSnapshot) {
+	if len(d.pendingOutcomes) == 0 {
+		return
+	}
+	remaining := d.pendingOutcomes[:0]
+	for i := range d.pendingOutcomes {
+		po := d.pendingOutcomes[i]
+		medianRet := d.medianReturnFromPricesLocked(po.eventPrices)
+
+		// Signed extension: positive = favorable for the event direction.
+		signed := medianRet
+		if po.direction == "down" {
+			signed = -medianRet
+		}
+		if signed > po.mfe {
+			po.mfe = signed
+		}
+		if adverse := -signed; adverse > po.mae {
+			po.mae = adverse
+		}
+
+		breadth := snap.UpBreadth60s
+		if po.direction == "down" {
+			breadth = snap.DownBreadth60s
+		}
+		if breadth > po.maxBreadth {
+			po.maxBreadth = breadth
+		}
+
+		if po.direction == "up" && snap.DownBreadth60s >= 0.55 && snap.MedianReturn60s < 0 {
+			po.reversed = true
+		}
+		if po.direction == "down" && snap.UpBreadth60s >= 0.55 && snap.MedianReturn60s > 0 {
+			po.reversed = true
+		}
+
+		if (isImpulse(d.state) || isTrending(d.state) || isStress(d.state)) && d.activeDir == po.direction {
+			po.activeUntil = now
+		}
+
+		elapsed := now - po.eventTS
+		for _, h := range outcomeHorizons {
+			if _, ok := po.horizons[h]; ok {
+				continue
+			}
+			if elapsed >= float64(h) {
+				po.horizons[h] = round(medianRet, 4)
+			}
+		}
+
+		_, done15m := po.horizons[900]
+		if done15m || elapsed > 1200 {
+			d.emitOutcomeLocked(now, po)
+			continue
+		}
+		remaining = append(remaining, po)
+	}
+	d.pendingOutcomes = remaining
+}
+
+func (d *MarketPulseDetector) medianReturnFromPricesLocked(eventPrices map[string]float64) float64 {
+	rets := make([]float64, 0, len(eventPrices))
+	for sym, p0 := range eventPrices {
+		if p0 <= 0 {
+			continue
+		}
+		px := lastPrice(d.symbols[sym])
+		if px <= 0 {
+			continue
+		}
+		rets = append(rets, (px/p0-1)*100)
+	}
+	return median(rets)
+}
+
+func (d *MarketPulseDetector) emitOutcomeLocked(now float64, po pendingOutcome) {
+	trendDur := po.activeUntil - po.eventTS
+	if trendDur < 0 {
+		trendDur = 0
+	}
+	// Impulse precision: +5m extension same direction >= 0.20%.
+	ret5m := po.horizons[300]
+	// Trend precision uses +15m (proxy for 10m) same direction >= 0.30%.
+	ret15m := po.horizons[900]
+	var impulseOK, trendOK bool
+	switch po.direction {
+	case "up":
+		impulseOK = ret5m >= 0.20
+		trendOK = ret15m >= 0.30
+	case "down":
+		impulseOK = ret5m <= -0.20
+		trendOK = ret15m <= -0.30
+	}
+
+	data := map[string]any{
+		"source_event":       po.eventType,
+		"direction":          po.direction,
+		"event_ts":           po.eventTS,
+		"median_return_1m":   po.horizons[60],
+		"median_return_3m":   po.horizons[180],
+		"median_return_5m":   po.horizons[300],
+		"median_return_15m":  po.horizons[900],
+		"mfe":                round(po.mfe, 4),
+		"mae":                round(po.mae, 4),
+		"max_breadth":        round(po.maxBreadth, 4),
+		"trend_duration_s":   round(trendDur, 1),
+		"reversed":           po.reversed,
+		"impulse_precision":  impulseOK,
+		"trend_precision":    trendOK,
+		"shadow_mode":        d.cfg.ShadowMode,
+	}
+	d.log.Info("market outcome",
+		"source_event", po.eventType,
+		"direction", po.direction,
+		"ret_1m", po.horizons[60],
+		"ret_3m", po.horizons[180],
+		"ret_5m", po.horizons[300],
+		"ret_15m", po.horizons[900],
+		"mfe", round(po.mfe, 4),
+		"mae", round(po.mae, 4),
+		"max_breadth", round(po.maxBreadth, 4),
+		"reversed", po.reversed,
+		"impulse_precision", impulseOK,
+		"trend_precision", trendOK,
+	)
+	evt := types.AnomalyEvent{
+		Symbol:    marketPulseSymbol,
+		EventType: "market_outcome",
+		Severity:  types.SeverityLow,
+		Data:      data,
+		Timestamp: now,
+	}
+	select {
+	case d.events <- evt:
+	default:
+		d.log.Warn("market_pulse event channel full, dropping outcome")
 	}
 }
 

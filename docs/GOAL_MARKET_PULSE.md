@@ -1,6 +1,6 @@
 # Goal: 市场整体异动监控（Market Pulse）
 
-> 状态：In progress  
+> 状态：Engineering complete (Phase 0–4 tooling); product observation ongoing  
 > 核心原则：只有市场从安静切换到整体活跃时才叫醒用户；单币异动只用于解释谁在领涨/领跌。  
 > 实施优先级：P0 价格广度 → P1 告警门控 → P2 衍生品确认 → P3 板块扩散。
 
@@ -40,15 +40,15 @@ QUIET → IMPULSE_UP|IMPULSE_DOWN → TRENDING_UP|TRENDING_DOWN → DECAY → QU
 
 ## 阶段
 
-| Phase | 目标 | 验收要点 |
-| --- | --- | --- |
-| 0 | 基线 | `docs/research/MARKET_PULSE_BASELINE.md` |
-| 1 | Shadow Mode | 计算 + 日志 + 测试；不改 Telegram 行为 |
-| 2 | 市场告警 | impulse/trend/stress → Telegram |
-| 3 | 单币门控 | QUIET 压制普通 `price_velocity` |
-| 4 | 回放校准 | 事件后 1/3/5/15m 中位收益、MFE/MAE |
-| 5 | 衍生品 enrichment | OI / 量 / 费率 / 爆仓（非硬门槛） |
-| 6 | 板块 impulse | 非阻塞 |
+| Phase | 目标 | 状态 | 验收要点 |
+| --- | --- | --- | --- |
+| 0 | 基线 | done | `docs/research/MARKET_PULSE_BASELINE.md` |
+| 1 | Shadow Mode | done | 计算 + 日志 + 测试；默认 shadow |
+| 2 | 市场告警 | done | format + policy + allow-list 含 market_* |
+| 3 | 单币门控 | done | `gateIndividualAlertsWhenQuiet`（默认 off） |
+| 4 | 回放校准 | tooling done | `market_outcome` + outcomes JSONL；参数观察仍需生产 |
+| 5 | 衍生品 enrichment | out of scope | OI / 量 / 费率 / 爆仓（非硬门槛） |
+| 6 | 板块 impulse | non-blocking | |
 
 ## 工程约束
 
@@ -58,7 +58,9 @@ QUIET → IMPULSE_UP|IMPULSE_DOWN → TRENDING_UP|TRENDING_DOWN → DECAY → QU
 - 可配置关闭：`marketPulse.enabled: false`
 - 单币门控独立开关：`gateIndividualAlertsWhenQuiet`
 
-## 推荐默认 Shadow 配置
+## 推荐配置
+
+Shadow（安全首跑）：
 
 ```yaml
 marketPulse:
@@ -66,12 +68,24 @@ marketPulse:
   shadowMode: true
 ```
 
-Phase 1 保持：
+生产市场告警（Phase 2+）：
 
 ```yaml
+marketPulse:
+  enabled: true
+  shadowMode: false
+  freshnessSeconds: 30
+  volatility:
+    enabled: false
+  gateIndividualAlertsWhenQuiet: true   # Phase 3
+
 alertPolicy:
   allowedEventTypes:
     - "price_velocity"
+    - "market_impulse"
+    - "market_trend"
+    - "market_stress"
+    - "market_decay"
 ```
 
 ## 成功标准（摘要）

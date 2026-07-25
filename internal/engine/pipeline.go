@@ -818,11 +818,22 @@ func (p *Pipeline) eventAggregator(
 				p.resonanceScorer.OnEvent(evt)
 			}
 
-			// Persist market events even in shadow mode (for calibration).
-			if isMarketPulseEvent(evt.EventType) && p.mpStore != nil {
-				if err := p.mpStore.Record(evt); err != nil {
-					p.log.Warn("market pulse store failed", "error", err)
+			// Persist market events / outcomes even in shadow mode (for calibration).
+			if (isMarketPulseEvent(evt.EventType) || evt.EventType == "market_outcome") && p.mpStore != nil {
+				var err error
+				if evt.EventType == "market_outcome" {
+					err = p.mpStore.RecordOutcome(evt)
+				} else {
+					err = p.mpStore.Record(evt)
 				}
+				if err != nil {
+					p.log.Warn("market pulse store failed", "error", err, "event", evt.EventType)
+				}
+			}
+
+			// Outcomes are calibration-only — never Telegram.
+			if evt.EventType == "market_outcome" {
+				continue
 			}
 
 			// Send to delivery channel (dedup + policy applied downstream).
@@ -986,7 +997,12 @@ func (p *Pipeline) deliverEvent(ctx context.Context, evt types.AnomalyEvent) {
 		return
 	}
 
-	// Phase 1 shadow: market events are computed/logged only.
+	// Calibration outcomes never notify.
+	if evt.EventType == "market_outcome" {
+		return
+	}
+
+	// Shadow: market events are computed/logged only.
 	if isMarketPulseEvent(evt.EventType) && p.marketPulseDet != nil && p.marketPulseDet.ShadowMode() {
 		p.log.Info("alert gated", "reason", "market_pulse_shadow", "event", evt.EventType)
 		return
