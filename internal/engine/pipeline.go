@@ -17,6 +17,9 @@ package engine
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"math"
@@ -79,9 +82,14 @@ type Pipeline struct {
 	// Market pulse event log (JSONL; works in shadow mode).
 	mpStore *storage.MarketPulseStore
 
-	// Dedup state: "symbol__event_type" → timestamp
-	dedupMu   sync.Mutex
-	dedupLast map[string]float64
+	// Delivery gating state. dedupLast is attempt-level per event key
+	// ("symbol__event_type[__direction]") and commits on every attempt so a
+	// failing channel cannot be hammered. cooldownLast is per symbol and
+	// commits only after at least one channel delivered successfully, so a
+	// transient outage does not burn the long cooldown.
+	dedupMu      sync.Mutex
+	dedupLast    map[string]float64
+	cooldownLast map[string]float64
 
 	// Config-derived thresholds (cached from alertPolicy)
 	allowedEventTypes     map[string]bool // nil means all allowed
@@ -146,6 +154,7 @@ func NewPipeline(cfg *types.Config, tg *notify.TelegramClient) *Pipeline {
 		symbolsByExchange:     make(map[string][]string),
 		exchangeStates:        make(map[string]*exchangeState),
 		dedupLast:             make(map[string]float64),
+		cooldownLast:          make(map[string]float64),
 		marketCapByCoin:       make(map[string]float64),
 		tg:                    tg,
 		blacklist:             utils.NewBlacklist(),
@@ -290,27 +299,28 @@ func (p *Pipeline) Start(ctx context.Context) error {
 		)
 	}
 
-	// 4. Build event channel list for the aggregator.
-	var eventChs []<-chan types.AnomalyEvent
+	// 4. Build tagged event sources for the aggregator so every event enters
+	// with its originating exchange (CoinGlass detectors are cross-exchange).
+	var eventChs []eventSource
 	for _, es := range p.exchangeStates {
 		if es.velocity != nil {
-			eventChs = append(eventChs, es.velocity.Events())
+			eventChs = append(eventChs, eventSource{ch: es.velocity.Events(), origin: es.name})
 		}
 		if es.spike != nil {
-			eventChs = append(eventChs, es.spike.Events())
+			eventChs = append(eventChs, eventSource{ch: es.spike.Events(), origin: es.name})
 		}
 		if es.metrics != nil {
-			eventChs = append(eventChs, es.metrics.Events())
+			eventChs = append(eventChs, eventSource{ch: es.metrics.Events(), origin: es.name})
 		}
 	}
 	if p.longShortDet != nil {
-		eventChs = append(eventChs, p.longShortDet.Events())
+		eventChs = append(eventChs, eventSource{ch: p.longShortDet.Events(), origin: "coinglass"})
 	}
 	if p.liqDet != nil {
-		eventChs = append(eventChs, p.liqDet.Events())
+		eventChs = append(eventChs, eventSource{ch: p.liqDet.Events(), origin: "coinglass"})
 	}
 	if p.marketPulseDet != nil {
-		eventChs = append(eventChs, p.marketPulseDet.Events())
+		eventChs = append(eventChs, eventSource{ch: p.marketPulseDet.Events(), origin: p.primaryExchange()})
 	}
 
 	// 5. Launch goroutines via errgroup.
@@ -897,7 +907,7 @@ func (p *Pipeline) pollLiquidations(ctx context.Context) {
 // scorer, and sends alertable events to the delivery channel.
 func (p *Pipeline) eventAggregator(
 	ctx context.Context,
-	eventChs []<-chan types.AnomalyEvent,
+	eventChs []eventSource,
 	deliveryCh chan<- types.AnomalyEvent,
 ) {
 	// Merge all event channels using goroutines.
@@ -915,8 +925,10 @@ func (p *Pipeline) eventAggregator(
 				return
 			}
 
-			// Feed resonance scorer (but not resonance events themselves).
-			if p.resonanceScorer != nil && evt.EventType != "resonance" {
+			// Feed resonance scorer with single-symbol anomaly dimensions
+			// only: MARKET-level events and calibration outcomes are not
+			// resonance inputs.
+			if p.resonanceScorer != nil && isResonanceInput(evt.EventType) {
 				// Non-blocking send to avoid back-pressure.
 				p.resonanceScorer.OnEvent(evt)
 			}
@@ -949,29 +961,70 @@ func (p *Pipeline) eventAggregator(
 	}
 }
 
-// mergeChannels merges multiple AnomalyEvent channels into one.
+// eventSource pairs a detector event channel with its originating exchange.
+type eventSource struct {
+	ch     <-chan types.AnomalyEvent
+	origin string
+}
+
+// annotateEvent backfills provenance on an event entering the aggregator:
+// originating exchange, a timestamp when the detector left it zero, and a
+// deterministic event id for tracing/dedup audit.
+func annotateEvent(evt types.AnomalyEvent, origin string) types.AnomalyEvent {
+	if evt.Exchange == "" {
+		evt.Exchange = origin
+	}
+	if evt.Timestamp <= 0 {
+		evt.Timestamp = float64(time.Now().UnixMilli()) / 1000
+	}
+	if evt.EventID == "" {
+		evt.EventID = deterministicEventID(evt)
+	}
+	return evt
+}
+
+// deterministicEventID derives a stable id from exchange, symbol, type,
+// timestamp and payload (json.Marshal sorts map keys).
+func deterministicEventID(evt types.AnomalyEvent) string {
+	payload, _ := json.Marshal(evt.Data)
+	sum := sha256.Sum256(fmt.Appendf(nil, "%s|%s|%s|%.3f|%s",
+		evt.Exchange, evt.Symbol, evt.EventType, evt.Timestamp, payload))
+	return hex.EncodeToString(sum[:8])
+}
+
+// isResonanceInput reports whether an event type is a valid resonance
+// dimension (single-symbol anomalies only).
+func isResonanceInput(eventType string) bool {
+	if eventType == "resonance" || eventType == "market_outcome" {
+		return false
+	}
+	return !isMarketPulseEvent(eventType)
+}
+
+// mergeChannels merges multiple tagged AnomalyEvent channels into one,
+// annotating provenance as events enter the aggregator.
 // Returns nil if no source channels are provided.
-func (p *Pipeline) mergeChannels(ctx context.Context, chs []<-chan types.AnomalyEvent) <-chan types.AnomalyEvent {
+func (p *Pipeline) mergeChannels(ctx context.Context, chs []eventSource) <-chan types.AnomalyEvent {
 	if len(chs) == 0 {
 		return nil
 	}
 	out := make(chan types.AnomalyEvent, 256)
 	var wg sync.WaitGroup
-	for _, ch := range chs {
+	for _, src := range chs {
 		wg.Add(1)
-		ch := ch
+		src := src
 		go func() {
 			defer wg.Done()
 			for {
 				select {
 				case <-ctx.Done():
 					return
-				case evt, ok := <-ch:
+				case evt, ok := <-src.ch:
 					if !ok {
 						return
 					}
 					select {
-					case out <- evt:
+					case out <- annotateEvent(evt, src.origin):
 					case <-ctx.Done():
 						return
 					}
@@ -1022,10 +1075,10 @@ func (p *Pipeline) hasDeliveryChannel() bool {
 
 // sendToChannels fans out one AlertEvent to every configured channel.
 // Failures are independent; returns true if any channel succeeded.
-func (p *Pipeline) sendToChannels(alert types.AlertEvent) bool {
+func (p *Pipeline) sendToChannels(ctx context.Context, alert types.AlertEvent) bool {
 	anyOK := false
 	if p.tg != nil && p.tg.IsConfigured() {
-		if err := p.tg.SendEvent(alert); err != nil {
+		if err := p.tg.SendEvent(ctx, alert); err != nil {
 			p.log.Warn("telegram send failed", "symbol", alert.Symbol, "event", alert.Event, "error", err)
 		} else {
 			anyOK = true
@@ -1034,7 +1087,7 @@ func (p *Pipeline) sendToChannels(alert types.AlertEvent) bool {
 		}
 	}
 	if p.dingTalk != nil && p.dingTalk.IsConfigured() {
-		if err := p.dingTalk.SendEvent(alert); err != nil {
+		if err := p.dingTalk.SendEvent(ctx, alert); err != nil {
 			p.log.Warn("dingtalk send failed", "symbol", alert.Symbol, "event", alert.Event, "error", err)
 		} else {
 			anyOK = true
@@ -1045,6 +1098,9 @@ func (p *Pipeline) sendToChannels(alert types.AlertEvent) bool {
 	return anyOK
 }
 
+// sendResonanceAlert converts a ResonanceEvent into a normal AnomalyEvent and
+// routes it through deliverEvent, so resonance obeys the same alert policy,
+// dedup/cooldown and delivery bookkeeping as every other event type.
 func (p *Pipeline) sendResonanceAlert(ctx context.Context, re detector.ResonanceEvent) {
 	if !p.hasDeliveryChannel() {
 		return
@@ -1062,25 +1118,11 @@ func (p *Pipeline) sendResonanceAlert(ctx context.Context, re detector.Resonance
 		return
 	}
 
-	// Cooldown dedup per symbol+score combo.
-	dedupKey := fmt.Sprintf("%s__resonance__%d", re.Symbol, int(math.Round(re.SignalScore)))
-	now := time.Now().Unix()
-
-	p.dedupMu.Lock()
-	last := p.dedupLast[dedupKey]
-	if float64(now)-last < p.symbolCooldownSeconds {
-		p.dedupMu.Unlock()
-		p.log.Debug("resonance cooldown drop", "symbol", re.Symbol, "key", dedupKey)
-		return
-	}
-	p.dedupLast[dedupKey] = float64(now)
-	p.dedupMu.Unlock()
-
-	// Build AlertEvent.
 	dimKeys := make([]string, 0, len(re.Dimensions))
 	for k := range re.Dimensions {
 		dimKeys = append(dimKeys, k)
 	}
+	sort.Strings(dimKeys)
 	data := map[string]any{
 		"signal_score":     re.SignalScore,
 		"dimension_count":  re.DimensionCount,
@@ -1091,22 +1133,14 @@ func (p *Pipeline) sendResonanceAlert(ctx context.Context, re detector.Resonance
 		data[dim+"_data"] = ev.Data
 	}
 
-	alert := types.AlertEvent{
-		Event:     "resonance",
+	evt := annotateEvent(types.AnomalyEvent{
 		Symbol:    re.Symbol,
-		Price:     0,
-		Condition: fmt.Sprintf("🎯 信号质量=%.0f", re.SignalScore),
+		EventType: "resonance",
 		Severity:  types.SeverityHigh,
 		Data:      data,
-	}
+	}, p.primaryExchange())
 
-	select {
-	case <-ctx.Done():
-	default:
-		if p.sendToChannels(alert) {
-			p.recordWatchHint(re.Symbol, "resonance", p.cfg.Exchanges.Primary)
-		}
-	}
+	p.deliverEvent(ctx, evt)
 }
 
 // ── Alert Deliverer ────────────────────────────────────────────
@@ -1160,24 +1194,34 @@ func (p *Pipeline) deliverEvent(ctx context.Context, evt types.AnomalyEvent) {
 		return
 	}
 
-	// Dedup.
+	// Delivery gating. Dedup is attempt-level per event key and commits
+	// immediately (rate-limits retries against a failing channel). The long
+	// symbol cooldown commits only after a successful send, so a transient
+	// notifier outage does not suppress the next attempt for 45 minutes.
+	// Market-level events skip the symbol cooldown entirely: MarketPulse has
+	// its own direction/state-aware cooldowns, and an up-impulse must not
+	// silence a legitimate down-impulse minutes later.
+	market := isMarketPulseEvent(evt.EventType)
 	dedupKey := fmt.Sprintf("%s__%s", evt.Symbol, evt.EventType)
-	now := time.Now().Unix()
+	if market {
+		if dir, ok := evt.Data["direction"].(string); ok && dir != "" {
+			dedupKey += "__" + dir
+		}
+	}
+	now := float64(time.Now().Unix())
 
 	p.dedupMu.Lock()
-	last := p.dedupLast[dedupKey]
-	if float64(now)-last < p.dedupWindowSeconds {
+	if now-p.dedupLast[dedupKey] < p.dedupWindowSeconds {
 		p.dedupMu.Unlock()
 		p.log.Info("alert gated", "reason", "dedup", "symbol", evt.Symbol, "event", evt.EventType)
 		return
 	}
-	symbolEventLast := p.dedupLast[dedupKey]
-	if float64(now)-symbolEventLast < p.symbolCooldownSeconds {
+	if !market && now-p.cooldownLast[evt.Symbol] < p.symbolCooldownSeconds {
 		p.dedupMu.Unlock()
 		p.log.Info("alert gated", "reason", "cooldown", "symbol", evt.Symbol, "event", evt.EventType)
 		return
 	}
-	p.dedupLast[dedupKey] = float64(now)
+	p.dedupLast[dedupKey] = now
 	p.dedupMu.Unlock()
 
 	alert := p.buildAlert(evt)
@@ -1185,8 +1229,13 @@ func (p *Pipeline) deliverEvent(ctx context.Context, evt types.AnomalyEvent) {
 	select {
 	case <-ctx.Done():
 	default:
-		if p.sendToChannels(alert) {
-			p.recordWatchHint(evt.Symbol, evt.EventType, p.cfg.Exchanges.Primary)
+		if p.sendToChannels(ctx, alert) {
+			if !market {
+				p.dedupMu.Lock()
+				p.cooldownLast[evt.Symbol] = now
+				p.dedupMu.Unlock()
+			}
+			p.recordWatchHint(evt.Symbol, evt.EventType, evt.Exchange)
 		}
 	}
 }
@@ -1310,11 +1359,21 @@ func (p *Pipeline) buildAlert(evt types.AnomalyEvent) types.AlertEvent {
 		}
 	}
 
+	ts := ""
+	if evt.Timestamp > 0 {
+		sec := int64(evt.Timestamp)
+		nsec := int64((evt.Timestamp - float64(sec)) * 1e9)
+		ts = time.Unix(sec, nsec).UTC().Format(time.RFC3339)
+	}
+
 	return types.AlertEvent{
 		Event:     evt.EventType,
 		Symbol:    evt.Symbol,
 		Price:     price,
 		Condition: buildCondition(evt),
+		EventID:   evt.EventID,
+		Timestamp: ts,
+		Exchange:  evt.Exchange,
 		ChangePct: floatFromMapDefault(data, "change_pct", 0),
 		Severity:  evt.Severity,
 		Data:      data,
@@ -1345,6 +1404,8 @@ func (p *Pipeline) MarketState() types.MarketState {
 func buildCondition(evt types.AnomalyEvent) string {
 	data := evt.Data
 	switch evt.EventType {
+	case "resonance":
+		return fmt.Sprintf("🎯 信号质量=%.0f", floatFromMapDefault(data, "signal_score", 0))
 	case "market_impulse", "market_trend", "market_stress", "market_decay":
 		dir := fmt.Sprintf("%v", data["direction"])
 		from := fmt.Sprintf("%v", data["state_from"])

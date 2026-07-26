@@ -320,8 +320,9 @@ func signalQualityScore(dims map[string]types.AnomalyEvent) float64 {
 
 // extremityZ maps data fields to z-score equivalents.
 func extremityZ(data map[string]any) float64 {
-	// Direct zscore field.
-	if z, ok := getFloat(data, "zscore"); ok && z > 0 {
+	// Direct zscore field — magnitude matters, not sign: a -3σ anomaly is as
+	// extreme as a +3σ one.
+	if z, ok := getFloat(data, "zscore"); ok && z != 0 {
 		return math.Abs(z)
 	}
 

@@ -84,7 +84,7 @@ func sortSetupsByRank(setups []map[string]any) {
 
 // FormatAlert builds one compact Telegram HTML alert from setup maps.
 func FormatAlert(setups []map[string]any) string {
-	parts := []string{"<b>Kairos 机会筛选</b> | <b>非指令</b> 仅供人工判断"}
+	parts := []string{"<b>Kairos 机会筛选</b> | <b>非指令</b> 仅供人工判断，不自动交易。"}
 	for _, setup := range setups {
 		risk, _ := setup["risk"].(map[string]any)
 		if risk == nil {

@@ -226,8 +226,10 @@ func (d *LongShortRatioDetector) emitLS(symbol string, ts, longRate, shortRate f
 		"threshold_zscore":       d.zscoreThreshold,
 		"threshold_velocity_pct": d.velocityThresholdPct,
 	}
+	// No z observation yet → omit the key entirely; consumers treat a
+	// present key as a real value.
 	if zs == 0 {
-		data["zscore"] = nil
+		delete(data, "zscore")
 	}
 
 	evt := NewEvent(symbol, "long_short_ratio", string(severity), data)

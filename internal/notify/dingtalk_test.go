@@ -1,6 +1,7 @@
 package notify
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
@@ -14,7 +15,9 @@ import (
 )
 
 func TestDingTalkSign(t *testing.T) {
-	// Fixed vector: recompute expected with same algorithm.
+	// dingTalkSign must return RAW base64: signedURL percent-encodes it once
+	// via url.Values.Encode, so pre-escaping here would double-encode and the
+	// server would reject the signature.
 	ts := "1710000000000"
 	secret := "SECtest"
 	got, err := dingTalkSign(ts, secret)
@@ -23,9 +26,39 @@ func TestDingTalkSign(t *testing.T) {
 	}
 	mac := hmac.New(sha256.New, []byte(secret))
 	_, _ = mac.Write([]byte(ts + "\n" + secret))
-	want := url.QueryEscape(base64.StdEncoding.EncodeToString(mac.Sum(nil)))
+	want := base64.StdEncoding.EncodeToString(mac.Sum(nil))
 	if got != want {
-		t.Fatalf("sign=%q want=%q", got, want)
+		t.Fatalf("sign=%q want raw base64 %q", got, want)
+	}
+}
+
+// The server decodes the query exactly once; what it sees must equal the raw
+// base64 HMAC. This is the regression test for the double-encoding bug that
+// made every 加签 robot reject requests.
+func TestDingTalkSignedURL_ServerSideDecodeMatchesHMAC(t *testing.T) {
+	c, err := NewDingTalkClient("https://oapi.dingtalk.com/robot/send?access_token=tok", "SECtest")
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpoint, err := c.signedURL()
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, err := url.Parse(endpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := u.Query() // performs the single server-side decode
+	ts := q.Get("timestamp")
+	gotSign := q.Get("sign")
+	if ts == "" || gotSign == "" {
+		t.Fatalf("missing timestamp/sign in %s", endpoint)
+	}
+	mac := hmac.New(sha256.New, []byte("SECtest"))
+	_, _ = mac.Write([]byte(ts + "\nSECtest"))
+	want := base64.StdEncoding.EncodeToString(mac.Sum(nil))
+	if gotSign != want {
+		t.Fatalf("server-side decoded sign=%q want=%q", gotSign, want)
 	}
 }
 
@@ -46,7 +79,7 @@ func TestDingTalkClient_SendMarkdown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := c.SendText("hello ding"); err != nil {
+	if err := c.SendText(context.Background(), "hello ding"); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(gotPath, "timestamp=") || !strings.Contains(gotPath, "sign=") {

@@ -38,12 +38,13 @@ func (t *TelegramClient) IsConfigured() bool {
 	return t.b != nil && t.chatID != 0
 }
 
-// SendText sends an HTML message to the configured chat.
-func (t *TelegramClient) SendText(text string) error {
+// SendText sends an HTML message to the configured chat. The caller context
+// bounds the request so pipeline shutdown can cancel in-flight sends.
+func (t *TelegramClient) SendText(ctx context.Context, text string) error {
 	if !t.IsConfigured() {
 		return fmt.Errorf("telegram not configured")
 	}
-	_, err := t.b.SendMessage(context.Background(), &bot.SendMessageParams{
+	_, err := t.b.SendMessage(ctx, &bot.SendMessageParams{
 		ChatID:    t.chatID,
 		Text:      text,
 		ParseMode: "HTML",
@@ -52,8 +53,8 @@ func (t *TelegramClient) SendText(text string) error {
 }
 
 // SendEvent formats an AlertEvent and sends it.
-func (t *TelegramClient) SendEvent(event types.AlertEvent) error {
-	return t.SendText(formatEvent(event))
+func (t *TelegramClient) SendEvent(ctx context.Context, event types.AlertEvent) error {
+	return t.SendText(ctx, formatEvent(event))
 }
 
 // ---------------------------------------------------------------------------
@@ -85,7 +86,7 @@ func formatEvent(event types.AlertEvent) string {
 	condition := html.EscapeString(event.Condition)
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("<b>[%s] %s %s</b>\n", severity, symbol, eventName))
-	b.WriteString("<b>非指令</b> 仅供人工判断\n")
+	b.WriteString("<b>非指令</b> " + manualFooter + "\n")
 	b.WriteString(fmt.Sprintf("<b>价/变</b>: %.2f / %+.2f%% | %s UTC\n", event.Price, event.ChangePct, ts))
 	b.WriteString(fmt.Sprintf("<b>触发</b>: %s\n", condition))
 	if event.Exchange != "" {
@@ -99,20 +100,19 @@ func formatResonance(event types.AlertEvent, symbol, severity, ts string) string
 	if data == nil {
 		data = make(map[string]any)
 	}
-	dims, _ := data["dimensions"].([]any)
+	dims := resonanceDimensions(data)
 	dimCount := len(dims)
-	if n, ok := data["dimension_count"].(int); ok && n > 0 {
+	if n := anyInt(data, "dimension_count"); n > 0 {
 		dimCount = n
 	}
-	score, _ := data["signal_score"].(float64)
+	score := anyFloat(data, "signal_score")
 
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("<b>[%s] %s 信号质量=%.0f</b>\n", severity, symbol, score))
-	b.WriteString("<b>非指令</b> 仅供人工判断\n")
+	b.WriteString("<b>非指令</b> " + manualFooter + "\n")
 	b.WriteString(fmt.Sprintf("<b>维度</b>: %d个 | %s UTC\n", dimCount, ts))
 
-	for _, dim := range dims {
-		dimStr, _ := dim.(string)
+	for _, dimStr := range dims {
 		dimZh := eventNameZh(dimStr)
 		dimData, _ := data[dimStr+"_data"].(map[string]any)
 		if dimData == nil {
@@ -159,14 +159,11 @@ func formatLiquidation(event types.AlertEvent, symbol, severity, ts string) stri
 	if reason == "<nil>" {
 		reason = "?"
 	}
-	zsText := ""
-	if _, ok := data["zscore"]; ok {
-		zsText = fmt.Sprintf(" | Z=%s", formatField(data, "zscore", "?"))
-	}
+	zsText := optionalZ(data)
 
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("<b>[%s] %s 爆仓异动</b>\n", severity, symbol))
-	b.WriteString("<b>非指令</b> 仅供人工判断\n")
+	b.WriteString("<b>非指令</b> " + manualFooter + "\n")
 	b.WriteString(fmt.Sprintf("<b>金额</b>: $%sM%s | %s UTC\n", total, zsText, ts))
 	b.WriteString(fmt.Sprintf("<b>多/空</b>: %s%% / %s%%\n", longPct, shortPct))
 	b.WriteString(fmt.Sprintf("<b>原因</b>: %s\n", html.EscapeString(reason)))
@@ -185,14 +182,11 @@ func formatLongShort(event types.AlertEvent, symbol, severity, ts string) string
 	if reason == "<nil>" {
 		reason = "?"
 	}
-	zsText := ""
-	if _, ok := data["zscore"]; ok {
-		zsText = fmt.Sprintf(" | Z=%s", formatField(data, "zscore", "?"))
-	}
+	zsText := optionalZ(data)
 
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("<b>[%s] %s 多空比异动</b>\n", severity, symbol))
-	b.WriteString("<b>非指令</b> 仅供人工判断\n")
+	b.WriteString("<b>非指令</b> " + manualFooter + "\n")
 	b.WriteString(fmt.Sprintf("<b>多/空</b>: %s%% / %s%% (比=%s)%s | %s UTC\n", longR, shortR, ratio, zsText, ts))
 	b.WriteString(fmt.Sprintf("<b>原因</b>: %s\n", html.EscapeString(reason)))
 	return strings.TrimRight(b.String(), "\n")
@@ -203,79 +197,42 @@ func formatLongShort(event types.AlertEvent, symbol, severity, ts string) string
 // ---------------------------------------------------------------------------
 
 func formatMarketPulse(event types.AlertEvent, severity, ts string) string {
-	data := event.Data
-	if data == nil {
-		data = map[string]any{}
-	}
-	dir := fmt.Sprint(data["direction"])
-	if dir == "<nil>" {
-		dir = ""
-	}
-	from := fmt.Sprint(data["state_from"])
-	to := fmt.Sprint(data["state_to"])
-	med60 := anyFloat(data, "median_return_60s_pct")
-	med300 := anyFloat(data, "median_return_300s_pct")
-	breadth := anyFloat(data, "breadth")
-	adv := anyInt(data, "advancers")
-	valid := anyInt(data, "valid_symbols")
-	medZ := anyFloat(data, "median_z_60s")
-	btc := anyFloatPtr(data, "btc_return_pct")
-	eth := anyFloatPtr(data, "eth_return_pct")
+	v := parseMarketPulse(event)
 
-	title := marketPulseTitle(event.Event, dir)
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf("<b>%s</b>\n", html.EscapeString(title)))
-	b.WriteString("<b>非指令</b> 仅供人工判断，不自动交易。\n")
-	if from != "<nil>" && to != "<nil>" && from != "" && to != "" {
-		b.WriteString(fmt.Sprintf("状态：%s → %s\n", html.EscapeString(from), html.EscapeString(to)))
+	b.WriteString(fmt.Sprintf("<b>%s</b>\n", html.EscapeString(v.Title)))
+	b.WriteString("<b>非指令</b> " + manualFooter + "\n")
+	if v.From != "" && v.To != "" {
+		b.WriteString(fmt.Sprintf("状态：%s → %s\n", html.EscapeString(v.From), html.EscapeString(v.To)))
 	}
 
 	switch event.Event {
 	case "market_trend":
-		b.WriteString(fmt.Sprintf("5分钟市场中位涨幅：%+.2f%%\n", med300))
-		b.WriteString(fmt.Sprintf("上涨广度：%.0f%%\n", breadth*100))
+		b.WriteString(fmt.Sprintf("%s：%+.2f%%\n", v.TrendLabel, v.Med300))
+		b.WriteString(fmt.Sprintf("%s：%.0f%%\n", v.BreadthLabel, v.Breadth*100))
 	default:
-		label := "1分钟市场中位涨幅"
-		if dir == "down" {
-			label = "1分钟市场中位跌幅"
-		}
-		b.WriteString(fmt.Sprintf("%s：%+.2f%%\n", label, med60))
-		b.WriteString(fmt.Sprintf("广度：%.0f%%（%d / %d）\n", breadth*100, adv, valid))
-		if medZ != 0 {
-			b.WriteString(fmt.Sprintf("标准化强度：%+.2fσ\n", medZ))
+		b.WriteString(fmt.Sprintf("%s：%+.2f%%\n", v.Med60Label, v.Med60))
+		b.WriteString(fmt.Sprintf("广度：%.0f%%（%d / %d）\n", v.Breadth*100, v.Count, v.Valid))
+		if v.MedZ != 0 {
+			b.WriteString(fmt.Sprintf("标准化强度：%+.2fσ\n", v.MedZ))
 		}
 	}
-	if btc != nil {
-		b.WriteString(fmt.Sprintf("BTC：%+.2f%%\n", *btc))
+	if v.BTC != nil {
+		b.WriteString(fmt.Sprintf("BTC：%+.2f%%\n", *v.BTC))
 	}
-	if eth != nil {
-		b.WriteString(fmt.Sprintf("ETH：%+.2f%%\n", *eth))
+	if v.ETH != nil {
+		b.WriteString(fmt.Sprintf("ETH：%+.2f%%\n", *v.ETH))
 	}
 
-	leaders := anyStringSlice(data, "leaders")
-	if len(leaders) > 0 {
-		head := "领涨"
-		if dir == "down" {
-			head = "领跌"
-		}
-		if event.Event == "market_trend" {
-			head = "强于市场"
-		}
-		b.WriteString(head + "：\n")
-		for _, s := range leaders {
+	if len(v.Movers) > 0 {
+		b.WriteString(v.MoversHead + "：\n")
+		for _, s := range v.Movers {
 			b.WriteString(fmt.Sprintf("%s\n", html.EscapeString(shortSymbol(s))))
 		}
 	}
 
-	switch event.Event {
-	case "market_impulse":
-		b.WriteString("结论：市场出现同步异动，值得打开盘面观察。\n")
-	case "market_trend":
-		b.WriteString("结论：趋势确认，建议打开盘面观察。\n")
-	case "market_stress":
-		b.WriteString("注意：市场出现系统性快速波动。\n")
-	case "market_decay":
-		b.WriteString("结论：趋势广度衰减，继续盯盘价值下降。\n")
+	if v.Conclusion != "" {
+		b.WriteString(v.Conclusion + "\n")
 	}
 	b.WriteString(fmt.Sprintf("%s UTC | [%s]\n", ts, html.EscapeString(severity)))
 	return strings.TrimRight(b.String(), "\n")

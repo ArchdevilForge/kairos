@@ -60,6 +60,13 @@ func runOnce(ctx context.Context, cfg *types.Config, exchangeName, minState stri
 		return 0
 	}
 
+	// Same contract as kairosd: telegram.enabled=false disables delivery even
+	// when env credentials are present.
+	if !cfg.Telegram.Enabled {
+		fmt.Fprintln(os.Stderr, "telegram.enabled=false：跳过发送（可用 --dry-run 查看内容）。")
+		return 2
+	}
+
 	chatID, err := parseChatID(cfg.Telegram.ChatID)
 	if err != nil || cfg.Telegram.BotToken == "" || chatID == 0 {
 		fmt.Fprintln(os.Stderr, "需要设置 TELEGRAM_BOT_TOKEN 和 TELEGRAM_CHAT_ID。")
@@ -70,7 +77,7 @@ func runOnce(ctx context.Context, cfg *types.Config, exchangeName, minState stri
 		fmt.Fprintln(os.Stderr, err)
 		return 2
 	}
-	if err := tg.SendText(text); err != nil {
+	if err := tg.SendText(ctx, text); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
 	}

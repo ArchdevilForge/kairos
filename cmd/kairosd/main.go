@@ -121,10 +121,10 @@ func main() {
 	}
 	startMsg := "🟢 kairosd started — monitoring pipeline"
 	if tg != nil {
-		_ = tg.SendText(startMsg)
+		_ = tg.SendText(ctx, startMsg)
 	}
 	if ding != nil {
-		_ = ding.SendText(startMsg)
+		_ = ding.SendText(ctx, startMsg)
 	}
 
 	runErr := run(ctx, pipeline)
@@ -133,11 +133,15 @@ func main() {
 	if runErr != nil {
 		stopMsg = fmt.Sprintf("🔴 kairosd stopped: %v", runErr)
 	}
+	// The signal context is already cancelled at this point; use a short
+	// independent context so the stop notification can still go out.
+	msgCtx, msgCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer msgCancel()
 	if tg != nil {
-		_ = tg.SendText(stopMsg)
+		_ = tg.SendText(msgCtx, stopMsg)
 	}
 	if ding != nil {
-		_ = ding.SendText(stopMsg)
+		_ = ding.SendText(msgCtx, stopMsg)
 	}
 
 	if runErr != nil {

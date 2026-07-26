@@ -234,8 +234,10 @@ func (d *LiquidationDetector) emitLiquidation(symbol string, ts, totalUSD, longU
 		"threshold_zscore":           d.zscoreThreshold,
 		"threshold_imbalance":        d.imbalanceThreshold,
 	}
+	// No z observation yet → omit the key entirely; consumers treat a
+	// present key as a real value.
 	if zs == 0 {
-		data["zscore"] = nil
+		delete(data, "zscore")
 	}
 
 	evt := NewEvent(symbol, "liquidation", string(severity), data)

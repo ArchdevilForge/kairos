@@ -919,3 +919,59 @@ func TestOutcome_TracksHorizonsAndPrecision(t *testing.T) {
 		t.Fatalf("mfe=%v", o.Data["mfe"])
 	}
 }
+
+// During a data outage (prices stale), pending outcomes must not sample from
+// last-known prices: missed horizons are reported as null, and precision is
+// false rather than fabricated from a flat return.
+func TestOutcome_DataOutageDoesNotFabricateHorizons(t *testing.T) {
+	cfg := testMPConfig()
+	cfg.Volatility.Enabled = false
+	cfg.CooldownSeconds = 0
+	d := NewMarketPulseDetector(cfg)
+
+	syms := make([]string, 0, 20)
+	for i := 0; i < 20; i++ {
+		syms = append(syms, fmt.Sprintf("S%d/USDT:USDT", i))
+	}
+
+	clock := 300_000.0
+	d.SetNowFunc(func() float64 { return clock })
+	d.UpdateUniverse(syms)
+
+	base := 100.0
+	for _, sym := range syms {
+		p := base
+		d.OnTicker(context.Background(), types.Ticker{Symbol: sym, LastPrice: &p})
+	}
+
+	// Track an outcome directly, then stop all data (no more ticks).
+	d.mu.Lock()
+	d.trackOutcomeLocked(clock, "market_impulse", "up")
+	d.mu.Unlock()
+
+	// Walk far past every horizon with a dead feed: FreshRatio collapses, so
+	// no sampling may happen; the outcome expires with null horizons.
+	for _, dt := range []float64{60, 180, 300, 900, 1300} {
+		clock = 300_000.0 + dt
+		d.EvaluateAt(clock)
+	}
+
+	var outcome *types.AnomalyEvent
+	for _, e := range drainEvents(d) {
+		if e.EventType == "market_outcome" {
+			ec := e
+			outcome = &ec
+		}
+	}
+	if outcome == nil {
+		t.Fatal("expired outcome must still be emitted")
+	}
+	for _, k := range []string{"median_return_1m", "median_return_5m", "median_return_15m"} {
+		if outcome.Data[k] != nil {
+			t.Fatalf("stale-data horizon %s must be null, got %v", k, outcome.Data[k])
+		}
+	}
+	if outcome.Data["impulse_precision"] != false || outcome.Data["trend_precision"] != false {
+		t.Fatalf("precision must not be fabricated from missing samples: %+v", outcome.Data)
+	}
+}

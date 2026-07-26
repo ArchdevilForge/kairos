@@ -532,6 +532,7 @@ func (d *MarketPulseDetector) computeSnapshot(now float64) types.MarketSnapshot 
 	snap.MedianReturn60s = median(rets60)
 	snap.MedianReturn180s = median(rets180)
 	snap.MedianReturn300s = median(rets300)
+	snap.ValidSymbols300s = len(rets300)
 	snap.MedianZ60s = median(zs)
 	snap.Advancers = adv
 	snap.Decliners = dec
@@ -1078,49 +1079,58 @@ func (d *MarketPulseDetector) updateOutcomesLocked(now float64, snap types.Marke
 	remaining := d.pendingOutcomes[:0]
 	for i := range d.pendingOutcomes {
 		po := d.pendingOutcomes[i]
-		medianRet := d.medianReturnFromPricesLocked(po.eventPrices)
 
-		// Signed extension: positive = favorable for the event direction.
-		signed := medianRet
-		if po.direction == "down" {
-			signed = -medianRet
-		}
-		if signed > po.mfe {
-			po.mfe = signed
-		}
-		if adverse := -signed; adverse > po.mae {
-			po.mae = adverse
-		}
+		// Sample only while prices are fresh: during a data outage the last
+		// known prices are stale and would fabricate flat horizon returns.
+		// (FreshRatio is the right gate here — outcome sampling reads current
+		// prices, unlike the state machine which also needs valid 60s
+		// lookbacks.) Missed horizons stay absent and are reported as null.
+		if snap.EligibleSymbols > 0 && snap.FreshRatio >= d.cfg.MinFreshRatio {
+			medianRet := d.medianReturnFromPricesLocked(po.eventPrices)
 
-		breadth := snap.UpBreadth60s
-		if po.direction == "down" {
-			breadth = snap.DownBreadth60s
-		}
-		if breadth > po.maxBreadth {
-			po.maxBreadth = breadth
-		}
+			// Signed extension: positive = favorable for the event direction.
+			signed := medianRet
+			if po.direction == "down" {
+				signed = -medianRet
+			}
+			if signed > po.mfe {
+				po.mfe = signed
+			}
+			if adverse := -signed; adverse > po.mae {
+				po.mae = adverse
+			}
 
-		if po.direction == "up" && snap.DownBreadth60s >= 0.55 && snap.MedianReturn60s < 0 {
-			po.reversed = true
-		}
-		if po.direction == "down" && snap.UpBreadth60s >= 0.55 && snap.MedianReturn60s > 0 {
-			po.reversed = true
-		}
+			breadth := snap.UpBreadth60s
+			if po.direction == "down" {
+				breadth = snap.DownBreadth60s
+			}
+			if breadth > po.maxBreadth {
+				po.maxBreadth = breadth
+			}
 
-		if (isImpulse(d.state) || isTrending(d.state) || isStress(d.state)) && d.activeDir == po.direction {
-			po.activeUntil = now
+			if po.direction == "up" && snap.DownBreadth60s >= 0.55 && snap.MedianReturn60s < 0 {
+				po.reversed = true
+			}
+			if po.direction == "down" && snap.UpBreadth60s >= 0.55 && snap.MedianReturn60s > 0 {
+				po.reversed = true
+			}
+
+			if (isImpulse(d.state) || isTrending(d.state) || isStress(d.state)) && d.activeDir == po.direction {
+				po.activeUntil = now
+			}
+
+			elapsed := now - po.eventTS
+			for _, h := range outcomeHorizons {
+				if _, ok := po.horizons[h]; ok {
+					continue
+				}
+				if elapsed >= float64(h) {
+					po.horizons[h] = round(medianRet, 4)
+				}
+			}
 		}
 
 		elapsed := now - po.eventTS
-		for _, h := range outcomeHorizons {
-			if _, ok := po.horizons[h]; ok {
-				continue
-			}
-			if elapsed >= float64(h) {
-				po.horizons[h] = round(medianRet, 4)
-			}
-		}
-
 		_, done15m := po.horizons[900]
 		if done15m || elapsed > 1200 {
 			d.emitOutcomeLocked(now, po)
@@ -1152,27 +1162,36 @@ func (d *MarketPulseDetector) emitOutcomeLocked(now float64, po pendingOutcome) 
 		trendDur = 0
 	}
 	// Impulse precision: +5m extension same direction >= 0.20%.
-	ret5m := po.horizons[300]
+	ret5m, ok5m := po.horizons[300]
 	// Trend precision uses +15m (proxy for 10m) same direction >= 0.30%.
-	ret15m := po.horizons[900]
+	ret15m, ok15m := po.horizons[900]
 	var impulseOK, trendOK bool
 	switch po.direction {
 	case "up":
-		impulseOK = ret5m >= 0.20
-		trendOK = ret15m >= 0.30
+		impulseOK = ok5m && ret5m >= 0.20
+		trendOK = ok15m && ret15m >= 0.30
 	case "down":
-		impulseOK = ret5m <= -0.20
-		trendOK = ret15m <= -0.30
+		impulseOK = ok5m && ret5m <= -0.20
+		trendOK = ok15m && ret15m <= -0.30
+	}
+
+	// Missed horizons (data outage during the window) are reported as null,
+	// never as a fabricated 0 return.
+	horizonVal := func(h int) any {
+		if v, ok := po.horizons[h]; ok {
+			return v
+		}
+		return nil
 	}
 
 	data := map[string]any{
 		"source_event":      po.eventType,
 		"direction":         po.direction,
 		"event_ts":          po.eventTS,
-		"median_return_1m":  po.horizons[60],
-		"median_return_3m":  po.horizons[180],
-		"median_return_5m":  po.horizons[300],
-		"median_return_15m": po.horizons[900],
+		"median_return_1m":  horizonVal(60),
+		"median_return_3m":  horizonVal(180),
+		"median_return_5m":  horizonVal(300),
+		"median_return_15m": horizonVal(900),
 		"mfe":               round(po.mfe, 4),
 		"mae":               round(po.mae, 4),
 		"max_breadth":       round(po.maxBreadth, 4),
@@ -1257,6 +1276,12 @@ func impulseRawCondition(snap types.MarketSnapshot, cfg types.MarketPulseConfig)
 
 func trendRawCondition(snap types.MarketSnapshot, cfg types.MarketPulseConfig) (string, bool) {
 	if !snap.DataOK {
+		return "", false
+	}
+	// The 300s median can come from a much smaller subset than the 60s
+	// ValidSymbols count (history gaps, universe churn); require the same
+	// minimum sample size before trusting it.
+	if snap.ValidSymbols300s < cfg.MinValidSymbols {
 		return "", false
 	}
 	upOK := snap.UpBreadth60s >= cfg.Trend.MinBreadth &&

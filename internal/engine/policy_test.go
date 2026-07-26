@@ -191,10 +191,13 @@ func TestMergeChannelsAndEventAggregator(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	merged := p.mergeChannels(ctx, []<-chan types.AnomalyEvent{ch1, ch2})
+	merged := p.mergeChannels(ctx, []eventSource{{ch: ch1, origin: "okx"}, {ch: ch2, origin: "bybit"}})
 	count := 0
-	for range merged {
+	for evt := range merged {
 		count++
+		if evt.Exchange == "" || evt.EventID == "" {
+			t.Fatalf("merged event missing provenance: %+v", evt)
+		}
 	}
 	if count != 2 {
 		t.Fatalf("merged count: %d", count)
@@ -204,7 +207,7 @@ func TestMergeChannelsAndEventAggregator(t *testing.T) {
 	src := make(chan types.AnomalyEvent, 1)
 	src <- types.AnomalyEvent{Symbol: "BTC/USDT:USDT", EventType: "price_velocity", Timestamp: float64(time.Now().Unix()), Data: map[string]any{"change_pct": 2.0, "zscore": 3.0}}
 	close(src)
-	go p.eventAggregator(ctx, []<-chan types.AnomalyEvent{src}, delivery)
+	go p.eventAggregator(ctx, []eventSource{{ch: src, origin: "okx"}}, delivery)
 	select {
 	case <-delivery:
 	case <-time.After(2 * time.Second):
