@@ -225,3 +225,110 @@ func TestIsResonanceInput_ExcludesMarketAndOutcome(t *testing.T) {
 		}
 	}
 }
+
+// Beyond the daily budget routine market chatter is suppressed, but stress —
+// the extreme tail the budget exists to protect — still gets through.
+func TestAttentionBudget_CapsRoutineMarketAlerts(t *testing.T) {
+	cfg := &types.Config{
+		MarketPulse: types.MarketPulseConfig{MaxAlertsPerDay: 2},
+	}
+	p, ding := newDeliveryPipeline(t, cfg)
+	p.dedupWindowSeconds = 0
+	p.symbolCooldownSeconds = 0
+
+	ctx := context.Background()
+	impulse := func(dir string) types.AnomalyEvent {
+		return annotateEvent(types.AnomalyEvent{
+			Symbol: "MARKET", EventType: "market_impulse", Severity: types.SeverityHigh,
+			Data: map[string]any{"direction": dir, "state_from": "QUIET", "state_to": "IMPULSE_UP"},
+		}, "okx")
+	}
+
+	// Two impulses fill the quota. Alternate direction so the dedup key differs.
+	p.deliverEvent(ctx, impulse("up"))
+	p.deliverEvent(ctx, impulse("down"))
+	if got := ding.requests.Load(); got != 2 {
+		t.Fatalf("first two market alerts must deliver, requests=%d", got)
+	}
+
+	// The third routine alert is over budget.
+	p.deliverEvent(ctx, impulse("up"))
+	if got := ding.requests.Load(); got != 2 {
+		t.Fatalf("over-budget impulse must be gated, requests=%d", got)
+	}
+
+	// Stress bypasses the budget.
+	stress := annotateEvent(types.AnomalyEvent{
+		Symbol: "MARKET", EventType: "market_stress", Severity: types.SeverityHigh,
+		Data: map[string]any{"direction": "down", "state_from": "IMPULSE_DOWN", "state_to": "STRESS_DOWN"},
+	}, "okx")
+	p.deliverEvent(ctx, stress)
+	if got := ding.requests.Load(); got != 3 {
+		t.Fatalf("stress must bypass the attention budget, requests=%d", got)
+	}
+}
+
+// A quota of 0 disables the budget entirely.
+func TestAttentionBudget_DisabledByZero(t *testing.T) {
+	p, ding := newDeliveryPipeline(t, &types.Config{
+		MarketPulse: types.MarketPulseConfig{MaxAlertsPerDay: 0},
+	})
+	p.dedupWindowSeconds = 0
+	ctx := context.Background()
+	for i := 0; i < 5; i++ {
+		dir := "up"
+		if i%2 == 1 {
+			dir = "down"
+		}
+		p.deliverEvent(ctx, annotateEvent(types.AnomalyEvent{
+			Symbol: "MARKET", EventType: "market_impulse", Severity: types.SeverityHigh,
+			Data: map[string]any{"direction": dir},
+		}, "okx"))
+	}
+	if got := ding.requests.Load(); got != 5 {
+		t.Fatalf("budget disabled: all 5 should deliver, requests=%d", got)
+	}
+}
+
+// Detector-health alerts must reach the user even when the allow-list would
+// never have named them: forgetting to allow-list them would reproduce exactly
+// the silent blindness they exist to reveal.
+func TestOperationalAlerts_BypassAllowList(t *testing.T) {
+	cfg := &types.Config{
+		AlertPolicy: types.AlertPolicyConfig{
+			Enabled:           true,
+			AllowedEventTypes: []string{"price_velocity"}, // deliberately omits health events
+			MinSeverity:       "LOW",
+		},
+	}
+	p, ding := newDeliveryPipeline(t, cfg)
+	ctx := context.Background()
+
+	p.deliverEvent(ctx, annotateEvent(types.AnomalyEvent{
+		Symbol: "MARKET", EventType: "market_data_stale", Severity: types.SeverityHigh,
+		Data: map[string]any{
+			"gate_reason": "insufficient_fresh_data", "outage_seconds": 1800.0,
+			"coverage": 0.4, "valid_symbols": 8, "universe_size": 30,
+		},
+	}, "okx"))
+	if got := ding.requests.Load(); got != 1 {
+		t.Fatalf("health alert must bypass the allow-list, requests=%d", got)
+	}
+	body, _ := ding.lastBody.Load().(string)
+	if !strings.Contains(body, "数据不足") {
+		t.Fatalf("unexpected health alert body: %s", body)
+	}
+
+	p.deliverEvent(ctx, annotateEvent(types.AnomalyEvent{
+		Symbol: "MARKET", EventType: "market_data_recovered", Severity: types.SeverityLow,
+		Data: map[string]any{"outage_seconds": 1800.0, "coverage": 1.0, "valid_symbols": 30, "universe_size": 30},
+	}, "okx"))
+	if got := ding.requests.Load(); got != 2 {
+		t.Fatalf("recovery alert must deliver, requests=%d", got)
+	}
+
+	// Health events must never be treated as resonance dimensions.
+	if isResonanceInput("market_data_stale") || isResonanceInput("market_data_recovered") {
+		t.Fatal("health events must not feed the resonance scorer")
+	}
+}

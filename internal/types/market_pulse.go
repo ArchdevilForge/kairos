@@ -27,9 +27,24 @@ type MarketPulseConfig struct {
 	WarmupSeconds           int `mapstructure:"warmupSeconds" json:"warmupSeconds" yaml:"warmupSeconds"`
 	HistoryRetentionSeconds int `mapstructure:"historyRetentionSeconds" json:"historyRetentionSeconds" yaml:"historyRetentionSeconds"`
 
-	MinFreshRatio   float64 `mapstructure:"minFreshRatio" json:"minFreshRatio" yaml:"minFreshRatio"`
-	MinValidSymbols int     `mapstructure:"minValidSymbols" json:"minValidSymbols" yaml:"minValidSymbols"`
-	NoiseReturnPct  float64 `mapstructure:"noiseReturnPct" json:"noiseReturnPct" yaml:"noiseReturnPct"`
+	// MinValidSymbols is the real statistical requirement: breadth and medians
+	// are computed over the fresh, warmed-up subset, so this is the floor that
+	// makes them meaningful.
+	MinValidSymbols int `mapstructure:"minValidSymbols" json:"minValidSymbols" yaml:"minValidSymbols"`
+	// MinFreshRatio is the coverage floor below which the universe is too dark
+	// for breadth to represent "the market". It is not a quality target: the
+	// snapshot already ignores stale symbols, and every alert reports its own
+	// coverage, so this only needs to catch a genuinely blind detector.
+	MinFreshRatio  float64 `mapstructure:"minFreshRatio" json:"minFreshRatio" yaml:"minFreshRatio"`
+	NoiseReturnPct float64 `mapstructure:"noiseReturnPct" json:"noiseReturnPct" yaml:"noiseReturnPct"`
+
+	// DataHealthAlertSeconds is how long the detector may stay blind (DataOK
+	// false) before it announces the outage. A silent detector is
+	// indistinguishable from a calm market, so 0 (disabled) is discouraged.
+	DataHealthAlertSeconds int `mapstructure:"dataHealthAlertSeconds" json:"dataHealthAlertSeconds" yaml:"dataHealthAlertSeconds"`
+	// MaxAlertsPerDay caps market-wide interruptions in a rolling 24h window.
+	// market_stress always bypasses the cap. 0 disables the budget.
+	MaxAlertsPerDay int `mapstructure:"maxAlertsPerDay" json:"maxAlertsPerDay" yaml:"maxAlertsPerDay"`
 
 	PrimarySymbols             []string `mapstructure:"primarySymbols" json:"primarySymbols" yaml:"primarySymbols"`
 	RequirePrimaryConfirmation bool     `mapstructure:"requirePrimaryConfirmation" json:"requirePrimaryConfirmation" yaml:"requirePrimaryConfirmation"`
@@ -109,8 +124,13 @@ type MarketSnapshot struct {
 	ValidSymbols    int     `json:"valid_symbols" yaml:"valid_symbols"`
 	// ValidSymbols300s counts symbols with a usable 300s lookback; the trend
 	// gate uses this instead of the 60s ValidSymbols count.
-	ValidSymbols300s int     `json:"valid_symbols_300s" yaml:"valid_symbols_300s"`
-	FreshRatio       float64 `json:"fresh_ratio" yaml:"fresh_ratio"`
+	ValidSymbols300s int `json:"valid_symbols_300s" yaml:"valid_symbols_300s"`
+	// ValidZSymbols counts symbols with enough volatility history for a
+	// trustworthy z-score. ZUsable reports whether that coverage is sufficient
+	// for the z gates to be applied at all.
+	ValidZSymbols int     `json:"valid_z_symbols" yaml:"valid_z_symbols"`
+	ZUsable       bool    `json:"z_usable" yaml:"z_usable"`
+	FreshRatio    float64 `json:"fresh_ratio" yaml:"fresh_ratio"`
 
 	MedianReturn60s  float64 `json:"median_return_60s" yaml:"median_return_60s"`
 	MedianReturn180s float64 `json:"median_return_180s" yaml:"median_return_180s"`

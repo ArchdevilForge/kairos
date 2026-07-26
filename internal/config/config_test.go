@@ -241,8 +241,20 @@ func TestLoadString_DefaultsMarketPulse(t *testing.T) {
 	if mp.MinValidSymbols != 15 {
 		t.Fatalf("minValidSymbols=%d", mp.MinValidSymbols)
 	}
-	if mp.Impulse.MinBreadth != 0.65 {
+	if mp.Impulse.MinBreadth != 0.75 {
 		t.Fatalf("impulse.minBreadth=%v", mp.Impulse.MinBreadth)
+	}
+	if mp.Impulse.MinMedianReturnPct != 0.35 {
+		t.Fatalf("impulse.minMedianReturnPct=%v", mp.Impulse.MinMedianReturnPct)
+	}
+	if mp.DataHealthAlertSeconds != 900 {
+		t.Fatalf("dataHealthAlertSeconds=%d", mp.DataHealthAlertSeconds)
+	}
+	if mp.MaxAlertsPerDay != 6 {
+		t.Fatalf("maxAlertsPerDay=%d", mp.MaxAlertsPerDay)
+	}
+	if mp.MinFreshRatio != 0.60 {
+		t.Fatalf("minFreshRatio=%v", mp.MinFreshRatio)
 	}
 	if mp.GateIndividualAlertsWhenQuiet {
 		t.Fatal("gate should be off by default in Phase 1")

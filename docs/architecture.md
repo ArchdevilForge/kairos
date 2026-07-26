@@ -79,6 +79,20 @@ Realtime alerts:
 
 `market_outcome` records are calibration-only and are never delivered.
 
+Operational alerts (about the detector, not the market):
+
+- `market_data_stale` / `market_data_recovered`
+
+These bypass the `alertPolicy` allow-list by design. A detector that has gone
+blind produces no market alerts at all, which is indistinguishable from a calm
+market; requiring an allow-list entry to hear about that would defeat the
+purpose. Market-wide alerts are additionally capped by
+`marketPulse.maxAlertsPerDay`, from which `market_stress` is exempt.
+
+Analysis of the calibration logs is done out of band with `kairos-calibrate`,
+which joins events to outcomes and reports continuation rates bucketed by
+trigger strength — the table that should drive threshold changes.
+
 Scanner candidate states:
 
 - `no_trade`: invalid or insufficient setup.

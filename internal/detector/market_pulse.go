@@ -75,6 +75,11 @@ type MarketPulseDetector struct {
 	// pendingOutcomes tracks post-event median extension for Phase 4 tuning.
 	pendingOutcomes []pendingOutcome
 
+	// Data-health alerting. A detector that has gone blind looks exactly like a
+	// calm market from the outside, so an outage must announce itself.
+	unhealthySince float64
+	healthAlerted  bool
+
 	events chan types.AnomalyEvent
 
 	// nowFunc is overridable in tests (unix seconds, float).
@@ -83,6 +88,19 @@ type MarketPulseDetector struct {
 
 // outcomeHorizons are seconds after an event at which median extension is recorded.
 var outcomeHorizons = []int{60, 180, 300, 900}
+
+const (
+	// volSampleIntervalSeconds spaces volatility samples so that consecutive
+	// 60s returns do not overlap.
+	volSampleIntervalSeconds = 60
+	// volWindowSamples is the rolling history behind the sigma estimate
+	// (30 non-overlapping minutes).
+	volWindowSamples = 30
+	// volMinSamples is the history required before a z-score is trustworthy.
+	// Below this the detector reports z as unavailable rather than inventing a
+	// number.
+	volMinSamples = 10
+)
 
 // pendingOutcome accumulates post-event market performance for calibration.
 type pendingOutcome struct {
@@ -109,11 +127,15 @@ type mpSymbolSeries struct {
 	warmupSince float64
 	// lastRecordedSec buckets to at most one sample per second.
 	lastRecordedSec int64
-	// EWMA of squared 60s returns (pct^2).
-	ewmaVar   float64
-	ewmaReady bool
-	lastRet60 float64
-	hasRet60  bool
+	// volSamples holds completed, NON-OVERLAPPING 60s returns used to estimate
+	// this symbol's own volatility. The previous design updated an EWMA of
+	// squared returns on every tick, which meant the estimator was dominated by
+	// the very observation it was asked to normalize: sigma tracked |ret| and z
+	// collapsed to ±1 for every symbol in every event. Sampling once per window
+	// keeps the scale independent of the observation being scored.
+	volSamples []float64
+	// lastVolSample is the timestamp of the most recent volatility sample.
+	lastVolSample float64
 }
 
 type conditionSample struct {
@@ -213,6 +235,12 @@ func normalizeMarketPulseConfig(cfg types.MarketPulseConfig) types.MarketPulseCo
 	if cfg.Stress.MinMedianZ <= 0 {
 		cfg.Stress.MinMedianZ = 2.5
 	}
+	if cfg.DataHealthAlertSeconds == 0 {
+		cfg.DataHealthAlertSeconds = 900
+	}
+	if cfg.MaxAlertsPerDay == 0 {
+		cfg.MaxAlertsPerDay = 6
+	}
 	if cfg.Decay.MaxBreadth <= 0 {
 		cfg.Decay.MaxBreadth = 0.50
 	}
@@ -287,6 +315,8 @@ func (d *MarketPulseDetector) Reset() {
 	d.decayActive = false
 	d.quietResetSince = 0
 	d.universeChangedAt = 0
+	d.unhealthySince = 0
+	d.healthAlerted = false
 	clear(d.lastEmitted)
 	d.lastSnap = types.MarketSnapshot{}
 	d.pendingOutcomes = nil
@@ -366,17 +396,17 @@ func (d *MarketPulseDetector) OnTicker(_ context.Context, ticker types.Ticker) {
 		ser.warmupSince = now
 	}
 
-	// Update EWMA variance from 60s returns when possible.
-	if ret, ok := seriesReturn(ser, now, 60, float64(d.cfg.MaxLookupGapSeconds)); ok {
-		alpha := d.cfg.Volatility.EWMAAlpha
-		if !ser.ewmaReady {
-			ser.ewmaVar = ret * ret
-			ser.ewmaReady = true
-		} else {
-			ser.ewmaVar = alpha*ret*ret + (1-alpha)*ser.ewmaVar
+	// Sample one non-overlapping 60s return per window for the volatility
+	// estimate. Sampling per tick would fold the current observation into its
+	// own denominator (see mpSymbolSeries.volSamples).
+	if now-ser.lastVolSample >= volSampleIntervalSeconds {
+		if ret, ok := seriesReturn(ser, now, 60, float64(d.cfg.MaxLookupGapSeconds)); ok {
+			ser.volSamples = append(ser.volSamples, ret)
+			if len(ser.volSamples) > volWindowSamples {
+				ser.volSamples = ser.volSamples[len(ser.volSamples)-volWindowSamples:]
+			}
+			ser.lastVolSample = now
 		}
-		ser.lastRet60 = ret
-		ser.hasRet60 = true
 	}
 
 	d.pruneSeriesLocked(ser, now)
@@ -448,6 +478,7 @@ func (d *MarketPulseDetector) computeSnapshot(now float64) types.MarketSnapshot 
 		ok60   bool
 		ok180  bool
 		ok300  bool
+		okZ    bool
 	}
 	var moves []move
 
@@ -474,7 +505,7 @@ func (d *MarketPulseDetector) computeSnapshot(now float64) types.MarketSnapshot 
 		if r, ok := seriesReturn(ser, now, 60, float64(cfg.MaxLookupGapSeconds)); ok {
 			m.ret60 = r
 			m.ok60 = true
-			m.z60 = zScore(r, ser, cfg.Volatility)
+			m.z60, m.okZ = zScore(r, ser, cfg.Volatility)
 		}
 		if r, ok := seriesReturn(ser, now, 180, float64(cfg.MaxLookupGapSeconds)); ok {
 			m.ret180 = r
@@ -492,11 +523,17 @@ func (d *MarketPulseDetector) computeSnapshot(now float64) types.MarketSnapshot 
 	snap.FreshRatio = float64(freshN) / float64(len(d.eligible))
 	snap.ValidSymbols = len(moves)
 
+	// Coverage floor, checked first because stale feeds are the root cause that
+	// also starves the valid-symbol count. Breadth and medians are already
+	// computed over the fresh, warmed-up subset only, and every published
+	// snapshot carries its own coverage, so this threshold only has to catch a
+	// genuinely blind detector — not enforce a quality target.
 	if snap.FreshRatio < cfg.MinFreshRatio {
 		snap.DataOK = false
 		snap.GateReason = "insufficient_fresh_data"
 		return snap
 	}
+	// Sample size is the real statistical requirement for a median/breadth.
 	if snap.ValidSymbols < cfg.MinValidSymbols {
 		snap.DataOK = false
 		snap.GateReason = "insufficient_valid_symbols"
@@ -512,7 +549,11 @@ func (d *MarketPulseDetector) computeSnapshot(now float64) types.MarketSnapshot 
 
 	for _, m := range moves {
 		rets60 = append(rets60, m.ret60)
-		zs = append(zs, m.z60)
+		// Only symbols with real volatility history contribute to the z median;
+		// padding with zeros would drag it toward "normal" and hide extremes.
+		if m.okZ {
+			zs = append(zs, m.z60)
+		}
 		if m.ok180 {
 			rets180 = append(rets180, m.ret180)
 		}
@@ -534,6 +575,8 @@ func (d *MarketPulseDetector) computeSnapshot(now float64) types.MarketSnapshot 
 	snap.MedianReturn300s = median(rets300)
 	snap.ValidSymbols300s = len(rets300)
 	snap.MedianZ60s = median(zs)
+	snap.ValidZSymbols = len(zs)
+	snap.ZUsable = len(zs) >= cfg.MinValidSymbols
 	snap.Advancers = adv
 	snap.Decliners = dec
 	snap.Neutral = neu
@@ -618,6 +661,7 @@ func (d *MarketPulseDetector) symbolReturnLocked(sym string, now float64, window
 // ── State machine ──────────────────────────────────────────────
 
 func (d *MarketPulseDetector) advanceStateLocked(now float64, snap types.MarketSnapshot) {
+	d.updateDataHealthLocked(now, snap)
 	if !snap.DataOK {
 		// Throttle: log on reason change or every 60s (avoid 5s spam).
 		if snap.GateReason != d.lastGateReason || now-d.lastGateLog >= 60 {
@@ -695,17 +739,22 @@ func (d *MarketPulseDetector) advanceStateLocked(now float64, snap types.MarketS
 		if stressDir == "down" {
 			to = types.MarketStateStressDown
 		}
+		// One market move must produce one notification. Intermediate states on
+		// the way to stress are walked silently: emitting the impulse leg too
+		// sent two alerts bearing the same timestamp for a single event.
+		//
 		// From trending reverse path: force through DECAY first if opposite.
 		if isTrending(from) && oppositeDir(d.activeDir, stressDir) {
-			d.transitionLocked(now, types.MarketStateDecay, "", snap, "market_decay", false)
-			d.transitionLocked(now, stateForImpulse(stressDir), stressDir, snap, "market_impulse", true)
-			d.maybeEmitStressLocked(now, stressDir, snap)
+			d.transitionLocked(now, types.MarketStateDecay, "", snap, "", false)
+			d.transitionLocked(now, stateForImpulse(stressDir), stressDir, snap, "", false)
+			d.transitionLocked(now, to, stressDir, snap, "market_stress", true)
 			return
 		}
 		if from != to {
-			// Entering stress from quiet uses impulse semantics first if not already active.
+			// Entering stress from quiet passes through impulse semantics so
+			// activeDir/state history stay coherent, but only stress notifies.
 			if from == types.MarketStateQuiet || from == types.MarketStateDecay {
-				d.transitionLocked(now, stateForImpulse(stressDir), stressDir, snap, "market_impulse", true)
+				d.transitionLocked(now, stateForImpulse(stressDir), stressDir, snap, "", false)
 			}
 			d.transitionLocked(now, to, stressDir, snap, "market_stress", true)
 		} else {
@@ -778,6 +827,77 @@ func (d *MarketPulseDetector) advanceStateLocked(now float64, snap types.MarketS
 	}
 
 	_ = from
+}
+
+// updateDataHealthLocked emits an operational alert once the detector has been
+// unable to see the market for longer than the configured window, and a
+// recovery alert when vision returns. Production ran blind for two days behind
+// a freshness gate with nothing to distinguish that from a quiet market.
+func (d *MarketPulseDetector) updateDataHealthLocked(now float64, snap types.MarketSnapshot) {
+	window := float64(d.cfg.DataHealthAlertSeconds)
+	if window <= 0 {
+		return
+	}
+
+	if snap.DataOK {
+		if d.healthAlerted {
+			outage := now - d.unhealthySince
+			d.emitDataHealthLocked(now, snap, "market_data_recovered", outage)
+			d.healthAlerted = false
+		}
+		d.unhealthySince = 0
+		return
+	}
+
+	if d.unhealthySince == 0 {
+		d.unhealthySince = now
+		return
+	}
+	if !d.healthAlerted && now-d.unhealthySince >= window {
+		d.emitDataHealthLocked(now, snap, "market_data_stale", now-d.unhealthySince)
+		d.healthAlerted = true
+	}
+}
+
+func (d *MarketPulseDetector) emitDataHealthLocked(
+	now float64,
+	snap types.MarketSnapshot,
+	eventType string,
+	outageSeconds float64,
+) {
+	sev := types.SeverityHigh
+	if eventType == "market_data_recovered" {
+		sev = types.SeverityLow
+	}
+	data := map[string]any{
+		"gate_reason":     snap.GateReason,
+		"outage_seconds":  round(outageSeconds, 0),
+		"coverage":        round(snap.FreshRatio, 4),
+		"valid_symbols":   snap.ValidSymbols,
+		"universe_size":   snap.EligibleSymbols,
+		"min_fresh_ratio": d.cfg.MinFreshRatio,
+		"min_valid":       d.cfg.MinValidSymbols,
+	}
+	d.log.Warn("market data health",
+		"event", eventType,
+		"outage_seconds", round(outageSeconds, 0),
+		"gate_reason", snap.GateReason,
+		"coverage", round(snap.FreshRatio, 3),
+		"valid", snap.ValidSymbols,
+	)
+	evt := types.AnomalyEvent{
+		Symbol:    marketPulseSymbol,
+		EventType: eventType,
+		Severity:  sev,
+		Data:      data,
+		Timestamp: now,
+	}
+	select {
+	case d.events <- evt:
+	default:
+		d.log.Warn("market_pulse event channel full, dropping health alert",
+			"event", eventType)
+	}
 }
 
 func (d *MarketPulseDetector) recordSamplesLocked(now float64, snap types.MarketSnapshot) {
@@ -999,6 +1119,10 @@ func (d *MarketPulseDetector) emitLocked(
 		"neutral":                snap.Neutral,
 		"valid_symbols":          snap.ValidSymbols,
 		"fresh_ratio":            round(snap.FreshRatio, 4),
+		"coverage":               round(snap.FreshRatio, 4),
+		"universe_size":          snap.EligibleSymbols,
+		"z_usable":               snap.ZUsable,
+		"valid_z_symbols":        snap.ValidZSymbols,
 		"leaders":                leaders,
 		"laggards":               laggards,
 		"shadow_mode":            d.cfg.ShadowMode,
@@ -1240,7 +1364,11 @@ func impulseRawCondition(snap types.MarketSnapshot, cfg types.MarketPulseConfig)
 	downOK := snap.DownBreadth60s >= cfg.Impulse.MinBreadth &&
 		snap.MedianReturn60s <= -cfg.Impulse.MinMedianReturnPct
 
-	if cfg.Volatility.Enabled {
+	// Apply the z gate only when enough symbols have real volatility history.
+	// Without ZUsable the median z is an artifact of a handful of series, and
+	// gating on it would silently block every move (the failure that made this
+	// gate get switched off in production).
+	if cfg.Volatility.Enabled && snap.ZUsable {
 		if upOK && snap.MedianZ60s < cfg.Impulse.MinMedianZ {
 			upOK = false
 		}
@@ -1306,7 +1434,7 @@ func stressCondition(snap types.MarketSnapshot, cfg types.MarketPulseConfig) (st
 		snap.MedianReturn60s >= cfg.Stress.MinMedianReturnPct
 	downOK := snap.DownBreadth60s >= cfg.Stress.MinBreadth &&
 		snap.MedianReturn60s <= -cfg.Stress.MinMedianReturnPct
-	if cfg.Volatility.Enabled {
+	if cfg.Volatility.Enabled && snap.ZUsable {
 		if upOK && snap.MedianZ60s < cfg.Stress.MinMedianZ {
 			upOK = false
 		}
@@ -1484,19 +1612,38 @@ func (d *MarketPulseDetector) pruneSeriesLocked(ser *mpSymbolSeries, now float64
 	}
 }
 
-func zScore(ret float64, ser *mpSymbolSeries, vol types.MarketPulseVolatilityConfig) float64 {
+// seriesSigma estimates a symbol's 60s return volatility from completed,
+// non-overlapping samples. It reports false when the history is too short, so
+// callers treat the z-score as unavailable instead of fabricating one.
+func seriesSigma(ser *mpSymbolSeries, floor float64) (float64, bool) {
+	if ser == nil || len(ser.volSamples) < volMinSamples {
+		return 0, false
+	}
+	// Root-mean-square around zero: 60s returns are approximately zero-mean and
+	// it is the magnitude of the move that matters here.
+	var sum float64
+	for _, r := range ser.volSamples {
+		sum += r * r
+	}
+	sigma := math.Sqrt(sum / float64(len(ser.volSamples)))
+	if sigma < floor {
+		sigma = floor
+	}
+	return sigma, true
+}
+
+// zScore normalizes a 60s return by the symbol's own recent volatility, and
+// reports whether the estimate is backed by enough history to be meaningful.
+func zScore(ret float64, ser *mpSymbolSeries, vol types.MarketPulseVolatilityConfig) (float64, bool) {
 	floor := vol.FloorPct
 	if floor <= 0 {
 		floor = 0.03
 	}
-	sigma := floor
-	if ser != nil && ser.ewmaReady && ser.ewmaVar > 0 {
-		sigma = math.Sqrt(ser.ewmaVar)
-		if sigma < floor {
-			sigma = floor
-		}
+	sigma, ok := seriesSigma(ser, floor)
+	if !ok || sigma <= 0 {
+		return 0, false
 	}
-	return ret / sigma
+	return ret / sigma, true
 }
 
 // median returns the median of a float slice (NaN/Inf filtered).

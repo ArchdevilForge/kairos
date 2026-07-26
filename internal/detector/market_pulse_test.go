@@ -305,9 +305,8 @@ func TestImpulse_BroadRally3of4(t *testing.T) {
 		d.mu.Lock()
 		for _, ser := range d.symbols {
 			ser.warmupSince = clock - 100
-			// Seed EWMA so Z is meaningful but not blocking
-			ser.ewmaVar = 0.01
-			ser.ewmaReady = true
+			// Seed volatility history so Z is meaningful but not blocking
+			ser.volSamples = seedVolSamples(0.1)
 		}
 		d.universeChangedAt = 0
 		d.mu.Unlock()
@@ -358,8 +357,7 @@ func TestImpulse_BelowBreadthNoTrigger(t *testing.T) {
 		d.mu.Lock()
 		for _, ser := range d.symbols {
 			ser.warmupSince = clock - 100
-			ser.ewmaVar = 0.01
-			ser.ewmaReady = true
+			ser.volSamples = seedVolSamples(0.1)
 		}
 		d.universeChangedAt = 0
 		d.mu.Unlock()
@@ -397,8 +395,7 @@ func TestImpulse_NoPrimaryConfirmation(t *testing.T) {
 		d.mu.Lock()
 		for _, ser := range d.symbols {
 			ser.warmupSince = clock - 100
-			ser.ewmaVar = 0.01
-			ser.ewmaReady = true
+			ser.volSamples = seedVolSamples(0.1)
 		}
 		d.universeChangedAt = 0
 		d.mu.Unlock()
@@ -436,8 +433,7 @@ func TestImpulse_DownSymmetric(t *testing.T) {
 		d.mu.Lock()
 		for _, ser := range d.symbols {
 			ser.warmupSince = clock - 100
-			ser.ewmaVar = 0.01
-			ser.ewmaReady = true
+			ser.volSamples = seedVolSamples(0.1)
 		}
 		d.universeChangedAt = 0
 		d.mu.Unlock()
@@ -484,8 +480,7 @@ func TestImpulse_TwoOfFourNotEnough(t *testing.T) {
 		d.mu.Lock()
 		for _, ser := range d.symbols {
 			ser.warmupSince = clock - 100
-			ser.ewmaVar = 0.01
-			ser.ewmaReady = true
+			ser.volSamples = seedVolSamples(0.1)
 		}
 		d.universeChangedAt = 0
 		d.mu.Unlock()
@@ -551,8 +546,7 @@ func TestTrend_AfterImpulse(t *testing.T) {
 		d.mu.Lock()
 		for _, ser := range d.symbols {
 			ser.warmupSince = t0 - 100
-			ser.ewmaVar = 0.01
-			ser.ewmaReady = true
+			ser.volSamples = seedVolSamples(0.1)
 		}
 		d.universeChangedAt = 0
 		d.state = types.MarketStateImpulseUp
@@ -587,8 +581,7 @@ func pushBroad(d *MarketPulseDetector, clock *float64, syms []string, retPct, fr
 	d.mu.Lock()
 	for _, ser := range d.symbols {
 		ser.warmupSince = c - 100
-		ser.ewmaVar = 0.01
-		ser.ewmaReady = true
+		ser.volSamples = seedVolSamples(0.1)
 	}
 	d.universeChangedAt = 0
 	d.mu.Unlock()
@@ -627,8 +620,7 @@ func TestDecay_FromTrending(t *testing.T) {
 		d.mu.Lock()
 		for _, ser := range d.symbols {
 			ser.warmupSince = clock - 100
-			ser.ewmaVar = 0.01
-			ser.ewmaReady = true
+			ser.volSamples = seedVolSamples(0.1)
 		}
 		d.universeChangedAt = 0
 		d.mu.Unlock()
@@ -690,8 +682,7 @@ func pushBroadDown(d *MarketPulseDetector, clock float64, syms []string, retPct,
 	d.mu.Lock()
 	for _, ser := range d.symbols {
 		ser.warmupSince = clock - 100
-		ser.ewmaVar = 0.01
-		ser.ewmaReady = true
+		ser.volSamples = seedVolSamples(0.1)
 	}
 	d.universeChangedAt = 0
 	d.mu.Unlock()
@@ -724,14 +715,13 @@ func TestStress_ExtremeMove(t *testing.T) {
 		d.mu.Lock()
 		for _, ser := range d.symbols {
 			ser.warmupSince = clock - 100
-			ser.ewmaVar = 0.01
-			ser.ewmaReady = true
+			ser.volSamples = seedVolSamples(0.1)
 		}
 		d.universeChangedAt = 0
 		d.mu.Unlock()
 		d.EvaluateAt(clock)
 	}
-	// Stress may require z; with ewmaVar=0.01, sigma=0.1, z = -0.5/0.1 = -5 → ok
+	// Stress may require z; with sigma=0.1, z = -0.5/0.1 = -5 → ok
 	st := d.State()
 	if st != types.MarketStateStressDown && st != types.MarketStateImpulseDown {
 		t.Fatalf("state=%s med=%v downB=%v z=%v", st, d.LastSnapshot().MedianReturn60s, d.LastSnapshot().DownBreadth60s, d.LastSnapshot().MedianZ60s)
@@ -974,4 +964,18 @@ func TestOutcome_DataOutageDoesNotFabricateHorizons(t *testing.T) {
 	if outcome.Data["impulse_precision"] != false || outcome.Data["trend_precision"] != false {
 		t.Fatalf("precision must not be fabricated from missing samples: %+v", outcome.Data)
 	}
+}
+
+// seedVolSamples fills a series with enough non-overlapping 60s return samples
+// for seriesSigma to report the requested sigma (RMS of ±sigma is sigma).
+func seedVolSamples(sigma float64) []float64 {
+	out := make([]float64, 0, volMinSamples+2)
+	for i := 0; i < volMinSamples+2; i++ {
+		v := sigma
+		if i%2 == 1 {
+			v = -sigma
+		}
+		out = append(out, v)
+	}
+	return out
 }

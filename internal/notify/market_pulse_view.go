@@ -23,6 +23,11 @@ type marketPulseView struct {
 	// down moves, advancers otherwise.
 	Count int
 	Valid int
+	// Universe and Coverage expose how much of the tracked universe actually
+	// backed this reading, so a partial-outage alert is visibly weaker rather
+	// than silently equivalent to a full-coverage one.
+	Universe int
+	Coverage float64
 
 	BTC *float64
 	ETH *float64
@@ -44,13 +49,15 @@ func parseMarketPulse(event types.AlertEvent) marketPulseView {
 		data = map[string]any{}
 	}
 	v := marketPulseView{
-		Med60:   anyFloat(data, "median_return_60s_pct"),
-		Med300:  anyFloat(data, "median_return_300s_pct"),
-		Breadth: anyFloat(data, "breadth"),
-		MedZ:    anyFloat(data, "median_z_60s"),
-		Valid:   anyInt(data, "valid_symbols"),
-		BTC:     anyFloatPtr(data, "btc_return_pct"),
-		ETH:     anyFloatPtr(data, "eth_return_pct"),
+		Med60:    anyFloat(data, "median_return_60s_pct"),
+		Med300:   anyFloat(data, "median_return_300s_pct"),
+		Breadth:  anyFloat(data, "breadth"),
+		MedZ:     anyFloat(data, "median_z_60s"),
+		Valid:    anyInt(data, "valid_symbols"),
+		Universe: anyInt(data, "universe_size"),
+		Coverage: anyFloat(data, "coverage"),
+		BTC:      anyFloatPtr(data, "btc_return_pct"),
+		ETH:      anyFloatPtr(data, "eth_return_pct"),
 	}
 	if s := fmt.Sprint(data["direction"]); s != "<nil>" {
 		v.Direction = s

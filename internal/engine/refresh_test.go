@@ -113,7 +113,9 @@ func TestRefresh_ResubscribesWSWithNewUniverse(t *testing.T) {
 
 	waitFor := func(cond func() bool, msg string) {
 		t.Helper()
-		deadline := time.Now().Add(3 * time.Second)
+		// Generous: this polls and returns as soon as the condition holds, so a
+		// long ceiling only matters when the whole suite is competing for CPU.
+		deadline := time.Now().Add(15 * time.Second)
 		for time.Now().Before(deadline) {
 			if cond() {
 				return

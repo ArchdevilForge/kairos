@@ -277,9 +277,18 @@ func setDefaults(v *viper.Viper) {
 		"maxLookupGapSeconds":     15,
 		"warmupSeconds":           300,
 		"historyRetentionSeconds": 900,
-		"minFreshRatio":           0.80,
-		"minValidSymbols":         15,
-		"noiseReturnPct":          0.08,
+		// Coverage floor only: the snapshot already ignores stale symbols and
+		// every alert reports its own coverage, so this needs to catch a blind
+		// detector rather than enforce a quality bar. The old 0.80 turned a
+		// handful of dead feeds into days of total silence.
+		"minFreshRatio":   0.60,
+		"minValidSymbols": 15,
+		"noiseReturnPct":  0.08,
+		// A blind detector must announce itself; silence is indistinguishable
+		// from a calm market.
+		"dataHealthAlertSeconds": 900,
+		// Attention budget for market-wide interruptions (market_stress exempt).
+		"maxAlertsPerDay": 6,
 		"primarySymbols": []string{
 			"BTC/USDT:USDT",
 			"ETH/USDT:USDT",
@@ -293,8 +302,11 @@ func setDefaults(v *viper.Viper) {
 			"floorPct":  0.03,
 		},
 		"impulse": map[string]any{
-			"minBreadth":                0.65,
-			"minMedianReturnPct":        0.18,
+			// Raised from 0.65/0.18: at those levels 12 of 19 production alerts
+			// fired on sub-0.25% median moves, which is noise for crypto perps
+			// and the main source of alert fatigue.
+			"minBreadth":                0.75,
+			"minMedianReturnPct":        0.35,
 			"minMedianZ":                1.5,
 			"confirmationSamples":       3,
 			"confirmationWindowSamples": 4,
@@ -323,7 +335,7 @@ func setDefaults(v *viper.Viper) {
 			"limit": 5,
 		},
 		"cooldownSeconds":               600,
-		"stressCooldownSeconds":         300,
+		"stressCooldownSeconds":         900,
 		"gateIndividualAlertsWhenQuiet": false, // Phase 3 switch; off in Phase 1
 	})
 }

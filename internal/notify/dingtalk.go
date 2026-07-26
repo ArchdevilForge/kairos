@@ -166,6 +166,8 @@ func formatDingTalkEvent(event types.AlertEvent) (title, body string) {
 		return formatDingTalkLongShort(event, symbol, severity, ts)
 	case "market_impulse", "market_trend", "market_stress", "market_decay":
 		return formatDingTalkMarketPulse(event, severity, ts)
+	case "market_data_stale", "market_data_recovered":
+		return formatDingTalkDataHealth(event, ts)
 	}
 
 	title = fmt.Sprintf("[%s] %s %s", severity, symbol, eventName)
@@ -263,6 +265,37 @@ func formatDingTalkLongShort(event types.AlertEvent, symbol, severity, ts string
 	return title, strings.TrimRight(b.String(), "\n")
 }
 
+// formatDingTalkDataHealth mirrors formatDataHealth in DingTalk markup.
+func formatDingTalkDataHealth(event types.AlertEvent, ts string) (string, string) {
+	data := event.Data
+	if data == nil {
+		data = map[string]any{}
+	}
+	mins := int(anyFloat(data, "outage_seconds") / 60)
+	valid := anyInt(data, "valid_symbols")
+	universe := anyInt(data, "universe_size")
+	coverage := anyFloat(data, "coverage") * 100
+
+	title := "⚠️ 大盘检测器数据不足"
+	if event.Event == "market_data_recovered" {
+		title = "✅ 大盘检测器数据已恢复"
+	}
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("### %s\n\n", title))
+	if event.Event == "market_data_recovered" {
+		b.WriteString(fmt.Sprintf("中断时长：约 %d 分钟\n\n", mins))
+		b.WriteString(fmt.Sprintf("当前样本：%d / %d（覆盖率 %.0f%%）\n\n", valid, universe, coverage))
+	} else {
+		b.WriteString(fmt.Sprintf("已持续：约 %d 分钟，期间不会产生大盘告警\n\n", mins))
+		b.WriteString(fmt.Sprintf("原因：%s\n\n", formatField(data, "gate_reason", "unknown")))
+		b.WriteString(fmt.Sprintf("样本：%d / %d（覆盖率 %.0f%%，要求 ≥%d 且 ≥%.0f%%）\n\n",
+			valid, universe, coverage,
+			anyInt(data, "min_valid"), anyFloat(data, "min_fresh_ratio")*100))
+	}
+	b.WriteString(fmt.Sprintf("%s UTC\n", ts))
+	return title, strings.TrimRight(b.String(), "\n")
+}
+
 func formatDingTalkMarketPulse(event types.AlertEvent, severity, ts string) (string, string) {
 	v := parseMarketPulse(event)
 
@@ -282,6 +315,9 @@ func formatDingTalkMarketPulse(event types.AlertEvent, severity, ts string) (str
 		if v.MedZ != 0 {
 			b.WriteString(fmt.Sprintf("标准化强度：%+.2fσ\n\n", v.MedZ))
 		}
+	}
+	if v.Universe > 0 && v.Coverage > 0 && v.Coverage < 0.99 {
+		b.WriteString(fmt.Sprintf("样本覆盖：%d / %d（%.0f%%）\n\n", v.Valid, v.Universe, v.Coverage*100))
 	}
 	if v.BTC != nil {
 		b.WriteString(fmt.Sprintf("BTC：%+.2f%%\n\n", *v.BTC))

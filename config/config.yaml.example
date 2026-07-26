@@ -209,9 +209,18 @@ marketPulse:
   maxLookupGapSeconds: 15
   warmupSeconds: 300
   historyRetentionSeconds: 900
-  minFreshRatio: 0.80
+  # 覆盖率底线，不是质量目标：快照本身只统计新鲜且已预热的币，每条告警都会
+  # 附带自己的样本覆盖率。此值只用于识别"检测器基本瞎了"。
+  # 旧值 0.80 会让少数几条行情断流演变成整整两天的静默。
+  minFreshRatio: 0.60
+  # 中位数/广度真正的统计要求。
   minValidSymbols: 15
   noiseReturnPct: 0.08
+  # 数据不足持续多久后播报一次运维告警（0 = 关闭，不建议）。
+  # 静默的检测器和平静的市场在界面上无法区分。
+  dataHealthAlertSeconds: 900
+  # 注意力预算：滚动 24 小时内最多几条大盘打扰（market_stress 不受限）。
+  maxAlertsPerDay: 6
   primarySymbols:
     - "BTC/USDT:USDT"
     - "ETH/USDT:USDT"
@@ -222,9 +231,11 @@ marketPulse:
     ewmaAlpha: 0.10
     floorPct: 0.03
   # Observation windows are fixed in code: impulse/stress 60s, trend 300s.
+  # 阈值提高自 0.65/0.18：在旧阈值下 19 条生产告警里有 12 条的中位涨跌幅
+  # 不足 0.25%，对加密永续而言属于噪声，是告警疲劳的主要来源。
   impulse:
-    minBreadth: 0.65
-    minMedianReturnPct: 0.18
+    minBreadth: 0.75
+    minMedianReturnPct: 0.35
     minMedianZ: 1.5
     confirmationSamples: 3
     confirmationWindowSamples: 4
@@ -248,7 +259,7 @@ marketPulse:
   leaders:
     limit: 5
   cooldownSeconds: 600
-  stressCooldownSeconds: 300
+  stressCooldownSeconds: 900
   # Ignored while shadowMode=true (shadow must not change single-coin alerts).
   gateIndividualAlertsWhenQuiet: false
 

@@ -36,11 +36,27 @@ type MarketPulseStore struct {
 	mu          sync.Mutex
 }
 
+// Dir returns the directory that anchors every storage sidecar file, so
+// out-of-process tools resolve the same paths as the daemon instead of
+// reimplementing the derivation.
+func Dir(cfg types.StorageConfig) string {
+	return filepath.Dir(expandPath(cfg.DatabasePath))
+}
+
+// MarketPulseEventsPath and MarketPulseOutcomesPath name the calibration logs.
+func MarketPulseEventsPath(cfg types.StorageConfig) string {
+	return filepath.Join(Dir(cfg), "market-pulse-events.jsonl")
+}
+
+func MarketPulseOutcomesPath(cfg types.StorageConfig) string {
+	return filepath.Join(Dir(cfg), "market-pulse-outcomes.jsonl")
+}
+
 // NewMarketPulseStore opens or creates the market pulse event log.
 func NewMarketPulseStore(cfg types.StorageConfig) (*MarketPulseStore, error) {
-	dir := filepath.Dir(expandPath(cfg.DatabasePath))
-	path := filepath.Join(dir, "market-pulse-events.jsonl")
-	outcomePath := filepath.Join(dir, "market-pulse-outcomes.jsonl")
+	dir := Dir(cfg)
+	path := MarketPulseEventsPath(cfg)
+	outcomePath := MarketPulseOutcomesPath(cfg)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("market pulse store mkdir: %w", err)
 	}

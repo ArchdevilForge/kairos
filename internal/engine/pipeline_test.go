@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"context"
+	"fmt"
 	"testing"
 
 	"github.com/ArchdevilForge/kairos/internal/config"
@@ -109,11 +111,24 @@ marketPulse:
 		t.Fatal("nil detector must not gate")
 	}
 
-	// QUIET + gate on → suppress.
-	d := detector.NewMarketPulseDetector(cfg.MarketPulse)
+	// A detector with no data must not gate: no vision, no opinion.
+	blind := detector.NewMarketPulseDetector(cfg.MarketPulse)
+	p.marketPulseDet = blind
+	if blind.State() != types.MarketStateQuiet {
+		t.Fatalf("state=%s", blind.State())
+	}
+	if p.shouldGateIndividualAlert(evt) {
+		t.Fatal("a detector without data must not suppress single-symbol alerts")
+	}
+
+	// Healthy but quiet market → suppress.
+	d := quietHealthyDetector(t, cfg.MarketPulse)
 	p.marketPulseDet = d
 	if d.State() != types.MarketStateQuiet {
 		t.Fatalf("state=%s", d.State())
+	}
+	if !d.LastSnapshot().DataOK {
+		t.Fatalf("test setup: snapshot must be healthy, gate=%s", d.LastSnapshot().GateReason)
 	}
 	if !p.shouldGateIndividualAlert(evt) {
 		t.Fatal("QUIET should gate price_velocity")
@@ -151,4 +166,31 @@ func TestIsMarketPulseEvent(t *testing.T) {
 	if !isMarketPulseEvent("market_impulse") || isMarketPulseEvent("price_velocity") {
 		t.Fatal("isMarketPulseEvent")
 	}
+}
+
+// quietHealthyDetector returns a MarketPulse detector fed with a flat but
+// fully-covered market: DataOK is true and the state stays QUIET, which is the
+// only situation in which the quiet gate is allowed to suppress anything.
+func quietHealthyDetector(t *testing.T, cfg types.MarketPulseConfig) *detector.MarketPulseDetector {
+	t.Helper()
+	d := detector.NewMarketPulseDetector(cfg)
+	clock := 1_000_000.0
+	d.SetNowFunc(func() float64 { return clock })
+
+	syms := make([]string, 0, 20)
+	for i := 0; i < 20; i++ {
+		syms = append(syms, fmt.Sprintf("Q%02d/USDT:USDT", i))
+	}
+	d.UpdateUniverse(syms)
+
+	price := 100.0
+	for step := 0; step < 90; step++ { // 450s > warmup, flat prices → QUIET
+		for _, s := range syms {
+			p := price
+			d.OnTicker(context.Background(), types.Ticker{Symbol: s, LastPrice: &p})
+		}
+		d.EvaluateAt(clock)
+		clock += 5
+	}
+	return d
 }

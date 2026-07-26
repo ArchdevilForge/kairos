@@ -201,6 +201,12 @@ func Validate(cfg *types.Config) error {
 		if mp.MinValidSymbols <= 0 {
 			addf("marketPulse.minValidSymbols must be > 0, got %d", mp.MinValidSymbols)
 		}
+		if mp.DataHealthAlertSeconds < 0 {
+			addf("marketPulse.dataHealthAlertSeconds must be >= 0 (0 disables the outage alert), got %d", mp.DataHealthAlertSeconds)
+		}
+		if mp.MaxAlertsPerDay < 0 {
+			addf("marketPulse.maxAlertsPerDay must be >= 0 (0 disables the budget), got %d", mp.MaxAlertsPerDay)
+		}
 		// The detector computes fixed 60s/180s/300s returns; retention must
 		// cover the longest window or trend/outcome sampling silently starves.
 		if mp.HistoryRetentionSeconds > 0 && mp.HistoryRetentionSeconds < 300 {

@@ -81,6 +81,8 @@ func formatEvent(event types.AlertEvent) string {
 		return formatLongShort(event, symbol, severity, ts)
 	case "market_impulse", "market_trend", "market_stress", "market_decay":
 		return formatMarketPulse(event, severity, ts)
+	case "market_data_stale", "market_data_recovered":
+		return formatDataHealth(event, ts)
 	}
 
 	condition := html.EscapeString(event.Condition)
@@ -217,6 +219,11 @@ func formatMarketPulse(event types.AlertEvent, severity, ts string) string {
 			b.WriteString(fmt.Sprintf("标准化强度：%+.2fσ\n", v.MedZ))
 		}
 	}
+	// Only mention coverage when it is degraded; a full-coverage reading needs
+	// no caveat and the extra line would just add noise.
+	if v.Universe > 0 && v.Coverage > 0 && v.Coverage < 0.99 {
+		b.WriteString(fmt.Sprintf("样本覆盖：%d / %d（%.0f%%）\n", v.Valid, v.Universe, v.Coverage*100))
+	}
 	if v.BTC != nil {
 		b.WriteString(fmt.Sprintf("BTC：%+.2f%%\n", *v.BTC))
 	}
@@ -235,6 +242,35 @@ func formatMarketPulse(event types.AlertEvent, severity, ts string) string {
 		b.WriteString(v.Conclusion + "\n")
 	}
 	b.WriteString(fmt.Sprintf("%s UTC | [%s]\n", ts, html.EscapeString(severity)))
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// formatDataHealth renders a detector-health notice. This is an operational
+// message about the system, not a market signal, so it carries no trading copy.
+func formatDataHealth(event types.AlertEvent, ts string) string {
+	data := event.Data
+	if data == nil {
+		data = map[string]any{}
+	}
+	mins := int(anyFloat(data, "outage_seconds") / 60)
+	valid := anyInt(data, "valid_symbols")
+	universe := anyInt(data, "universe_size")
+	coverage := anyFloat(data, "coverage") * 100
+
+	var b strings.Builder
+	if event.Event == "market_data_recovered" {
+		b.WriteString("<b>✅ 大盘检测器数据已恢复</b>\n")
+		b.WriteString(fmt.Sprintf("中断时长：约 %d 分钟\n", mins))
+		b.WriteString(fmt.Sprintf("当前样本：%d / %d（覆盖率 %.0f%%）\n", valid, universe, coverage))
+	} else {
+		b.WriteString("<b>⚠️ 大盘检测器数据不足</b>\n")
+		b.WriteString(fmt.Sprintf("已持续：约 %d 分钟，期间不会产生大盘告警\n", mins))
+		b.WriteString(fmt.Sprintf("原因：%s\n", html.EscapeString(formatField(data, "gate_reason", "unknown"))))
+		b.WriteString(fmt.Sprintf("样本：%d / %d（覆盖率 %.0f%%，要求 ≥%d 且 ≥%.0f%%）\n",
+			valid, universe, coverage,
+			anyInt(data, "min_valid"), anyFloat(data, "min_fresh_ratio")*100))
+	}
+	b.WriteString(fmt.Sprintf("%s UTC\n", ts))
 	return strings.TrimRight(b.String(), "\n")
 }
 
@@ -334,17 +370,19 @@ func anyStringSlice(m map[string]any, key string) []string {
 
 func eventNameZh(event string) string {
 	m := map[string]string{
-		"price_velocity":       "价格异动",
-		"volume_spike":         "成交量异动",
-		"open_interest_change": "持仓量异动",
-		"funding_rate_anomaly": "资金费率异动",
-		"long_short_ratio":     "多空比异动",
-		"liquidation":          "爆仓异动",
-		"resonance":            "多维度共振",
-		"market_impulse":       "市场启动",
-		"market_trend":         "市场趋势确认",
-		"market_stress":        "市场快速波动",
-		"market_decay":         "市场趋势衰减",
+		"price_velocity":        "价格异动",
+		"volume_spike":          "成交量异动",
+		"open_interest_change":  "持仓量异动",
+		"funding_rate_anomaly":  "资金费率异动",
+		"long_short_ratio":      "多空比异动",
+		"liquidation":           "爆仓异动",
+		"resonance":             "多维度共振",
+		"market_impulse":        "市场启动",
+		"market_trend":          "市场趋势确认",
+		"market_stress":         "市场快速波动",
+		"market_decay":          "市场趋势衰减",
+		"market_data_stale":     "检测器数据不足",
+		"market_data_recovered": "检测器数据恢复",
 	}
 	if v, ok := m[event]; ok {
 		return v

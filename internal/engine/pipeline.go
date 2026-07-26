@@ -90,6 +90,9 @@ type Pipeline struct {
 	dedupMu      sync.Mutex
 	dedupLast    map[string]float64
 	cooldownLast map[string]float64
+	// marketAlertTimes is the rolling 24h record of delivered market-wide
+	// alerts, used to enforce the attention budget.
+	marketAlertTimes []float64
 
 	// Config-derived thresholds (cached from alertPolicy)
 	allowedEventTypes     map[string]bool // nil means all allowed
@@ -998,6 +1001,9 @@ func isResonanceInput(eventType string) bool {
 	if eventType == "resonance" || eventType == "market_outcome" {
 		return false
 	}
+	if isOperationalEvent(eventType) {
+		return false
+	}
 	return !isMarketPulseEvent(eventType)
 }
 
@@ -1171,6 +1177,13 @@ func (p *Pipeline) deliverEvent(ctx context.Context, evt types.AnomalyEvent) {
 		return
 	}
 
+	// Detector-health alerts report on the pipeline itself, not the market, and
+	// take a dedicated path that no market-signal gate can silence.
+	if isOperationalEvent(evt.EventType) {
+		p.deliverOperationalEvent(ctx, evt)
+		return
+	}
+
 	// Shadow: market events are computed/logged only.
 	if isMarketPulseEvent(evt.EventType) && p.marketPulseDet != nil && p.marketPulseDet.ShadowMode() {
 		p.log.Info("alert gated", "reason", "market_pulse_shadow", "event", evt.EventType)
@@ -1202,6 +1215,11 @@ func (p *Pipeline) deliverEvent(ctx context.Context, evt types.AnomalyEvent) {
 	// its own direction/state-aware cooldowns, and an up-impulse must not
 	// silence a legitimate down-impulse minutes later.
 	market := isMarketPulseEvent(evt.EventType)
+	if market && !p.marketBudgetAllows(evt, float64(time.Now().Unix())) {
+		p.log.Info("alert gated", "reason", "attention_budget",
+			"event", evt.EventType, "quota", p.cfg.MarketPulse.MaxAlertsPerDay)
+		return
+	}
 	dedupKey := fmt.Sprintf("%s__%s", evt.Symbol, evt.EventType)
 	if market {
 		if dir, ok := evt.Data["direction"].(string); ok && dir != "" {
@@ -1230,11 +1248,13 @@ func (p *Pipeline) deliverEvent(ctx context.Context, evt types.AnomalyEvent) {
 	case <-ctx.Done():
 	default:
 		if p.sendToChannels(ctx, alert) {
-			if !market {
-				p.dedupMu.Lock()
+			p.dedupMu.Lock()
+			if market {
+				p.marketAlertTimes = append(p.marketAlertTimes, now)
+			} else {
 				p.cooldownLast[evt.Symbol] = now
-				p.dedupMu.Unlock()
 			}
+			p.dedupMu.Unlock()
 			p.recordWatchHint(evt.Symbol, evt.EventType, evt.Exchange)
 		}
 	}
@@ -1260,6 +1280,54 @@ func isMarketPulseEvent(eventType string) bool {
 	default:
 		return false
 	}
+}
+
+// isOperationalEvent reports whether an event describes the health of the
+// detector itself rather than the market.
+func isOperationalEvent(eventType string) bool {
+	switch eventType {
+	case "market_data_stale", "market_data_recovered":
+		return true
+	default:
+		return false
+	}
+}
+
+// deliverOperationalEvent sends a detector-health alert. These deliberately
+// bypass the event-type allow-list and the symbol cooldown: an operator who
+// forgot to allow-list them would be left with exactly the silent blindness the
+// alert exists to reveal. The detector emits at most one stale and one
+// recovered alert per outage, so no extra dedup is needed here.
+func (p *Pipeline) deliverOperationalEvent(ctx context.Context, evt types.AnomalyEvent) {
+	alert := p.buildAlert(evt)
+	if p.sendToChannels(ctx, alert) {
+		return
+	}
+	p.log.Warn("operational alert delivery failed", "event", evt.EventType)
+}
+
+// marketBudgetAllows enforces the attention budget for market-wide alerts.
+// Beyond the daily quota only market_stress — the extreme tail — gets through,
+// so routine impulse/trend chatter cannot crowd out the alert that matters.
+func (p *Pipeline) marketBudgetAllows(evt types.AnomalyEvent, now float64) bool {
+	quota := p.cfg.MarketPulse.MaxAlertsPerDay
+	if quota <= 0 {
+		return true
+	}
+	if evt.EventType == "market_stress" {
+		return true
+	}
+	p.dedupMu.Lock()
+	defer p.dedupMu.Unlock()
+	cutoff := now - 86400
+	kept := p.marketAlertTimes[:0]
+	for _, t := range p.marketAlertTimes {
+		if t >= cutoff {
+			kept = append(kept, t)
+		}
+	}
+	p.marketAlertTimes = kept
+	return len(kept) < quota
 }
 
 // passesMarketEventPolicy applies severity allow-list only — no liquidity weight.
@@ -1388,6 +1456,12 @@ func (p *Pipeline) shouldGateIndividualAlert(evt types.AnomalyEvent) bool {
 		return false
 	}
 	if p.cfg.MarketPulse.ShadowMode {
+		return false
+	}
+	// A detector that cannot see the market has no opinion to enforce. Without
+	// this check a MarketPulse data outage silently suppresses the
+	// single-symbol channel too, turning one failure into two.
+	if snap := p.marketPulseDet.LastSnapshot(); !snap.DataOK {
 		return false
 	}
 	return p.marketPulseDet.State() == types.MarketStateQuiet
