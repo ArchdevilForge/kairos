@@ -695,7 +695,11 @@ func (d *MarketPulseDetector) advanceStateLocked(now float64, snap types.MarketS
 			"valid", snap.ValidSymbols,
 			"fresh", round(snap.FreshRatio, 3),
 			"med60", round(snap.MedianReturn60s, 4),
+			// medZ alone is ambiguous: 0 could mean "neutral market" or "no z
+			// available yet". z_n/z_ok disambiguate it.
 			"medZ", round(snap.MedianZ60s, 3),
+			"z_n", snap.ValidZSymbols,
+			"z_ok", snap.ZUsable,
 			"upB", round(snap.UpBreadth60s, 3),
 			"downB", round(snap.DownBreadth60s, 3),
 			"raw_impulse", rawOK,
@@ -717,6 +721,8 @@ func (d *MarketPulseDetector) advanceStateLocked(now float64, snap types.MarketS
 				"downB", round(snap.DownBreadth60s, 3),
 				"med60", round(snap.MedianReturn60s, 4),
 				"medZ", round(snap.MedianZ60s, 3),
+				"z_n", snap.ValidZSymbols,
+				"z_ok", snap.ZUsable,
 				"btc", round(btcV, 4), "has_btc", hasBTC,
 				"eth", round(ethV, 4), "has_eth", hasETH,
 				"vol_gate", d.cfg.Volatility.Enabled,
