@@ -14,12 +14,34 @@ on:
 permissions:
   contents: write
 
-env:
-  COMMANDS: kairosd kairos-alert kairos-backtest
+# Commands are discovered from ./cmd/ at build time rather than listed here.
+# A hardcoded list silently drifts: kairos-market-replay and kairos-calibrate
+# were both missing from releases because nobody remembered to add them.
 
 jobs:
+  # Never publish binaries that were not verified. A tag push used to go
+  # straight to build+publish without running a single test.
+  check:
+    name: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install golangci-lint v2
+        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.1.6
+
+      - run: make check
+
+      - run: make cover-check
+
   build:
     name: build ${{ matrix.goos }}-${{ matrix.goarch }}
+    needs: check
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -65,22 +87,48 @@ jobs:
           mkdir -p "dist/${pkg}/config"
           ext=""
           if [ "$GOOS" = "windows" ]; then ext=".exe"; fi
-          for cmd in ${COMMANDS}; do
+
+          # Every main package under ./cmd/ ships, so a new command is released
+          # the moment it exists.
+          commands=""
+          for dir in ./cmd/*/; do
+            commands="${commands} $(basename "${dir}")"
+          done
+          echo "packaging:${commands}"
+
+          for cmd in ${commands}; do
             go build -trimpath -ldflags="-s -w" \
               -o "dist/${pkg}/${cmd}${ext}" "./cmd/${cmd}"
           done
+
           cp config/config.yaml.example "dist/${pkg}/config/"
           cp README.md "dist/${pkg}/"
-          cat > "dist/${pkg}/RUN.txt" <<EOF
-          kairos ${VERSION} (${GOOS}/${GOARCH})
 
-          1. cp config/config.yaml.example ~/.config/kairos/config.yaml  # 或任意路径
-          2. export TELEGRAM_BOT_TOKEN=...
-          3. export TELEGRAM_CHAT_ID=...
-          4. ./kairosd --config ~/.config/kairos/config.yaml
-             ./kairos-alert --config ~/.config/kairos/config.yaml --dry-run
-             ./kairos-backtest --symbol BTC/USDT --start 2024-01-01 --end 2024-06-01
-          EOF
+          {
+            echo "kairos ${VERSION} (${GOOS}/${GOARCH})"
+            echo
+            echo "1. cp config/config.yaml.example ~/.config/kairos/config.yaml  # 或任意路径"
+            echo "2. export TELEGRAM_BOT_TOKEN=..."
+            echo "3. export TELEGRAM_CHAT_ID=..."
+            echo "4. 可执行文件："
+            # Deterministic across runners (glob order is locale-dependent),
+            # with the daemon first since it is the main entrypoint.
+            listed="$(printf '%s\n' ${commands} | LC_ALL=C sort | grep -x kairosd || true)"
+            listed="${listed} $(printf '%s\n' ${commands} | LC_ALL=C sort | grep -vx kairosd || true)"
+            for cmd in ${listed}; do
+              case "${cmd}" in
+                kairosd)              echo "   ./kairosd --config ~/.config/kairos/config.yaml               # 实时大盘/单币告警守护进程" ;;
+                kairos-alert)         echo "   ./kairos-alert --config ~/.config/kairos/config.yaml --dry-run # 一次性扫描摘要（由 cron 调度）" ;;
+                kairos-backtest)      echo "   ./kairos-backtest --symbol BTC/USDT --start 2024-01-01 --end 2024-06-01" ;;
+                kairos-market-replay) echo "   ./kairos-market-replay --input ticks.jsonl                      # MarketPulse 算法回放" ;;
+                kairos-calibrate)     echo "   ./kairos-calibrate --config ~/.config/kairos/config.yaml        # 用实测结果校准告警阈值" ;;
+                *)                    echo "   ./${cmd}" ;;
+              esac
+            done
+            echo
+            echo "所有告警仅供人工判断，不自动交易。"
+          } > "dist/${pkg}/RUN.txt"
+
           if [ "$GOOS" = "windows" ]; then
             (cd dist && zip -r "${pkg}.zip" "${pkg}")
           else
