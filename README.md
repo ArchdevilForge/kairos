@@ -79,10 +79,10 @@ deploy/        部署相关
 
 | 维度 | 来源 | 检测方式 |
 |---|---|---|
-| `price_velocity` | WebSocket | Z-score / 多窗口滑动 |
-| `volume_spike` | WebSocket | Z-score / 滚动基线 |
-| `open_interest_change` | REST | Z-score / 变化率 |
-| `funding_rate_anomaly` | REST | Z-score / 绝对值 |
+| `price_velocity` | WebSocket | 多窗口绝对涨跌幅阈值 |
+| `volume_spike` | WebSocket | 按秒归一化成交速率 vs 滚动基线倍数 |
+| `open_interest_change` | REST | 相邻轮询变化率阈值 |
+| `funding_rate_anomaly` | REST | 绝对值阈值 + 变化幅度 |
 | `long_short_ratio` | CoinGlass | 绝对阈值 + Z-score + 变化速度 |
 | `liquidation` | CoinGlass | 金额阈值 + Z-score + 多空主导判定 |
 | `resonance` | 聚合 | 信号质量分 ≥55（基于 Z-score 极端度 + 维度共振 + 方向一致性） |

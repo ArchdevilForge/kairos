@@ -27,7 +27,7 @@ cmd/
 
 internal/
 ├── alert/             # scanner alert HTML formatting
-├── backtest/          # backtest engine (OKX OHLCV backward pagination)
+├── backtest/          # backtest engine (shared beforeMs backward pagination)
 ├── config/            # YAML config loading
 ├── data/              # CoinGlass client, RSI map, Python bridge (coinglass_py.go)
 ├── detector/          # anomaly detectors + resonance scorer

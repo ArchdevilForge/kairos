@@ -44,10 +44,13 @@ func loadReplay(t *testing.T, name string) []replayTick {
 	return out
 }
 
-func TestReplay_BroadRallyFixture(t *testing.T) {
-	ticks := loadReplay(t, "broad_rally.jsonl")
+// runReplayFixture drives one JSONL fixture (ticks at t=1000 and t=1060)
+// through the detector and returns the final state plus emitted events.
+func runReplayFixture(t *testing.T, name string) (types.MarketState, []types.AnomalyEvent) {
+	t.Helper()
+	ticks := loadReplay(t, name)
 	cfg := testMPConfig()
-	cfg.Stress.MinMedianReturnPct = 9 // fixture is impulse-scale only
+	cfg.Stress.MinMedianReturnPct = 9 // fixtures are impulse-scale only
 	d := NewMarketPulseDetector(cfg)
 
 	// Universe from fixture symbols.
@@ -118,17 +121,55 @@ func TestReplay_BroadRallyFixture(t *testing.T) {
 		d.EvaluateAt(now)
 	}
 
-	if d.State() != types.MarketStateImpulseUp {
-		t.Fatalf("fixture broad rally: state=%s snap=%+v", d.State(), d.LastSnapshot())
+	return d.State(), drainEvents(d)
+}
+
+// Every acceptance fixture runs; each pins the expected end state and
+// (optionally) an expected event with direction.
+func TestReplay_AllFixtures(t *testing.T) {
+	cases := []struct {
+		fixture   string
+		wantState types.MarketState
+		wantEvent string // "" = no market event expected
+		wantDir   string
+	}{
+		{"broad_rally.jsonl", types.MarketStateImpulseUp, "market_impulse", "up"},
+		{"broad_selloff.jsonl", types.MarketStateImpulseDown, "market_impulse", "down"},
+		{"btc_only_pump.jsonl", types.MarketStateQuiet, "", ""},
+		{"quiet.jsonl", types.MarketStateQuiet, "", ""},
+		{"smallcap_only_pump.jsonl", types.MarketStateQuiet, "", ""},
 	}
-	evts := drainEvents(d)
-	found := false
-	for _, e := range evts {
-		if e.EventType == "market_impulse" {
-			found = true
-		}
+	for _, tc := range cases {
+		t.Run(tc.fixture, func(t *testing.T) {
+			state, evts := runReplayFixture(t, tc.fixture)
+			if state != tc.wantState {
+				t.Fatalf("state=%s want %s", state, tc.wantState)
+			}
+			var got *types.AnomalyEvent
+			for i, e := range evts {
+				if e.EventType == tc.wantEvent && tc.wantEvent != "" {
+					got = &evts[i]
+				}
+				if tc.wantEvent == "" && isMarketEventType(e.EventType) {
+					t.Fatalf("fixture must stay quiet, got event %s", e.EventType)
+				}
+			}
+			if tc.wantEvent != "" {
+				if got == nil {
+					t.Fatalf("expected %s event, got %d events", tc.wantEvent, len(evts))
+				}
+				if dir, _ := got.Data["direction"].(string); dir != tc.wantDir {
+					t.Fatalf("direction=%q want %q", dir, tc.wantDir)
+				}
+			}
+		})
 	}
-	if !found {
-		t.Fatalf("expected market_impulse from fixture, events=%d", len(evts))
+}
+
+func isMarketEventType(et string) bool {
+	switch et {
+	case "market_impulse", "market_trend", "market_stress", "market_decay":
+		return true
 	}
+	return false
 }

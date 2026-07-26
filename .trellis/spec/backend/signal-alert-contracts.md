@@ -25,8 +25,8 @@
 - Scanner states are deterministic filters only: `no_trade`, `watch`, `prepare`, `trade_candidate`.
 - Alert copy must clearly state human control in Chinese, currently `仅供人工判断，不自动交易。`
 - Risk output is bounded context only: entry zone, structural stop, targets, RR, max position percentage, and max leverage. Do not include account-equity sizing or order placement.
-- Telegram credentials come only from `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`; optional scanner filters are `KAIROS_ALERT_MIN_STATE` and `KAIROS_ALERT_LIMIT`.
-- `engine.Pipeline` applies `alertPolicy` (including optional `liquidityWeight` market-cap gating) before Telegram delivery and before mutating dedup/cooldown state.
+- Telegram credentials come only from `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`; optional scanner filters are the `KAIROS_ALERT_MIN_STATE` / `KAIROS_ALERT_LIMIT` env vars read by `kairos-alert` flags. Secrets are excluded from JSON/YAML serialization of the config.
+- `engine.Pipeline` applies `alertPolicy` (including optional `liquidityWeight` market-cap gating) before delivery for every event type including `resonance`. The short dedup window commits per attempt; the long per-symbol cooldown commits only after at least one channel delivered successfully. Market-level events use their own MarketPulse cooldowns and bypass the per-symbol cooldown.
 - Market caps load once at subscribe/refresh via CoinGlass `/api/marketCapRank`; BTC is the weight reference; missing coins use `minWeight`.
 - CoinGlass data may enrich hard-data context but must remain optional evidence, not a hard dependency.
 - CoinGlass fetch prefers Python `scripts/coinglass_fetch.py` + sibling `coinglass-decrypt` repo when available; falls back to native Go decrypt in `internal/data/coinglass.go`.
@@ -50,7 +50,7 @@
 - `internal/scanner`: BTC-context/liquidity/threshold gates block `trade_candidate`; RSI unavailable degrades with warning only.
 - `internal/data`: `ParseSpotRSIMap`, `RSIHotnessScore`, `ParseMarketCapRankMap`, CoinGlass Python/Go fetch paths.
 - `internal/engine`: alert policy, liquidity weight, market-cap reference tests.
-- `internal/backtest`: OKX OHLCV backward pagination from `end` cursor (not forward `since`).
+- `internal/backtest`: exchange-agnostic OHLCV backward pagination via the shared exclusive `beforeMs` cursor (OKX `after`, Binance `endTime-1`, Bybit `end-1`).
 
 ## Wrong vs Correct
 

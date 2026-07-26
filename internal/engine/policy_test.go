@@ -164,18 +164,24 @@ func TestDeliverEvent_BlacklistAndDedup(t *testing.T) {
 	}
 	t.Setenv("HOME", home)
 
-	p := NewPipeline(&types.Config{}, nil)
-	p.deliverEvent(context.Background(), types.AnomalyEvent{Symbol: "BTC/USDT:USDT", EventType: "price_velocity"})
+	// A real (mock) delivery channel so blacklist/dedup actually execute
+	// instead of returning at the no-channel guard.
+	p, ding := newDeliveryPipeline(t, &types.Config{})
+
+	// Blacklisted symbol must never reach the channel.
+	p.deliverEvent(context.Background(), highVelocityEvent("BTC/USDT:USDT"))
+	if got := ding.requests.Load(); got != 0 {
+		t.Fatalf("blacklisted symbol delivered, requests=%d", got)
+	}
 
 	p.dedupWindowSeconds = 3600
 	p.symbolCooldownSeconds = 3600
-	evt := types.AnomalyEvent{
-		Symbol: "ETH/USDT:USDT", EventType: "price_velocity",
-		Severity: types.SeverityHigh,
-		Data:     map[string]any{"change_pct": 2.0, "price": 100},
+	evt := highVelocityEvent("ETH/USDT:USDT")
+	p.deliverEvent(context.Background(), evt)
+	p.deliverEvent(context.Background(), evt)
+	if got := ding.requests.Load(); got != 1 {
+		t.Fatalf("dedup window must suppress the repeat, requests=%d", got)
 	}
-	p.deliverEvent(context.Background(), evt)
-	p.deliverEvent(context.Background(), evt)
 }
 
 func TestMergeChannelsAndEventAggregator(t *testing.T) {

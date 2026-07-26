@@ -11,15 +11,13 @@
 #   4. Run `go run ./cmd/kairosd` (or built binary) for realtime alerts.
 #   5. Run `go run ./cmd/kairos-alert` from cron/systemd timer for scanner summaries.
 
-exchange: "okx"
-defaultTimeframe: "1d"
-notificationTimezone: "Asia/Shanghai"
+# Exchange authorities:
+#   exchanges.primary     — scanner / MarketPulse / provenance authority
+#   dataManager.exchanges — realtime adapter set (primary must be included)
+# (The old top-level `exchange` key still works as a legacy alias.)
 
-# dataManager: legacy name for kairos-watch runtime (WS feeds, dedup, cooldown).
-# Delivery gates live under alertPolicy.
 telegram:
   enabled: true
-  parseMode: "HTML"
 
 # DingTalk custom-robot webhook (mirror of gated alerts). Secrets via env only.
 # DINGTALK_WEBHOOK_URL=https://oapi.dingtalk.com/robot/send?access_token=...
@@ -27,6 +25,11 @@ telegram:
 dingTalk:
   enabled: false
 
+# dataManager: kairosd realtime runtime (WS feeds, dedup, cooldown).
+# Delivery gates live under alertPolicy. dedupWindowSeconds rate-limits
+# attempts per event key; symbolCooldownMinutes commits per symbol only after
+# a successful delivery. refreshIntervalHours re-discovers the Top-N universe
+# and resubscribes the WS feeds.
 dataManager:
   exchanges:
     - "okx"
@@ -37,8 +40,12 @@ dataManager:
 
 alertPolicy:
   enabled: true
+  # Note: enabling resonanceScorer requires "resonance" in this list
+  # (validated at startup — resonance alerts are delivered through the same
+  # policy gate as every other event type).
   allowedEventTypes:
     - "price_velocity"
+    - "resonance"
     - "market_impulse"
     - "market_trend"
     - "market_stress"
@@ -76,7 +83,6 @@ volumeSpike:
 futuresMetrics:
   enabled: false
   pollIntervalSeconds: 300
-  fetchFundingPerSymbol: true
   openInterest:
     enabled: false
     minChangePct: 5.0
@@ -112,8 +118,8 @@ resonanceScorer:
   minScore: 55
   cooldownSeconds: 600
 
+# scanner is one-shot; schedule kairos-alert with cron / systemd timer.
 scanner:
-  intervalSeconds: 300
   universeSize: 30
   candidateLimit: 20
   deepAnalysisLimit: 10
@@ -129,9 +135,6 @@ scanner:
 exchanges:
   primary: "okx"
   backups: []
-  rateLimit: true
-  canonicalQuote: "USDT"
-  settle: "USDT"
 
 scoring:
   candidateWeights:
@@ -180,11 +183,10 @@ risk:
   shortPositionMultiplier: 0.75
   inverseCyclePositionMultiplier: 0.5
 
+# databasePath anchors the storage directory; MarketPulse events/outcomes and
+# watch hints are append-only JSONL sidecar files next to it.
 storage:
   databasePath: "~/.local/share/kairos/kairos.db"
-  retentionDays: 90
-  jsonlExport: false
-  jsonlPath: ""
   watchHintRetentionHours: 24
   watchHintScoreBoost: 0.5
 
@@ -219,22 +221,20 @@ marketPulse:
     enabled: false
     ewmaAlpha: 0.10
     floorPct: 0.03
+  # Observation windows are fixed in code: impulse/stress 60s, trend 300s.
   impulse:
-    windowSeconds: 60
     minBreadth: 0.65
     minMedianReturnPct: 0.18
     minMedianZ: 1.5
     confirmationSamples: 3
     confirmationWindowSamples: 4
   trend:
-    windowSeconds: 300
     minBreadth: 0.60
     minMedianReturnPct: 0.45
     minPersistSeconds: 180
     confirmationSamples: 5
     confirmationWindowSamples: 6
   stress:
-    windowSeconds: 60
     minBreadth: 0.80
     minMedianReturnPct: 0.35
     minMedianZ: 2.5
@@ -249,12 +249,11 @@ marketPulse:
     limit: 5
   cooldownSeconds: 600
   stressCooldownSeconds: 300
+  # Ignored while shadowMode=true (shadow must not change single-coin alerts).
   gateIndividualAlertsWhenQuiet: false
-  allowIsolatedExtremeWhenQuiet: false
-  isolatedExtremeMinZ: 4.0
 
+# Kairos emits chart specs only; rendering is a downstream concern.
 charts:
   defaultChartCount: 1
   outputPath: "~/.local/share/kairos/charts"
-  cleanupDays: 7
   multiTimeframeScoreThreshold: 8.0

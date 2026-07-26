@@ -290,6 +290,7 @@ func TestLoad_ExampleConfigAlignsWithTypes(t *testing.T) {
 	}
 	wantTypes := map[string]bool{
 		"price_velocity": true,
+		"resonance":      true,
 		"market_impulse": true,
 		"market_trend":   true,
 		"market_stress":  true,

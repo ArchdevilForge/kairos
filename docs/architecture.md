@@ -34,16 +34,27 @@ audit logs, and explicit human controls.
 ## Runtime Commands
 
 ```text
-kairos-watch
-    Exchange WebSocket feeds
-    -> price/volume anomaly detectors
+kairosd
+    Exchange WebSocket feeds (dataManager.exchanges)
+    -> price/volume anomaly detectors (per exchange)
     -> periodic futures metrics polling
-    -> Telegram hard-data alerts
+    -> optional CoinGlass long/short + liquidation polling
+    -> optional resonance scorer + MarketPulse market-state detector
+    -> alert policy / dedup / cooldown
+    -> Telegram + DingTalk hard-data alerts
 
 kairos-alert
-    scan_market
+    one-shot scan_market (external cron/systemd timer)
     -> deterministic setup scoring
     -> Telegram candidate summary
+
+kairos-backtest
+    flags-only historical backtest
+    -> unified exchange OHLCV range pagination
+    -> stdout JSON summary/trades
+
+kairos-market-replay
+    JSONL ticks -> MarketPulse algorithm replay (no pipeline/delivery)
 ```
 
 ## Authority Model
@@ -61,6 +72,12 @@ Realtime alerts:
 - `volume_spike`
 - `open_interest_change`
 - `funding_rate_anomaly`
+- `long_short_ratio` (CoinGlass)
+- `liquidation` (CoinGlass)
+- `resonance` (multi-dimension aggregation; subject to the alert policy allow-list)
+- `market_impulse` / `market_trend` / `market_stress` / `market_decay` (MarketPulse, shadow-capable)
+
+`market_outcome` records are calibration-only and are never delivered.
 
 Scanner candidate states:
 
