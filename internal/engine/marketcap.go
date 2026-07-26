@@ -17,7 +17,7 @@ func (p *Pipeline) loadMarketCaps(ctx context.Context) {
 	default:
 	}
 
-	caps, err := data.FetchMarketCapMap(30 * time.Second)
+	caps, err := data.FetchMarketCapMap(ctx, 30*time.Second)
 	if err != nil {
 		p.log.Warn("market cap fetch failed", "error", err)
 		return

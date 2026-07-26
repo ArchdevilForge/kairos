@@ -600,24 +600,18 @@ func (p *Pipeline) pollMetrics(ctx context.Context, es *exchangeState) error {
 		return fmt.Errorf("fetch tickers for metrics: %w", err)
 	}
 
-	now := float64(time.Now().UnixMilli()) / 1000
 	for _, sym := range es.symbols {
 		t, ok := tickers[sym]
 		if !ok || t == nil {
 			continue
 		}
-
-		oi := 0.0
-		if t.OpenInterest != nil {
-			oi = *t.OpenInterest
+		price := 0.0
+		if t.LastPrice != nil {
+			price = *t.LastPrice
 		}
-		funding := 0.0
-		if t.FundingRate != nil {
-			funding = *t.FundingRate
-		}
-
-		es.metrics.OnMetricsUpdate(ctx, sym, oi, funding)
-		_ = now // timestamp used internally by the detector
+		// Pass optional metrics through as pointers: absent stays absent,
+		// a real zero stays a real zero.
+		es.metrics.OnMetricsUpdate(ctx, sym, price, t.OpenInterest, t.FundingRate)
 	}
 	return nil
 }
@@ -662,12 +656,15 @@ func (p *Pipeline) pollLongShort(ctx context.Context) {
 
 	now := float64(time.Now().UnixMilli()) / 1000
 	for _, rawSym := range symbols {
+		if ctx.Err() != nil {
+			return
+		}
 		base, err := data.NormalizeCoinSymbol(rawSym)
 		if err != nil || base == "" {
 			continue
 		}
 
-		payload, err := data.FetchCoinGlassEndpoint(
+		payload, err := data.FetchCoinGlassEndpoint(ctx,
 			"/api/futures/longShortRate",
 			map[string]string{"symbol": base, "timeType": "2"},
 			10*time.Second,
@@ -762,12 +759,15 @@ func (p *Pipeline) pollLiquidations(ctx context.Context) {
 
 	now := float64(time.Now().UnixMilli()) / 1000
 	for _, rawSym := range symbols {
+		if ctx.Err() != nil {
+			return
+		}
 		base, err := data.NormalizeCoinSymbol(rawSym)
 		if err != nil || base == "" {
 			continue
 		}
 
-		payload, err := data.FetchCoinGlassEndpoint(
+		payload, err := data.FetchCoinGlassEndpoint(ctx,
 			"/api/futures/liquidation/today",
 			map[string]string{"symbol": base},
 			10*time.Second,

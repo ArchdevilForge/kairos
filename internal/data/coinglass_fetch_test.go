@@ -1,6 +1,7 @@
 package data
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -15,7 +16,7 @@ func TestFetchCoinGlassEndpoint_PlainJSON(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	got, err := fetchCoinGlassNative(srv.URL, nil, 2*time.Second)
+	got, err := fetchCoinGlassNative(context.Background(), srv.URL, nil, 2*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +42,7 @@ func TestFetchCoinGlassEndpoint_Encrypted(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	got, err := fetchCoinGlassNative(srv.URL, nil, 5*time.Second)
+	got, err := fetchCoinGlassNative(context.Background(), srv.URL, nil, 5*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}

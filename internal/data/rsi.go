@@ -1,6 +1,7 @@
 package data
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -15,8 +16,8 @@ type CoinRSI struct {
 }
 
 // FetchSpotRSIMap loads CoinGlass /api/spot/rsi/list (best-effort optional context).
-func FetchSpotRSIMap(timeout time.Duration) (map[string]CoinRSI, error) {
-	raw, err := FetchCoinGlassEndpoint("/api/spot/rsi/list", map[string]string{
+func FetchSpotRSIMap(ctx context.Context, timeout time.Duration) (map[string]CoinRSI, error) {
+	raw, err := FetchCoinGlassEndpoint(ctx, "/api/spot/rsi/list", map[string]string{
 		"pageSize": "500",
 		"pageNum":  "1",
 	}, timeout)

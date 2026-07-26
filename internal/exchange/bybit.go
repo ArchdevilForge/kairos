@@ -62,7 +62,9 @@ func (b *bybitExchange) SubscribeTickers(ctx context.Context, symbols []string, 
 		}
 		conn, _, err := websocket.Dial(ctx, bybitWSEndpoint, nil)
 		if err != nil {
-			time.Sleep(backoff)
+			if err := ctxSleep(ctx, backoff); err != nil {
+				return err
+			}
 			backoff = time.Duration(math.Min(float64(backoff*2), float64(maxBackoff)))
 			continue
 		}
@@ -120,15 +122,15 @@ func (b *bybitExchange) FetchTickers(ctx context.Context) (map[string]*types.Tic
 		if v := parseFloat(row.Turnover24h); v > 0 {
 			t.QuoteVolume = &v
 		}
-		if v := parseFloat(row.Price24hPcnt); v != 0 {
-			pct := v * 100
+		if v := parseFloatPtr(row.Price24hPcnt); v != nil {
+			pct := *v * 100
 			t.ChangePct = &pct
 		}
-		if v := parseFloat(row.OpenInterest); v > 0 {
-			t.OpenInterest = &v
+		if v := parseFloatPtr(row.OpenInterest); v != nil {
+			t.OpenInterest = v
 		}
-		if v := parseFloat(row.FundingRate); v != 0 {
-			t.FundingRate = &v
+		if v := parseFloatPtr(row.FundingRate); v != nil {
+			t.FundingRate = v
 		}
 		result[sym] = t
 	}
@@ -169,27 +171,29 @@ func (b *bybitExchange) FetchTicker(ctx context.Context, symbol string) (*types.
 	if v := parseFloat(row.Turnover24h); v > 0 {
 		t.QuoteVolume = &v
 	}
-	if v := parseFloat(row.Price24hPcnt); v != 0 {
-		pct := v * 100
+	if v := parseFloatPtr(row.Price24hPcnt); v != nil {
+		pct := *v * 100
 		t.ChangePct = &pct
 	}
-	if v := parseFloat(row.OpenInterest); v > 0 {
-		t.OpenInterest = &v
+	if v := parseFloatPtr(row.OpenInterest); v != nil {
+		t.OpenInterest = v
 	}
-	if v := parseFloat(row.FundingRate); v != 0 {
-		t.FundingRate = &v
+	if v := parseFloatPtr(row.FundingRate); v != nil {
+		t.FundingRate = v
 	}
 	return t, nil
 }
 
-func (b *bybitExchange) FetchOHLCV(ctx context.Context, symbol, timeframe string, limit int, sinceMs int64) ([]types.Candle, error) {
+func (b *bybitExchange) FetchOHLCV(ctx context.Context, symbol, timeframe string, limit int, beforeMs int64) ([]types.Candle, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 200
 	}
 	url := fmt.Sprintf("%s/v5/market/kline?category=linear&symbol=%s&interval=%s&limit=%d",
 		bybitRESTEndpoint, bybitSymbol(symbol), mapBybitTimeframe(timeframe), limit)
-	if sinceMs > 0 {
-		url += fmt.Sprintf("&start=%d", sinceMs)
+	if beforeMs > 0 {
+		// `end` is inclusive; -1 makes the shared cursor contract exclusive.
+		// With only `end` set Bybit returns the most recent bars up to it.
+		url += fmt.Sprintf("&end=%d", beforeMs-1)
 	}
 
 	body, err := b.get(ctx, url)

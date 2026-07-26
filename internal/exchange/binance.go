@@ -64,7 +64,9 @@ func (b *binanceExchange) SubscribeTickers(ctx context.Context, symbols []string
 		}
 		conn, _, err := websocket.Dial(ctx, uri, nil)
 		if err != nil {
-			time.Sleep(backoff)
+			if err := ctxSleep(ctx, backoff); err != nil {
+				return err
+			}
 			backoff = time.Duration(math.Min(float64(backoff*2), float64(maxBackoff)))
 			continue
 		}
@@ -104,8 +106,8 @@ func (b *binanceExchange) FetchTickers(ctx context.Context) (map[string]*types.T
 		if v := parseFloat(row.QuoteVolume); v > 0 {
 			t.QuoteVolume = &v
 		}
-		if v := parseFloat(row.PriceChangePercent); v != 0 {
-			t.ChangePct = &v
+		if v := parseFloatPtr(row.PriceChangePercent); v != nil {
+			t.ChangePct = v
 		}
 		result[sym] = t
 	}
@@ -139,22 +141,24 @@ func (b *binanceExchange) FetchTicker(ctx context.Context, symbol string) (*type
 	if v := parseFloat(row.QuoteVolume); v > 0 {
 		t.QuoteVolume = &v
 	}
-	if v := parseFloat(row.PriceChangePercent); v != 0 {
-		t.ChangePct = &v
+	if v := parseFloatPtr(row.PriceChangePercent); v != nil {
+		t.ChangePct = v
 	}
 	one := map[string]*types.Ticker{sym: t}
 	_ = b.mergePremiumIndex(ctx, one)
 	return t, nil
 }
 
-func (b *binanceExchange) FetchOHLCV(ctx context.Context, symbol, timeframe string, limit int, sinceMs int64) ([]types.Candle, error) {
+func (b *binanceExchange) FetchOHLCV(ctx context.Context, symbol, timeframe string, limit int, beforeMs int64) ([]types.Candle, error) {
 	if limit <= 0 || limit > 1500 {
 		limit = 500
 	}
 	url := fmt.Sprintf("%s/fapi/v1/klines?symbol=%s&interval=%s&limit=%d",
 		binanceRESTEndpoint, binanceSymbol(symbol), mapBinanceTimeframe(timeframe), limit)
-	if sinceMs > 0 {
-		url += fmt.Sprintf("&startTime=%d", sinceMs)
+	if beforeMs > 0 {
+		// endTime is inclusive; -1 makes the shared cursor contract exclusive.
+		// Without startTime Binance returns the most recent bars up to endTime.
+		url += fmt.Sprintf("&endTime=%d", beforeMs-1)
 	}
 
 	body, err := b.get(ctx, url)
@@ -212,8 +216,8 @@ func (b *binanceExchange) mergePremiumIndex(ctx context.Context, tickers map[str
 		if !ok || t == nil {
 			continue
 		}
-		if v := parseFloat(row.LastFundingRate); v != 0 {
-			t.FundingRate = &v
+		if v := parseFloatPtr(row.LastFundingRate); v != nil {
+			t.FundingRate = v
 		}
 	}
 	return nil
@@ -249,8 +253,8 @@ func (b *binanceExchange) readTickers(ctx context.Context, conn *websocket.Conn,
 		if v := parseFloat(data.QuoteVol); v > 0 {
 			t.QuoteVolume = &v
 		}
-		if v := parseFloat(data.ChangePct); v != 0 {
-			t.ChangePct = &v
+		if v := parseFloatPtr(data.ChangePct); v != nil {
+			t.ChangePct = v
 		}
 		select {
 		case tickerCh <- t:

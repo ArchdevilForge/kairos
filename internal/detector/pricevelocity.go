@@ -86,10 +86,6 @@ func (d *PriceVelocityDetector) OnTicker(_ context.Context, ticker types.Ticker)
 	d.checkVelocity(ticker.Symbol, *ticker.LastPrice, ts, now)
 }
 
-func (d *PriceVelocityDetector) OnMetricsUpdate(_ context.Context, _ string, _ float64, _ float64) {}
-func (d *PriceVelocityDetector) OnLSSnapshot(_ string, _, _ float64)                               {}
-func (d *PriceVelocityDetector) OnLiquidationSnapshot(_ string, _, _, _ float64)                   {}
-
 func (d *PriceVelocityDetector) Events() <-chan types.AnomalyEvent { return d.events }
 func (d *PriceVelocityDetector) Reset() {
 	d.priceMu.Lock()

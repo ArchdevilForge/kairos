@@ -79,9 +79,7 @@ func NewLongShortRatioDetector(cfg types.LongShortRatioConfig) *LongShortRatioDe
 
 func (d *LongShortRatioDetector) Name() string { return "long_short_ratio" }
 
-func (d *LongShortRatioDetector) OnTicker(_ context.Context, _ types.Ticker)                        {}
-func (d *LongShortRatioDetector) OnMetricsUpdate(_ context.Context, _ string, _ float64, _ float64) {}
-func (d *LongShortRatioDetector) OnLiquidationSnapshot(_ string, _, _, _ float64)                   {}
+func (d *LongShortRatioDetector) OnTicker(_ context.Context, _ types.Ticker) {}
 
 // OnLSSnapshot processes one long/short ratio snapshot.
 func (d *LongShortRatioDetector) OnLSSnapshot(symbol string, longRate, shortRate float64) {

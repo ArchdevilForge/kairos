@@ -1,6 +1,7 @@
 package data
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -40,7 +41,7 @@ func TestFetchSpotRSIMap_LivePython(t *testing.T) {
 	t.Setenv(envCoinGlassDecrypt, decrypt)
 	t.Setenv(envCoinGlassUsePy, "1")
 
-	m, err := FetchSpotRSIMap(20 * time.Second)
+	m, err := FetchSpotRSIMap(context.Background(), 20*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}

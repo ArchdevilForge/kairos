@@ -80,10 +80,7 @@ func NewLiquidationDetector(cfg types.LiquidationConfig) *LiquidationDetector {
 
 func (d *LiquidationDetector) Name() string { return "liquidation" }
 
-func (d *LiquidationDetector) OnTicker(_ context.Context, _ types.Ticker)                        {}
-func (d *LiquidationDetector) OnMetricsUpdate(_ context.Context, _ string, _ float64, _ float64) {}
-
-func (d *LiquidationDetector) OnLSSnapshot(_ string, _, _ float64) {}
+func (d *LiquidationDetector) OnTicker(_ context.Context, _ types.Ticker) {}
 
 // OnLiquidationSnapshot processes one liquidation data snapshot.
 func (d *LiquidationDetector) OnLiquidationSnapshot(symbol string, totalUSD, longUSD, shortUSD float64) {

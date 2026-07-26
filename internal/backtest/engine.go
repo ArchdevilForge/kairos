@@ -174,13 +174,14 @@ func (r *BacktestRunner) Run(ctx context.Context, symbol, start, end string, opt
 	const cycleInterval = 12
 
 	for i := warmup; i < n; i++ {
-		currentTsMs := data.Timestamps[i]
-		currentTsStr := tsToISO(currentTsMs)
+		currentTs := data.Timestamps[i] // Unix seconds
+		currentTsMs := currentTs * 1000
+		currentTsStr := tsToISO(currentTs)
 
 		// Per-bar cycle recomputation every cycleInterval bars
 		if i >= 30 && i%cycleInterval == 0 {
 			if opt.BtcData != nil && len(btcTimestamps) > 0 {
-				btcIdx := sort.SearchFloat64s(btcTimestamps, currentTsMs)
+				btcIdx := sort.SearchFloat64s(btcTimestamps, currentTs)
 				if btcIdx < 30 {
 					btcIdx = 30
 				}
@@ -207,7 +208,7 @@ func (r *BacktestRunner) Run(ctx context.Context, symbol, start, end string, opt
 		// --- Entry signals ---
 		for j := range allBoxes {
 			b := &allBoxes[j]
-			if b.EndTime > currentTsMs {
+			if b.EndTime > currentTs {
 				continue
 			}
 			if b.Status != types.BoxStatusConverging && b.Status != types.BoxStatusForming {
@@ -255,7 +256,7 @@ func (r *BacktestRunner) Run(ctx context.Context, symbol, start, end string, opt
 			EntryTimeMs:  pos.entryTimeMs,
 			ExitPrice:    lastClose,
 			ExitTime:     lastTs,
-			ExitTimeMs:   data.Timestamps[n-1],
+			ExitTimeMs:   data.Timestamps[n-1] * 1000,
 			PnlPct:       grossPnl - roundTripCost,
 			ExitReason:   string(ExitReasonEndOfPeriod),
 			HoldingHours: holdingHours(pos.entryTime, lastTs),
@@ -291,8 +292,8 @@ func (r *BacktestRunner) fetchOHLCV(ctx context.Context, symbol, start, end, tim
 	var all []types.Candle
 	cursor := endMs
 
-	// ponytail: OKX history-candles paginates backward via `after`; ccxt-style forward
-	// since loops do not work. Walk from end→start, then sort ascending.
+	// Walk backward from end→start using the shared exclusive beforeMs cursor
+	// (identical semantics on OKX/Binance/Bybit), then sort ascending.
 	for {
 		candles, err := r.exch.FetchOHLCV(ctx, symbol, timeframe, 300, cursor)
 		if err != nil {
@@ -569,8 +570,8 @@ func computeSummary(trades []Trade, start, end string, positionPct float64) *Sum
 // Utility helpers (replacing numpy/scipy)
 // --------------------------------------------------------------------------
 
-func tsToISO(tsMs float64) string {
-	return time.Unix(int64(tsMs)/1000, 0).UTC().Format(time.RFC3339)
+func tsToISO(tsSec float64) string {
+	return time.Unix(int64(tsSec), 0).UTC().Format(time.RFC3339)
 }
 
 // parseDate parses "YYYY-MM-DD" and returns the millisecond Unix timestamp
@@ -603,7 +604,7 @@ func candlesToArrays(candles []types.Candle) *types.OHLCVArrays {
 		Volumes:    make([]float64, n),
 	}
 	for i, c := range candles {
-		out.Timestamps[i] = float64(c.Timestamp * 1000) // Candle stores seconds → ms
+		out.Timestamps[i] = float64(c.Timestamp) // Unix seconds, shared contract
 		out.Opens[i] = c.Open
 		out.Highs[i] = c.High
 		out.Lows[i] = c.Low

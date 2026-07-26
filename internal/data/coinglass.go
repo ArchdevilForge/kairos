@@ -2,6 +2,7 @@ package data
 
 import (
 	"compress/gzip"
+	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"encoding/base64"
@@ -224,15 +225,20 @@ func deriveKey0(v, reqURL, cacheTs, timeHeader string) (string, error) {
 // ---------------------------------------------------------------------------
 
 // FetchCoinGlassEndpoint fetches a CoinGlass endpoint and handles decryption.
-// Prefers Python coinglass-decrypt when available; falls back to native Go decrypt.
-func FetchCoinGlassEndpoint(path string, params map[string]string, timeout time.Duration) (any, error) {
-	if raw, err := fetchCoinGlassViaPython(path, params, timeout); err == nil {
+// Prefers Python coinglass-decrypt when available; falls back to native Go
+// decrypt. The caller context bounds both paths so pipeline shutdown can
+// cancel in-flight requests.
+func FetchCoinGlassEndpoint(ctx context.Context, path string, params map[string]string, timeout time.Duration) (any, error) {
+	if raw, err := fetchCoinGlassViaPython(ctx, path, params, timeout); err == nil {
 		return raw, nil
 	}
-	return fetchCoinGlassNative(path, params, timeout)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return fetchCoinGlassNative(ctx, path, params, timeout)
 }
 
-func fetchCoinGlassNative(path string, params map[string]string, timeout time.Duration) (any, error) {
+func fetchCoinGlassNative(ctx context.Context, path string, params map[string]string, timeout time.Duration) (any, error) {
 	var u *url.URL
 	var err error
 	if strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") {
@@ -251,7 +257,9 @@ func fetchCoinGlassNative(path string, params map[string]string, timeout time.Du
 		u.RawQuery = q.Encode()
 	}
 
-	req, err := http.NewRequest("GET", u.String(), nil)
+	reqCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, "GET", u.String(), nil)
 	if err != nil {
 		return nil, &CoinGlassError{msg: fmt.Sprintf("create request: %v", err)}
 	}

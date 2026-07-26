@@ -1,14 +1,15 @@
 package data
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
 )
 
 // FetchMarketCapMap loads CoinGlass global market-cap rank (one REST call at subscribe).
-func FetchMarketCapMap(timeout time.Duration) (map[string]float64, error) {
-	raw, err := FetchCoinGlassEndpoint("/api/marketCapRank", map[string]string{
+func FetchMarketCapMap(ctx context.Context, timeout time.Duration) (map[string]float64, error) {
+	raw, err := FetchCoinGlassEndpoint(ctx, "/api/marketCapRank", map[string]string{
 		"pageSize": "500",
 	}, timeout)
 	if err != nil {

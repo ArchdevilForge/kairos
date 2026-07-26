@@ -81,12 +81,9 @@ func (o *okxExchange) SubscribeTickers(ctx context.Context, symbols []string, ti
 
 		conn, _, err := websocket.Dial(ctx, okxWSEndpoint, nil)
 		if err != nil {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			default:
+			if err := ctxSleep(ctx, backoff); err != nil {
+				return err
 			}
-			time.Sleep(backoff)
 			backoff = time.Duration(math.Min(float64(backoff*2), float64(maxBackoff)))
 			continue
 		}
@@ -296,22 +293,23 @@ func (o *okxExchange) FetchTicker(ctx context.Context, symbol string) (*types.Ti
 	return t, nil
 }
 
-func (o *okxExchange) FetchOHLCV(ctx context.Context, symbol, timeframe string, limit int, sinceMs int64) ([]types.Candle, error) {
+func (o *okxExchange) FetchOHLCV(ctx context.Context, symbol, timeframe string, limit int, beforeMs int64) ([]types.Candle, error) {
 	instID := normalizeSymbol(symbol)
 	bar := mapTimeframe(timeframe)
 	if limit <= 0 || limit > 300 {
 		limit = 100 // OKX max is 300
 	}
 
-	// Recent bars for scanner; history-candles for backtest pagination (sinceMs = cursor).
+	// Recent bars for scanner; history-candles for backtest pagination.
+	// OKX `after` is an exclusive backward cursor: records earlier than it.
 	path := "candles"
-	if sinceMs > 0 {
+	if beforeMs > 0 {
 		path = "history-candles"
 	}
 	url := fmt.Sprintf("%s/api/v5/market/%s?instId=%s&bar=%s&limit=%d",
 		okxRESTEndpoint, path, instID, bar, limit)
-	if sinceMs > 0 {
-		url += fmt.Sprintf("&after=%d", sinceMs)
+	if beforeMs > 0 {
+		url += fmt.Sprintf("&after=%d", beforeMs)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -509,8 +507,8 @@ func enrichOKXOpenInterest(ctx context.Context, cli *http.Client, tickers map[st
 		if !ok || t == nil {
 			continue
 		}
-		if v := parseFloat(row.OI); v > 0 {
-			t.OpenInterest = &v
+		if v := parseFloatPtr(row.OI); v != nil {
+			t.OpenInterest = v
 		}
 	}
 }
@@ -546,8 +544,8 @@ func enrichOKXFunding(ctx context.Context, cli *http.Client, tickers map[string]
 			if json.Unmarshal(fBody, &fResp) != nil || fResp.Code != "0" || len(fResp.Data) == 0 {
 				return
 			}
-			if v := parseFloat(fResp.Data[0].FundingRate); v != 0 {
-				ticker.FundingRate = &v
+			if v := parseFloatPtr(fResp.Data[0].FundingRate); v != nil {
+				ticker.FundingRate = v
 			}
 		}(sym, t)
 	}

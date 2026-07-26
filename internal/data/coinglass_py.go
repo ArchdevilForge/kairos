@@ -19,7 +19,7 @@ const (
 )
 
 // fetchCoinGlassViaPython calls scripts/coinglass_fetch.py (ArchdevilForge coinglass-decrypt).
-func fetchCoinGlassViaPython(path string, params map[string]string, timeout time.Duration) (any, error) {
+func fetchCoinGlassViaPython(ctx context.Context, path string, params map[string]string, timeout time.Duration) (any, error) {
 	if !coinGlassUsePython() {
 		return nil, fmt.Errorf("coinglass python disabled")
 	}
@@ -32,7 +32,7 @@ func fetchCoinGlassViaPython(path string, params map[string]string, timeout time
 		return nil, fmt.Errorf("coinglass_fetch.py missing: %w", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	python := resolveCoinGlassPython(decryptRoot)

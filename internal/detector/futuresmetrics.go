@@ -73,21 +73,24 @@ func (d *FuturesMetricsDetector) Name() string { return "futures_metrics" }
 // OnTicker is unused — FuturesMetricsDetector receives data via OnMetricsUpdate.
 func (d *FuturesMetricsDetector) OnTicker(_ context.Context, _ types.Ticker) {}
 
-// OnMetricsUpdate processes an OI/funding-rate snapshot.  The Python version
-// also receives price (set to 0 here since the Go interface omits it).
-func (d *FuturesMetricsDetector) OnMetricsUpdate(_ context.Context, symbol string, oi float64, fundingRate float64) {
+// OnMetricsUpdate processes an OI/funding-rate snapshot. oi and fundingRate
+// are optional: nil means the exchange did not report the metric, which is
+// different from a real zero. price is the latest ticker price for event
+// context (0 when unknown).
+func (d *FuturesMetricsDetector) OnMetricsUpdate(_ context.Context, symbol string, price float64, oi, fundingRate *float64) {
 	if !d.enabled {
 		return
 	}
 	now := time.Now()
 	ts := float64(now.UnixMilli()) / 1000
 
-	d.checkOpenInterest(symbol, ts, oi, now)
-	d.checkFundingRate(symbol, ts, fundingRate, now)
+	if oi != nil {
+		d.checkOpenInterest(symbol, ts, price, *oi, now)
+	}
+	if fundingRate != nil {
+		d.checkFundingRate(symbol, ts, price, *fundingRate, now)
+	}
 }
-
-func (d *FuturesMetricsDetector) OnLSSnapshot(_ string, _, _ float64)             {}
-func (d *FuturesMetricsDetector) OnLiquidationSnapshot(_ string, _, _, _ float64) {}
 
 func (d *FuturesMetricsDetector) Events() <-chan types.AnomalyEvent { return d.events }
 
@@ -131,11 +134,11 @@ func (d *FuturesMetricsDetector) UpdateConfig(cfg types.FuturesMetricsConfig) {
 // Open interest
 // ---------------------------------------------------------------------------
 
-func (d *FuturesMetricsDetector) checkOpenInterest(symbol string, now float64, oi float64, nowTime time.Time) {
+func (d *FuturesMetricsDetector) checkOpenInterest(symbol string, now, price float64, oi float64, nowTime time.Time) {
 	d.oiMu.RLock()
 	oiEnabled := d.oiEnabled
 	d.oiMu.RUnlock()
-	if !oiEnabled || oi <= 0 {
+	if !oiEnabled {
 		return
 	}
 
@@ -143,6 +146,8 @@ func (d *FuturesMetricsDetector) checkOpenInterest(symbol string, now float64, o
 	previous, has := d.lastOI[symbol]
 	d.lastOI[symbol] = oi
 	d.oiMu.Unlock()
+	// A change percentage needs a non-zero baseline; a real 0 observation is
+	// still recorded above so the next poll has a baseline.
 	if !has || previous <= 0 {
 		return
 	}
@@ -169,7 +174,7 @@ func (d *FuturesMetricsDetector) checkOpenInterest(symbol string, now float64, o
 	}
 
 	evt := NewEvent(symbol, "open_interest_change", string(severity), map[string]any{
-		"price":                  0.0,
+		"price":                  round(price, 8),
 		"open_interest":          round(oi, 8),
 		"previous_open_interest": round(previous, 8),
 		"change_pct":             round(changePct, 2),
@@ -183,7 +188,7 @@ func (d *FuturesMetricsDetector) checkOpenInterest(symbol string, now float64, o
 // Funding rate
 // ---------------------------------------------------------------------------
 
-func (d *FuturesMetricsDetector) checkFundingRate(symbol string, now float64, fundingRate float64, nowTime time.Time) {
+func (d *FuturesMetricsDetector) checkFundingRate(symbol string, now, price float64, fundingRate float64, nowTime time.Time) {
 	d.fundingMu.RLock()
 	fundingEnabled := d.fundingEnabled
 	d.fundingMu.RUnlock()
@@ -231,7 +236,7 @@ func (d *FuturesMetricsDetector) checkFundingRate(symbol string, now float64, fu
 	}
 
 	evt := NewEvent(symbol, "funding_rate_anomaly", string(severity), map[string]any{
-		"price":                 0.0,
+		"price":                 round(price, 8),
 		"funding_rate":          fundingRate,
 		"previous_funding_rate": previous,
 		"change_abs":            changeAbs,

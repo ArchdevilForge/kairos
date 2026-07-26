@@ -41,8 +41,8 @@ func TestFuturesMetricsDetector_OpenInterestChange(t *testing.T) {
 		},
 	})
 	ctx := context.Background()
-	d.OnMetricsUpdate(ctx, "BTC/USDT:USDT", 1000, 0)
-	d.OnMetricsUpdate(ctx, "BTC/USDT:USDT", 1100, 0)
+	d.OnMetricsUpdate(ctx, "BTC/USDT:USDT", 65000, fptr(1000), nil)
+	d.OnMetricsUpdate(ctx, "BTC/USDT:USDT", 65000, fptr(1100), nil)
 
 	select {
 	case evt := <-d.Events():
@@ -65,8 +65,8 @@ func TestFuturesMetricsDetector_FundingRateAnomaly(t *testing.T) {
 		},
 	})
 	ctx := context.Background()
-	d.OnMetricsUpdate(ctx, "ETH/USDT:USDT", 0, 0.0001)
-	d.OnMetricsUpdate(ctx, "ETH/USDT:USDT", 0, 0.001)
+	d.OnMetricsUpdate(ctx, "ETH/USDT:USDT", 3200, nil, fptr(0.0001))
+	d.OnMetricsUpdate(ctx, "ETH/USDT:USDT", 3200, nil, fptr(0.001))
 
 	select {
 	case evt := <-d.Events():
@@ -151,5 +151,79 @@ func TestNewEvent(t *testing.T) {
 	}
 	if evt.Timestamp <= 0 {
 		t.Fatal("timestamp missing")
+	}
+}
+
+func fptr(v float64) *float64 { return &v }
+
+// The spike ratio must be push-frequency invariant: the same underlying
+// volume flow sampled at 2s vs 10s intervals should produce ~the same ratio.
+func TestVolumeSpike_RatioIndependentOfPushFrequency(t *testing.T) {
+	ratioFor := func(tickInterval float64) float64 {
+		d := NewVolumeSpikeDetector(types.VolumeSpikeConfig{
+			Enabled: true, Multiplier: 3.0, WindowMinutes: 10, MinHistorySeconds: 60,
+		})
+		now := 100000.0
+		start := now - 660 // 11 minutes of history
+		// Baseline flow: 100 quote/s. Last minute: 500 quote/s (5x spike).
+		cum := 0.0
+		var pts []volPoint
+		for ts := start; ts <= now; ts += tickInterval {
+			rate := 100.0
+			if ts > now-60 {
+				rate = 500.0
+			}
+			cum += rate * tickInterval
+			pts = append(pts, volPoint{ts: ts, vol: cum})
+		}
+		d.volumeHistory["X/USDT:USDT"] = pts
+		d.lastPrice["X/USDT:USDT"] = 1
+		d.checkSpike("X/USDT:USDT", now)
+		select {
+		case evt := <-d.Events():
+			r, _ := evt.Data["ratio"].(float64)
+			return r
+		default:
+			t.Fatalf("expected spike event at interval %v", tickInterval)
+			return 0
+		}
+	}
+
+	fast := ratioFor(2)
+	slow := ratioFor(10)
+	if fast <= 0 || slow <= 0 {
+		t.Fatalf("ratios: fast=%v slow=%v", fast, slow)
+	}
+	diff := fast - slow
+	if diff < 0 {
+		diff = -diff
+	}
+	if diff/slow > 0.15 {
+		t.Fatalf("ratio depends on push frequency: fast=%v slow=%v", fast, slow)
+	}
+}
+
+// Absent optional metrics must not fabricate detector input.
+func TestFuturesMetrics_NilMetricsProduceNoEvents(t *testing.T) {
+	d := NewFuturesMetricsDetector(types.FuturesMetricsConfig{
+		Enabled:      true,
+		OpenInterest: types.OIConfig{Enabled: true, MinChangePct: 5},
+		FundingRate:  types.FundingRateConfig{Enabled: true, AbsRateThreshold: 0.0005},
+	})
+	ctx := context.Background()
+	// Exchange reports neither OI nor funding: nothing may be recorded/emitted.
+	d.OnMetricsUpdate(ctx, "BTC/USDT:USDT", 65000, nil, nil)
+	d.OnMetricsUpdate(ctx, "BTC/USDT:USDT", 65000, nil, nil)
+	select {
+	case evt := <-d.Events():
+		t.Fatalf("unexpected event from absent metrics: %+v", evt)
+	default:
+	}
+	// A real funding zero is an observation, not an anomaly by itself.
+	d.OnMetricsUpdate(ctx, "BTC/USDT:USDT", 65000, nil, fptr(0))
+	select {
+	case evt := <-d.Events():
+		t.Fatalf("real zero funding must not alert: %+v", evt)
+	default:
 	}
 }

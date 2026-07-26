@@ -1,6 +1,7 @@
 package data
 
 import (
+	"context"
 	"os"
 	"testing"
 	"time"
@@ -27,7 +28,7 @@ func TestFetchMarketCapMap_Live(t *testing.T) {
 	if os.Getenv("KAIROS_LIVE_COINGLASS") == "" {
 		t.Skip("set KAIROS_LIVE_COINGLASS=1 to probe live CoinGlass")
 	}
-	m, err := FetchMarketCapMap(20 * time.Second)
+	m, err := FetchMarketCapMap(context.Background(), 20*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}

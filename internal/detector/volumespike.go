@@ -74,6 +74,12 @@ func (d *VolumeSpikeDetector) Name() string { return "volume_spike" }
 // OnTicker processes a ticker update — records both the cumulative volume
 // and the latest price.
 func (d *VolumeSpikeDetector) OnTicker(_ context.Context, ticker types.Ticker) {
+	d.mu.RLock()
+	enabled := d.enabled
+	d.mu.RUnlock()
+	if !enabled {
+		return
+	}
 	now := float64(time.Now().UnixMilli()) / 1000
 
 	if ticker.QuoteVolume != nil {
@@ -99,10 +105,6 @@ func (d *VolumeSpikeDetector) OnTicker(_ context.Context, ticker types.Ticker) {
 
 	d.checkSpike(ticker.Symbol, now)
 }
-
-func (d *VolumeSpikeDetector) OnMetricsUpdate(_ context.Context, _ string, _ float64, _ float64) {}
-func (d *VolumeSpikeDetector) OnLSSnapshot(_ string, _, _ float64)                               {}
-func (d *VolumeSpikeDetector) OnLiquidationSnapshot(_ string, _, _, _ float64)                   {}
 
 func (d *VolumeSpikeDetector) Events() <-chan types.AnomalyEvent { return d.events }
 func (d *VolumeSpikeDetector) Reset() {
@@ -152,7 +154,10 @@ func (d *VolumeSpikeDetector) checkSpike(symbol string, now float64) {
 	windowStart := now - float64(d.windowMinutes)*60
 	recentCutoff := now - 60 // last 1 minute
 
-	var recentDeltas, windowDeltas []float64
+	// Sample time-normalized rates (quote volume per second) so the ratio is
+	// independent of WS push frequency: a delta over 2s and a delta over 10s
+	// contribute comparable values.
+	var recentRates, windowRates []float64
 	for i := 1; i < len(points); i++ {
 		tPrev, vPrev := points[i-1].ts, points[i-1].vol
 		tCurr, vCurr := points[i].ts, points[i].vol
@@ -165,28 +170,28 @@ func (d *VolumeSpikeDetector) checkSpike(symbol string, now float64) {
 		if dt <= 0 {
 			continue
 		}
+		rate := delta / dt
 
 		if tCurr >= recentCutoff {
-			recentDeltas = append(recentDeltas, delta)
+			recentRates = append(recentRates, rate)
 		} else if tCurr >= windowStart {
-			windowDeltas = append(windowDeltas, delta)
+			windowRates = append(windowRates, rate)
 		}
 	}
 
-	if len(recentDeltas) == 0 || len(windowDeltas) == 0 {
+	if len(recentRates) == 0 || len(windowRates) == 0 {
 		return
 	}
 
-	// Compare average per-tick delta, not raw sum (same as Python).
 	var recentSum, windowSum float64
-	for _, v := range recentDeltas {
+	for _, v := range recentRates {
 		recentSum += v
 	}
-	for _, v := range windowDeltas {
+	for _, v := range windowRates {
 		windowSum += v
 	}
-	recentAvg := recentSum / float64(len(recentDeltas))
-	windowAvg := windowSum / float64(len(windowDeltas))
+	recentAvg := recentSum / float64(len(recentRates))
+	windowAvg := windowSum / float64(len(windowRates))
 
 	if windowAvg <= 0 {
 		return
@@ -220,11 +225,13 @@ func (d *VolumeSpikeDetector) checkSpike(symbol string, now float64) {
 	d.priceMu.RUnlock()
 
 	evt := NewEvent(symbol, "volume_spike", string(severity), map[string]any{
-		"price":          round(lastPx, 8),
-		"ratio":          round(ratio, 2),
-		"recent_avg":     round(recentAvg, 2),
-		"window_avg":     round(windowAvg, 2),
-		"window_minutes": d.windowMinutes,
+		"price": round(lastPx, 8),
+		"ratio": round(ratio, 2),
+		// Quote volume per second, averaged over the last minute vs the
+		// baseline window — explicit units in the key names.
+		"recent_rate_quote_per_s": round(recentAvg, 2),
+		"window_rate_quote_per_s": round(windowAvg, 2),
+		"window_minutes":          d.windowMinutes,
 	})
 	evt.Timestamp = now
 

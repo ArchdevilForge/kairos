@@ -8,12 +8,18 @@ import (
 )
 
 // Exchange interface that all exchange adapters implement.
+//
+// FetchOHLCV cursor contract: beforeMs (Unix milliseconds) is an exclusive
+// backward cursor — the call returns up to `limit` of the most recent candles
+// strictly older than beforeMs, sorted ascending. beforeMs=0 means "latest".
+// All adapters implement the same semantics so callers (backtest pagination)
+// can walk from end to start without exchange-specific branches.
 type Exchange interface {
 	Name() string
 	SubscribeTickers(ctx context.Context, symbols []string, tickerCh chan<- types.Ticker) error
 	FetchTickers(ctx context.Context) (map[string]*types.Ticker, error)
 	FetchTicker(ctx context.Context, symbol string) (*types.Ticker, error)
-	FetchOHLCV(ctx context.Context, symbol, timeframe string, limit int, sinceMs int64) ([]types.Candle, error)
+	FetchOHLCV(ctx context.Context, symbol, timeframe string, limit int, beforeMs int64) ([]types.Candle, error)
 	Close() error
 }
 

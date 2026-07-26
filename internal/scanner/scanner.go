@@ -484,7 +484,7 @@ func (s *MarketScanner) loadRSIMap(ctx context.Context) (map[string]data.CoinRSI
 	}
 	ch := make(chan rsiResult, 1)
 	go func() {
-		m, err := data.FetchSpotRSIMap(timeout)
+		m, err := data.FetchSpotRSIMap(ctx, timeout)
 		ch <- rsiResult{m, err}
 	}()
 	select {

@@ -1,6 +1,7 @@
 package exchange
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -25,6 +26,33 @@ func parseFloat(s string) float64 {
 		return 0
 	}
 	return v
+}
+
+// parseFloatPtr distinguishes "field absent/unparseable" (nil) from a real
+// value, including a real zero. Use it for optional metrics (change pct,
+// funding rate, open interest) where 0 is meaningful.
+func parseFloatPtr(s string) *float64 {
+	if s == "" {
+		return nil
+	}
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return nil
+	}
+	return &v
+}
+
+// ctxSleep waits for d or until ctx is done, returning ctx.Err() when
+// cancelled. Used by WS reconnect backoff so shutdown is not delayed.
+func ctxSleep(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
 }
 
 // binanceSymbol converts "BTC/USDT:USDT" → "BTCUSDT".

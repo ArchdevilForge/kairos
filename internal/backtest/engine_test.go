@@ -123,11 +123,11 @@ func TestRound(t *testing.T) {
 }
 
 func TestTsToISO(t *testing.T) {
-	// 2024-01-01T00:00:00Z in ms
-	got := tsToISO(1704067200000)
+	// 2024-01-01T00:00:00Z in Unix seconds (shared OHLCV unit)
+	got := tsToISO(1704067200)
 	expect := "2024-01-01T00:00:00Z"
 	if got != expect {
-		t.Fatalf("tsToISO(1704067200000) = %q, want %q", got, expect)
+		t.Fatalf("tsToISO(1704067200) = %q, want %q", got, expect)
 	}
 }
 

@@ -1,6 +1,7 @@
 package data
 
 import (
+	"context"
 	"os"
 	"testing"
 	"time"
@@ -10,7 +11,7 @@ func TestFetchSpotRSIMap_LiveGo(t *testing.T) {
 	if os.Getenv("KAIROS_LIVE") == "" {
 		t.Skip("set KAIROS_LIVE=1 to run")
 	}
-	m, err := FetchSpotRSIMap(15 * time.Second)
+	m, err := FetchSpotRSIMap(context.Background(), 15*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
