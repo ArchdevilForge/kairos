@@ -61,7 +61,8 @@ type SignalEnvelope struct {
 	Errors        []string       `json:"errors" yaml:"errors"`
 }
 
-// Candle represents a single OHLCV candle.
+// Candle represents a single OHLCV candle. Timestamp is Unix seconds;
+// adapters convert exchange-native milliseconds at the boundary.
 type Candle struct {
 	Timestamp int64   `json:"timestamp" yaml:"timestamp"`
 	Open      float64 `json:"open" yaml:"open"`
@@ -112,9 +113,9 @@ type RiskBounds struct {
 // Setup represents a fully analyzed setup for one symbol and direction.
 type Setup struct {
 	Symbol             string         `json:"symbol" yaml:"symbol"`
-	Direction          string         `json:"direction" yaml:"direction"`
+	Direction          Direction      `json:"direction" yaml:"direction"`
 	SetupType          *string        `json:"setup_type,omitempty" yaml:"setup_type,omitempty"`
-	ActionState        string         `json:"action_state" yaml:"action_state"`
+	ActionState        ActionState    `json:"action_state" yaml:"action_state"`
 	SetupScore         float64        `json:"setup_score" yaml:"setup_score"`
 	Threshold          *float64       `json:"threshold,omitempty" yaml:"threshold,omitempty"`
 	RequiredRiskReward *float64       `json:"required_risk_reward,omitempty" yaml:"required_risk_reward,omitempty"`
@@ -198,6 +199,7 @@ type AlertEvent struct {
 }
 
 // OHLCVArrays holds numpy-style OHLCV arrays (all same length).
+// Timestamps are Unix seconds, matching Candle.Timestamp.
 type OHLCVArrays struct {
 	Timestamps []float64 `json:"timestamps" yaml:"timestamps"`
 	Opens      []float64 `json:"opens" yaml:"opens"`
@@ -213,50 +215,46 @@ type OHLCVArrays struct {
 
 // Config is the top-level Kairos configuration, loaded from config.yaml.
 type Config struct {
-	Exchange             string                `mapstructure:"exchange" json:"exchange" yaml:"exchange"`
-	DefaultTimeframe     string                `mapstructure:"defaultTimeframe" json:"defaultTimeframe" yaml:"defaultTimeframe"`
-	NotificationTimezone string                `mapstructure:"notificationTimezone" json:"notificationTimezone" yaml:"notificationTimezone"`
-	Telegram             TelegramConfig        `mapstructure:"telegram" json:"telegram" yaml:"telegram"`
-	DingTalk             DingTalkConfig        `mapstructure:"dingTalk" json:"dingTalk" yaml:"dingTalk"`
-	DataManager          DataManagerConfig     `mapstructure:"dataManager" json:"dataManager" yaml:"dataManager"`
-	AlertPolicy          AlertPolicyConfig     `mapstructure:"alertPolicy" json:"alertPolicy" yaml:"alertPolicy"`
-	PriceVelocity        PriceVelocityConfig   `mapstructure:"priceVelocity" json:"priceVelocity" yaml:"priceVelocity"`
-	VolumeSpike          VolumeSpikeConfig     `mapstructure:"volumeSpike" json:"volumeSpike" yaml:"volumeSpike"`
-	FuturesMetrics       FuturesMetricsConfig  `mapstructure:"futuresMetrics" json:"futuresMetrics" yaml:"futuresMetrics"`
-	LongShortRatio       LongShortRatioConfig  `mapstructure:"longShortRatio" json:"longShortRatio" yaml:"longShortRatio"`
-	Liquidation          LiquidationConfig     `mapstructure:"liquidation" json:"liquidation" yaml:"liquidation"`
-	ResonanceScorer      ResonanceScorerConfig `mapstructure:"resonanceScorer" json:"resonanceScorer" yaml:"resonanceScorer"`
-	Scanner              ScannerConfig         `mapstructure:"scanner" json:"scanner" yaml:"scanner"`
-	Exchanges            ExchangesConfig       `mapstructure:"exchanges" json:"exchanges" yaml:"exchanges"`
-	Scoring              ScoringConfig         `mapstructure:"scoring" json:"scoring" yaml:"scoring"`
-	Risk                 RiskConfig            `mapstructure:"risk" json:"risk" yaml:"risk"`
-	Storage              StorageConfig         `mapstructure:"storage" json:"storage" yaml:"storage"`
-	Charts               ChartConfig           `mapstructure:"charts" json:"charts" yaml:"charts"`
-	MarketPulse          MarketPulseConfig     `mapstructure:"marketPulse" json:"marketPulse" yaml:"marketPulse"`
-	// AlertMinState is the minimum action state for alerting (env: KAIROS_ALERT_MIN_STATE).
-	AlertMinState string `mapstructure:"-" json:"alert_min_state,omitempty" yaml:"-"`
-	// AlertLimit is the max number of alerts per cycle (env: KAIROS_ALERT_LIMIT).
-	AlertLimit int `mapstructure:"-" json:"alert_limit,omitempty" yaml:"-"`
+	// Exchange is a legacy alias for exchanges.primary / dataManager.exchanges.
+	// Load normalizes it into those fields; new configs should not set it.
+	Exchange        string                `mapstructure:"exchange" json:"exchange,omitempty" yaml:"exchange,omitempty"`
+	Telegram        TelegramConfig        `mapstructure:"telegram" json:"telegram" yaml:"telegram"`
+	DingTalk        DingTalkConfig        `mapstructure:"dingTalk" json:"dingTalk" yaml:"dingTalk"`
+	DataManager     DataManagerConfig     `mapstructure:"dataManager" json:"dataManager" yaml:"dataManager"`
+	AlertPolicy     AlertPolicyConfig     `mapstructure:"alertPolicy" json:"alertPolicy" yaml:"alertPolicy"`
+	PriceVelocity   PriceVelocityConfig   `mapstructure:"priceVelocity" json:"priceVelocity" yaml:"priceVelocity"`
+	VolumeSpike     VolumeSpikeConfig     `mapstructure:"volumeSpike" json:"volumeSpike" yaml:"volumeSpike"`
+	FuturesMetrics  FuturesMetricsConfig  `mapstructure:"futuresMetrics" json:"futuresMetrics" yaml:"futuresMetrics"`
+	LongShortRatio  LongShortRatioConfig  `mapstructure:"longShortRatio" json:"longShortRatio" yaml:"longShortRatio"`
+	Liquidation     LiquidationConfig     `mapstructure:"liquidation" json:"liquidation" yaml:"liquidation"`
+	ResonanceScorer ResonanceScorerConfig `mapstructure:"resonanceScorer" json:"resonanceScorer" yaml:"resonanceScorer"`
+	Scanner         ScannerConfig         `mapstructure:"scanner" json:"scanner" yaml:"scanner"`
+	Exchanges       ExchangesConfig       `mapstructure:"exchanges" json:"exchanges" yaml:"exchanges"`
+	Scoring         ScoringConfig         `mapstructure:"scoring" json:"scoring" yaml:"scoring"`
+	Risk            RiskConfig            `mapstructure:"risk" json:"risk" yaml:"risk"`
+	Storage         StorageConfig         `mapstructure:"storage" json:"storage" yaml:"storage"`
+	Charts          ChartConfig           `mapstructure:"charts" json:"charts" yaml:"charts"`
+	MarketPulse     MarketPulseConfig     `mapstructure:"marketPulse" json:"marketPulse" yaml:"marketPulse"`
 }
 
 // TelegramConfig holds Telegram delivery settings.
+// Secrets come from env only and are excluded from every serialization format.
 type TelegramConfig struct {
-	Enabled   bool   `mapstructure:"enabled" json:"enabled" yaml:"enabled"`
-	ParseMode string `mapstructure:"parseMode" json:"parseMode" yaml:"parseMode"`
-	BotToken  string `mapstructure:"-" json:"bot_token,omitempty" yaml:"-"` // env: TELEGRAM_BOT_TOKEN
-	ChatID    string `mapstructure:"-" json:"chat_id,omitempty" yaml:"-"`   // env: TELEGRAM_CHAT_ID
+	Enabled  bool   `mapstructure:"enabled" json:"enabled" yaml:"enabled"`
+	BotToken string `mapstructure:"-" json:"-" yaml:"-"` // env: TELEGRAM_BOT_TOKEN
+	ChatID   string `mapstructure:"-" json:"-" yaml:"-"` // env: TELEGRAM_CHAT_ID
 }
 
 // DingTalkConfig holds DingTalk custom-robot webhook delivery settings.
-// Secrets come from env only (not YAML).
+// Secrets come from env only and are excluded from every serialization format.
 type DingTalkConfig struct {
 	Enabled    bool   `mapstructure:"enabled" json:"enabled" yaml:"enabled"`
-	WebhookURL string `mapstructure:"-" json:"webhook_url,omitempty" yaml:"-"` // env: DINGTALK_WEBHOOK_URL
-	Secret     string `mapstructure:"-" json:"secret,omitempty" yaml:"-"`      // env: DINGTALK_SECRET (optional sign)
+	WebhookURL string `mapstructure:"-" json:"-" yaml:"-"` // env: DINGTALK_WEBHOOK_URL
+	Secret     string `mapstructure:"-" json:"-" yaml:"-"` // env: DINGTALK_SECRET (optional sign)
 }
 
-// DataManagerConfig controls kairos-watch ticker polling and deduplication.
-// Deprecated name: use alertPolicy for delivery gates; this block configures watch runtime only.
+// DataManagerConfig controls kairosd realtime ticker subscriptions and
+// delivery dedup/cooldown windows.
 type DataManagerConfig struct {
 	Exchanges             []string `mapstructure:"exchanges" json:"exchanges" yaml:"exchanges"`
 	TopSymbols            int      `mapstructure:"topSymbols" json:"topSymbols" yaml:"topSymbols"`
@@ -310,11 +308,10 @@ type VolumeSpikeConfig struct {
 
 // FuturesMetricsConfig controls open interest and funding rate polling.
 type FuturesMetricsConfig struct {
-	Enabled               bool              `mapstructure:"enabled" json:"enabled" yaml:"enabled"`
-	PollIntervalSeconds   int               `mapstructure:"pollIntervalSeconds" json:"pollIntervalSeconds" yaml:"pollIntervalSeconds"`
-	FetchFundingPerSymbol bool              `mapstructure:"fetchFundingPerSymbol" json:"fetchFundingPerSymbol" yaml:"fetchFundingPerSymbol"`
-	OpenInterest          OIConfig          `mapstructure:"openInterest" json:"openInterest" yaml:"openInterest"`
-	FundingRate           FundingRateConfig `mapstructure:"fundingRate" json:"fundingRate" yaml:"fundingRate"`
+	Enabled             bool              `mapstructure:"enabled" json:"enabled" yaml:"enabled"`
+	PollIntervalSeconds int               `mapstructure:"pollIntervalSeconds" json:"pollIntervalSeconds" yaml:"pollIntervalSeconds"`
+	OpenInterest        OIConfig          `mapstructure:"openInterest" json:"openInterest" yaml:"openInterest"`
+	FundingRate         FundingRateConfig `mapstructure:"fundingRate" json:"fundingRate" yaml:"fundingRate"`
 }
 
 // OIConfig controls open interest change detection.
@@ -364,8 +361,8 @@ type ResonanceScorerConfig struct {
 }
 
 // ScannerConfig defines scanner workflow limits and timeout budgets.
+// Scheduling is external (cron/systemd timer); the scanner itself is one-shot.
 type ScannerConfig struct {
-	IntervalSeconds               int      `mapstructure:"intervalSeconds" json:"intervalSeconds" yaml:"intervalSeconds"`
 	UniverseSize                  int      `mapstructure:"universeSize" json:"universeSize" yaml:"universeSize"`
 	CandidateLimit                int      `mapstructure:"candidateLimit" json:"candidateLimit" yaml:"candidateLimit"`
 	DeepAnalysisLimit             int      `mapstructure:"deepAnalysisLimit" json:"deepAnalysisLimit" yaml:"deepAnalysisLimit"`
@@ -376,13 +373,11 @@ type ScannerConfig struct {
 	GenerateChartsByDefault       bool     `mapstructure:"generateChartsByDefault" json:"generateChartsByDefault" yaml:"generateChartsByDefault"`
 }
 
-// ExchangesConfig defines exchange selection and symbol-normalization settings.
+// ExchangesConfig defines exchange selection. Symbol normalization is fixed
+// to canonical USDT perpetuals in the adapters.
 type ExchangesConfig struct {
-	Primary        string   `mapstructure:"primary" json:"primary" yaml:"primary"`
-	Backups        []string `mapstructure:"backups" json:"backups" yaml:"backups"`
-	RateLimit      bool     `mapstructure:"rateLimit" json:"rateLimit" yaml:"rateLimit"`
-	CanonicalQuote string   `mapstructure:"canonicalQuote" json:"canonicalQuote" yaml:"canonicalQuote"`
-	Settle         string   `mapstructure:"settle" json:"settle" yaml:"settle"`
+	Primary string   `mapstructure:"primary" json:"primary" yaml:"primary"`
+	Backups []string `mapstructure:"backups" json:"backups" yaml:"backups"`
 }
 
 // ScoringConfig defines deterministic scoring thresholds and weights.
@@ -418,21 +413,20 @@ type RiskConfig struct {
 	InverseCyclePositionMultiplier float64            `mapstructure:"inverseCyclePositionMultiplier" json:"inverseCyclePositionMultiplier" yaml:"inverseCyclePositionMultiplier"`
 }
 
-// StorageConfig defines persistence configuration.
+// StorageConfig defines persistence configuration. DatabasePath anchors the
+// storage directory; MarketPulse events/outcomes and watch hints are JSONL
+// sidecar files next to it.
 type StorageConfig struct {
 	DatabasePath            string  `mapstructure:"databasePath" json:"databasePath" yaml:"databasePath"`
-	RetentionDays           int     `mapstructure:"retentionDays" json:"retentionDays" yaml:"retentionDays"`
-	JSONLExport             bool    `mapstructure:"jsonlExport" json:"jsonlExport" yaml:"jsonlExport"`
-	JSONLPath               string  `mapstructure:"jsonlPath" json:"jsonlPath" yaml:"jsonlPath"`
 	WatchHintsPath          string  `mapstructure:"watchHintsPath" json:"watchHintsPath" yaml:"watchHintsPath"`
 	WatchHintRetentionHours float64 `mapstructure:"watchHintRetentionHours" json:"watchHintRetentionHours" yaml:"watchHintRetentionHours"`
 	WatchHintScoreBoost     float64 `mapstructure:"watchHintScoreBoost" json:"watchHintScoreBoost" yaml:"watchHintScoreBoost"`
 }
 
-// ChartConfig defines chart generation policy.
+// ChartConfig defines chart-spec generation policy. Kairos emits chart specs
+// only; rendering is a downstream concern.
 type ChartConfig struct {
 	DefaultChartCount            int     `mapstructure:"defaultChartCount" json:"defaultChartCount" yaml:"defaultChartCount"`
 	OutputPath                   string  `mapstructure:"outputPath" json:"outputPath" yaml:"outputPath"`
-	CleanupDays                  int     `mapstructure:"cleanupDays" json:"cleanupDays" yaml:"cleanupDays"`
 	MultiTimeframeScoreThreshold float64 `mapstructure:"multiTimeframeScoreThreshold" json:"multiTimeframeScoreThreshold" yaml:"multiTimeframeScoreThreshold"`
 }

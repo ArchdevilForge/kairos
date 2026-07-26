@@ -13,6 +13,26 @@ import (
 
 const marketPulseSymbol = "MARKET"
 
+// Fixed observation windows. The detector always computes 60s/180s/300s
+// returns; these are algorithm constants, not configuration.
+const (
+	impulseWindowSeconds = 60
+	trendWindowSeconds   = 300
+	stressWindowSeconds  = 60
+)
+
+// eventWindowSeconds reports the real observation window per event type.
+func eventWindowSeconds(eventType string) int {
+	switch eventType {
+	case "market_trend":
+		return trendWindowSeconds
+	case "market_stress":
+		return stressWindowSeconds
+	default:
+		return impulseWindowSeconds
+	}
+}
+
 // MarketPulseDetector aggregates primary-exchange tickers into a market-level
 // state machine (QUIET / IMPULSE / TRENDING / STRESS / DECAY).
 //
@@ -154,9 +174,6 @@ func normalizeMarketPulseConfig(cfg types.MarketPulseConfig) types.MarketPulseCo
 	if cfg.Volatility.FloorPct <= 0 {
 		cfg.Volatility.FloorPct = 0.03
 	}
-	if cfg.Impulse.WindowSeconds <= 0 {
-		cfg.Impulse.WindowSeconds = 60
-	}
 	if cfg.Impulse.MinBreadth <= 0 {
 		cfg.Impulse.MinBreadth = 0.65
 	}
@@ -172,9 +189,6 @@ func normalizeMarketPulseConfig(cfg types.MarketPulseConfig) types.MarketPulseCo
 	if cfg.Impulse.ConfirmationWindowSamples <= 0 {
 		cfg.Impulse.ConfirmationWindowSamples = 4
 	}
-	if cfg.Trend.WindowSeconds <= 0 {
-		cfg.Trend.WindowSeconds = 300
-	}
 	if cfg.Trend.MinBreadth <= 0 {
 		cfg.Trend.MinBreadth = 0.60
 	}
@@ -189,9 +203,6 @@ func normalizeMarketPulseConfig(cfg types.MarketPulseConfig) types.MarketPulseCo
 	}
 	if cfg.Trend.ConfirmationWindowSamples <= 0 {
 		cfg.Trend.ConfirmationWindowSamples = 6
-	}
-	if cfg.Stress.WindowSeconds <= 0 {
-		cfg.Stress.WindowSeconds = 60
 	}
 	if cfg.Stress.MinBreadth <= 0 {
 		cfg.Stress.MinBreadth = 0.80
@@ -975,7 +986,7 @@ func (d *MarketPulseDetector) emitLocked(
 		"direction":              dir,
 		"state_from":             string(from),
 		"state_to":               string(to),
-		"window_seconds":         d.cfg.Impulse.WindowSeconds,
+		"window_seconds":         eventWindowSeconds(eventType),
 		"median_return_60s_pct":  round(snap.MedianReturn60s, 4),
 		"median_return_300s_pct": round(snap.MedianReturn300s, 4),
 		"median_z_60s":           round(snap.MedianZ60s, 4),

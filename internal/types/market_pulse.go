@@ -45,10 +45,9 @@ type MarketPulseConfig struct {
 	StressCooldownSeconds int `mapstructure:"stressCooldownSeconds" json:"stressCooldownSeconds" yaml:"stressCooldownSeconds"`
 
 	// GateIndividualAlertsWhenQuiet suppresses ordinary price_velocity
-	// Telegram alerts while market state is QUIET (Phase 3).
-	GateIndividualAlertsWhenQuiet bool    `mapstructure:"gateIndividualAlertsWhenQuiet" json:"gateIndividualAlertsWhenQuiet" yaml:"gateIndividualAlertsWhenQuiet"`
-	AllowIsolatedExtremeWhenQuiet bool    `mapstructure:"allowIsolatedExtremeWhenQuiet" json:"allowIsolatedExtremeWhenQuiet" yaml:"allowIsolatedExtremeWhenQuiet"`
-	IsolatedExtremeMinZ           float64 `mapstructure:"isolatedExtremeMinZ" json:"isolatedExtremeMinZ" yaml:"isolatedExtremeMinZ"`
+	// Telegram alerts while market state is QUIET (Phase 3). Ignored while
+	// ShadowMode is on: shadow must not change single-symbol behaviour.
+	GateIndividualAlertsWhenQuiet bool `mapstructure:"gateIndividualAlertsWhenQuiet" json:"gateIndividualAlertsWhenQuiet" yaml:"gateIndividualAlertsWhenQuiet"`
 }
 
 // MarketPulseVolatilityConfig configures per-symbol EWMA volatility / Z.
@@ -59,8 +58,8 @@ type MarketPulseVolatilityConfig struct {
 }
 
 // MarketPulseImpulseConfig is the short-window market launch detector.
+// The observation window is fixed at 60s in the detector.
 type MarketPulseImpulseConfig struct {
-	WindowSeconds             int     `mapstructure:"windowSeconds" json:"windowSeconds" yaml:"windowSeconds"`
 	MinBreadth                float64 `mapstructure:"minBreadth" json:"minBreadth" yaml:"minBreadth"`
 	MinMedianReturnPct        float64 `mapstructure:"minMedianReturnPct" json:"minMedianReturnPct" yaml:"minMedianReturnPct"`
 	MinMedianZ                float64 `mapstructure:"minMedianZ" json:"minMedianZ" yaml:"minMedianZ"`
@@ -69,8 +68,8 @@ type MarketPulseImpulseConfig struct {
 }
 
 // MarketPulseTrendConfig confirms sustained direction after impulse.
+// The observation window is fixed at 300s in the detector.
 type MarketPulseTrendConfig struct {
-	WindowSeconds             int     `mapstructure:"windowSeconds" json:"windowSeconds" yaml:"windowSeconds"`
 	MinBreadth                float64 `mapstructure:"minBreadth" json:"minBreadth" yaml:"minBreadth"`
 	MinMedianReturnPct        float64 `mapstructure:"minMedianReturnPct" json:"minMedianReturnPct" yaml:"minMedianReturnPct"`
 	MinPersistSeconds         int     `mapstructure:"minPersistSeconds" json:"minPersistSeconds" yaml:"minPersistSeconds"`
@@ -79,8 +78,8 @@ type MarketPulseTrendConfig struct {
 }
 
 // MarketPulseStressConfig detects extreme synchronous moves.
+// The observation window is fixed at 60s in the detector.
 type MarketPulseStressConfig struct {
-	WindowSeconds      int     `mapstructure:"windowSeconds" json:"windowSeconds" yaml:"windowSeconds"`
 	MinBreadth         float64 `mapstructure:"minBreadth" json:"minBreadth" yaml:"minBreadth"`
 	MinMedianReturnPct float64 `mapstructure:"minMedianReturnPct" json:"minMedianReturnPct" yaml:"minMedianReturnPct"`
 	MinMedianZ         float64 `mapstructure:"minMedianZ" json:"minMedianZ" yaml:"minMedianZ"`
@@ -104,34 +103,37 @@ type MarketPulseLeadersConfig struct {
 
 // MarketSnapshot is one cross-sectional observation.
 type MarketSnapshot struct {
-	Timestamp       float64
-	UniverseSize    int
-	EligibleSymbols int
-	ValidSymbols    int
-	FreshRatio      float64
+	Timestamp       float64 `json:"timestamp" yaml:"timestamp"`
+	UniverseSize    int     `json:"universe_size" yaml:"universe_size"`
+	EligibleSymbols int     `json:"eligible_symbols" yaml:"eligible_symbols"`
+	ValidSymbols    int     `json:"valid_symbols" yaml:"valid_symbols"`
+	// ValidSymbols300s counts symbols with a usable 300s lookback; the trend
+	// gate uses this instead of the 60s ValidSymbols count.
+	ValidSymbols300s int     `json:"valid_symbols_300s" yaml:"valid_symbols_300s"`
+	FreshRatio       float64 `json:"fresh_ratio" yaml:"fresh_ratio"`
 
-	MedianReturn60s  float64
-	MedianReturn180s float64
-	MedianReturn300s float64
-	MedianZ60s       float64
+	MedianReturn60s  float64 `json:"median_return_60s" yaml:"median_return_60s"`
+	MedianReturn180s float64 `json:"median_return_180s" yaml:"median_return_180s"`
+	MedianReturn300s float64 `json:"median_return_300s" yaml:"median_return_300s"`
+	MedianZ60s       float64 `json:"median_z_60s" yaml:"median_z_60s"`
 
-	UpBreadth60s   float64
-	DownBreadth60s float64
+	UpBreadth60s   float64 `json:"up_breadth_60s" yaml:"up_breadth_60s"`
+	DownBreadth60s float64 `json:"down_breadth_60s" yaml:"down_breadth_60s"`
 
-	Advancers int
-	Decliners int
-	Neutral   int
+	Advancers int `json:"advancers" yaml:"advancers"`
+	Decliners int `json:"decliners" yaml:"decliners"`
+	Neutral   int `json:"neutral" yaml:"neutral"`
 
-	BTCReturn60s *float64
-	ETHReturn60s *float64
+	BTCReturn60s *float64 `json:"btc_return_60s,omitempty" yaml:"btc_return_60s,omitempty"`
+	ETHReturn60s *float64 `json:"eth_return_60s,omitempty" yaml:"eth_return_60s,omitempty"`
 
-	Leaders  []SymbolMove
-	Laggards []SymbolMove
+	Leaders  []SymbolMove `json:"leaders" yaml:"leaders"`
+	Laggards []SymbolMove `json:"laggards" yaml:"laggards"`
 
 	// DataOK is false when freshness/valid-count gates fail.
-	DataOK bool
+	DataOK bool `json:"data_ok" yaml:"data_ok"`
 	// GateReason explains why DataOK is false (empty when ok).
-	GateReason string
+	GateReason string `json:"gate_reason,omitempty" yaml:"gate_reason,omitempty"`
 }
 
 // SymbolMove is a symbol's return relative to the market median.

@@ -1,9 +1,13 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"go.yaml.in/yaml/v3"
 )
 
 func TestLoadString_Defaults(t *testing.T) {
@@ -46,9 +50,12 @@ scanner:
 	if cfg.Scanner.UniverseSize != 12 {
 		t.Fatalf("universeSize: got %d", cfg.Scanner.UniverseSize)
 	}
-	// preserved default
-	if cfg.NotificationTimezone != "Asia/Shanghai" {
-		t.Fatalf("timezone: got %q", cfg.NotificationTimezone)
+	// Legacy alias must propagate to both authorities.
+	if cfg.Exchanges.Primary != "binance" {
+		t.Fatalf("primary should follow legacy exchange alias, got %q", cfg.Exchanges.Primary)
+	}
+	if len(cfg.DataManager.Exchanges) != 1 || cfg.DataManager.Exchanges[0] != "binance" {
+		t.Fatalf("dataManager.exchanges should follow legacy alias, got %v", cfg.DataManager.Exchanges)
 	}
 }
 
@@ -62,8 +69,8 @@ func TestLoad_FromFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Exchange != "bybit" {
-		t.Fatalf("exchange: got %q", cfg.Exchange)
+	if cfg.Exchange != "bybit" || cfg.Exchanges.Primary != "bybit" {
+		t.Fatalf("exchange: got %q primary %q", cfg.Exchange, cfg.Exchanges.Primary)
 	}
 }
 
@@ -74,8 +81,8 @@ func TestLoadEnvOverrides(t *testing.T) {
 	}
 	t.Setenv("TELEGRAM_BOT_TOKEN", "tok")
 	t.Setenv("TELEGRAM_CHAT_ID", "-100")
-	t.Setenv("KAIROS_ALERT_MIN_STATE", "watch")
-	t.Setenv("KAIROS_ALERT_LIMIT", "3")
+	t.Setenv("DINGTALK_WEBHOOK_URL", "https://oapi.dingtalk.com/robot/send?access_token=x")
+	t.Setenv("DINGTALK_SECRET", "SECxyz")
 	LoadEnvOverrides(cfg)
 	if cfg.Telegram.BotToken != "tok" {
 		t.Fatalf("token: %q", cfg.Telegram.BotToken)
@@ -83,11 +90,118 @@ func TestLoadEnvOverrides(t *testing.T) {
 	if cfg.Telegram.ChatID != "-100" {
 		t.Fatalf("chat: %q", cfg.Telegram.ChatID)
 	}
-	if cfg.AlertMinState != "watch" {
-		t.Fatalf("min state: %q", cfg.AlertMinState)
+	if cfg.DingTalk.WebhookURL == "" || cfg.DingTalk.Secret != "SECxyz" {
+		t.Fatalf("dingtalk env: %+v", cfg.DingTalk)
 	}
-	if cfg.AlertLimit != 3 {
-		t.Fatalf("limit: %d", cfg.AlertLimit)
+}
+
+func TestSecretsNeverSerialized(t *testing.T) {
+	cfg, err := LoadString("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Telegram.BotToken = "super-secret-token"
+	cfg.Telegram.ChatID = "-1001234"
+	cfg.DingTalk.WebhookURL = "https://oapi.dingtalk.com/robot/send?access_token=tok"
+	cfg.DingTalk.Secret = "SECsecret"
+
+	jsonOut, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	yamlOut, err := yaml.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, leak := range []string{"super-secret-token", "-1001234", "access_token=tok", "SECsecret"} {
+		if strings.Contains(string(jsonOut), leak) {
+			t.Fatalf("JSON serialization leaks secret %q", leak)
+		}
+		if strings.Contains(string(yamlOut), leak) {
+			t.Fatalf("YAML serialization leaks secret %q", leak)
+		}
+	}
+}
+
+func TestValidate_RejectsBrokenConfigs(t *testing.T) {
+	cases := []struct {
+		name string
+		yaml string
+		want string
+	}{
+		{
+			name: "primary not in realtime set",
+			yaml: "exchanges:\n  primary: binance\ndataManager:\n  exchanges: [okx]\n",
+			want: "must be included in dataManager.exchanges",
+		},
+		{
+			name: "unknown exchange",
+			yaml: "exchange: kraken\n",
+			want: "not a supported exchange",
+		},
+		{
+			name: "missing core timeframe",
+			yaml: "scanner:\n  timeframes: [\"1d\", \"4h\"]\n",
+			want: "scanner.timeframes must include",
+		},
+		{
+			name: "negative deep analysis limit",
+			yaml: "scanner:\n  deepAnalysisLimit: -1\n",
+			want: "deepAnalysisLimit",
+		},
+		{
+			name: "bad severity",
+			yaml: "alertPolicy:\n  enabled: true\n  minSeverity: CRITICAL\n",
+			want: "minSeverity",
+		},
+		{
+			name: "empty allow list while enabled",
+			yaml: "alertPolicy:\n  enabled: true\n  allowedEventTypes: []\n",
+			want: "allowedEventTypes must not be empty",
+		},
+		{
+			name: "resonance enabled but not allowed",
+			yaml: "resonanceScorer:\n  enabled: true\nalertPolicy:\n  enabled: true\n  allowedEventTypes: [\"price_velocity\"]\n",
+			want: "lacks \"resonance\"",
+		},
+		{
+			name: "market pulse ratio out of range",
+			yaml: "marketPulse:\n  enabled: true\n  minFreshRatio: 1.5\n",
+			want: "minFreshRatio",
+		},
+		{
+			name: "confirmation samples exceed window",
+			yaml: "marketPulse:\n  enabled: true\n  impulse:\n    confirmationSamples: 5\n    confirmationWindowSamples: 4\n",
+			want: "confirmationSamples",
+		},
+		{
+			name: "retention below fixed trend window",
+			yaml: "marketPulse:\n  enabled: true\n  historyRetentionSeconds: 120\n",
+			want: "historyRetentionSeconds",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := LoadString(tc.yaml)
+			if err == nil {
+				t.Fatalf("expected validation error containing %q, got nil", tc.want)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error %q does not contain %q", err.Error(), tc.want)
+			}
+		})
+	}
+}
+
+func TestValidate_AggregatesAllProblems(t *testing.T) {
+	_, err := LoadString("exchange: kraken\nscanner:\n  universeSize: -1\n  timeframes: [\"1d\"]\n")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	for _, want := range []string{"kraken", "universeSize", "timeframes"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("aggregated error missing %q: %v", want, err)
+		}
 	}
 }
 

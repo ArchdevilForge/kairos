@@ -3,7 +3,6 @@ package config
 import (
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
 
 	"github.com/ArchdevilForge/kairos/internal/types"
@@ -30,6 +29,10 @@ func Load(path string) (*types.Config, error) {
 	}
 
 	LoadEnvOverrides(&cfg)
+	Normalize(&cfg)
+	if err := Validate(&cfg); err != nil {
+		return nil, err
+	}
 	return &cfg, nil
 }
 
@@ -50,6 +53,10 @@ func LoadString(yamlContent string) (*types.Config, error) {
 	}
 
 	LoadEnvOverrides(&cfg)
+	Normalize(&cfg)
+	if err := Validate(&cfg); err != nil {
+		return nil, err
+	}
 	return &cfg, nil
 }
 
@@ -68,25 +75,15 @@ func LoadEnvOverrides(cfg *types.Config) {
 	if secret := os.Getenv("DINGTALK_SECRET"); secret != "" {
 		cfg.DingTalk.Secret = secret
 	}
-	if minState := os.Getenv("KAIROS_ALERT_MIN_STATE"); minState != "" {
-		cfg.AlertMinState = minState
-	}
-	if limitStr := os.Getenv("KAIROS_ALERT_LIMIT"); limitStr != "" {
-		if limit, err := strconv.Atoi(limitStr); err == nil {
-			cfg.AlertLimit = limit
-		}
-	}
 }
 
-// setDefaults populates viper defaults matching the Python _DEFAULT_CONFIG.
+// setDefaults populates viper defaults. Exchange authorities (exchange,
+// exchanges.primary, dataManager.exchanges) intentionally have no defaults
+// here: Normalize resolves them after unmarshal so the legacy top-level
+// `exchange` alias still works.
 func setDefaults(v *viper.Viper) {
-	v.SetDefault("exchange", "okx")
-	v.SetDefault("defaultTimeframe", "1d")
-	v.SetDefault("notificationTimezone", "Asia/Shanghai")
-
 	v.SetDefault("telegram", map[string]any{
-		"enabled":   true,
-		"parseMode": "HTML",
+		"enabled": true,
 	})
 
 	// DingTalk custom-robot mirror; off until webhook env is set and enabled=true.
@@ -95,7 +92,6 @@ func setDefaults(v *viper.Viper) {
 	})
 
 	v.SetDefault("dataManager", map[string]any{
-		"exchanges":             []string{"okx"},
 		"topSymbols":            30,
 		"refreshIntervalHours":  4,
 		"dedupWindowSeconds":    5,
@@ -106,6 +102,7 @@ func setDefaults(v *viper.Viper) {
 		"enabled": true,
 		"allowedEventTypes": []string{
 			"price_velocity",
+			"resonance",
 			"market_impulse",
 			"market_trend",
 			"market_stress",
@@ -145,9 +142,8 @@ func setDefaults(v *viper.Viper) {
 	})
 
 	v.SetDefault("futuresMetrics", map[string]any{
-		"enabled":               false,
-		"pollIntervalSeconds":   300,
-		"fetchFundingPerSymbol": true,
+		"enabled":             false,
+		"pollIntervalSeconds": 300,
 		"openInterest": map[string]any{
 			"enabled":           false,
 			"minChangePct":      5.0,
@@ -190,7 +186,6 @@ func setDefaults(v *viper.Viper) {
 	})
 
 	v.SetDefault("scanner", map[string]any{
-		"intervalSeconds":               300,
 		"universeSize":                  30,
 		"candidateLimit":                20,
 		"deepAnalysisLimit":             10,
@@ -202,11 +197,7 @@ func setDefaults(v *viper.Viper) {
 	})
 
 	v.SetDefault("exchanges", map[string]any{
-		"primary":        "okx",
-		"backups":        []string{},
-		"rateLimit":      true,
-		"canonicalQuote": "USDT",
-		"settle":         "USDT",
+		"backups": []string{},
 	})
 
 	v.SetDefault("scoring", map[string]any{
@@ -266,9 +257,6 @@ func setDefaults(v *viper.Viper) {
 
 	v.SetDefault("storage", map[string]any{
 		"databasePath":            "~/.local/share/kairos/kairos.db",
-		"retentionDays":           90,
-		"jsonlExport":             false,
-		"jsonlPath":               "",
 		"watchHintRetentionHours": 24.0,
 		"watchHintScoreBoost":     0.5,
 	})
@@ -276,7 +264,6 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("charts", map[string]any{
 		"defaultChartCount":            1,
 		"outputPath":                   "~/.local/share/kairos/charts",
-		"cleanupDays":                  7,
 		"multiTimeframeScoreThreshold": 8.0,
 	})
 
@@ -306,7 +293,6 @@ func setDefaults(v *viper.Viper) {
 			"floorPct":  0.03,
 		},
 		"impulse": map[string]any{
-			"windowSeconds":             60,
 			"minBreadth":                0.65,
 			"minMedianReturnPct":        0.18,
 			"minMedianZ":                1.5,
@@ -314,7 +300,6 @@ func setDefaults(v *viper.Viper) {
 			"confirmationWindowSamples": 4,
 		},
 		"trend": map[string]any{
-			"windowSeconds":             300,
 			"minBreadth":                0.60,
 			"minMedianReturnPct":        0.45,
 			"minPersistSeconds":         180,
@@ -322,7 +307,6 @@ func setDefaults(v *viper.Viper) {
 			"confirmationWindowSamples": 6,
 		},
 		"stress": map[string]any{
-			"windowSeconds":      60,
 			"minBreadth":         0.80,
 			"minMedianReturnPct": 0.35,
 			"minMedianZ":         2.5,
@@ -341,7 +325,5 @@ func setDefaults(v *viper.Viper) {
 		"cooldownSeconds":               600,
 		"stressCooldownSeconds":         300,
 		"gateIndividualAlertsWhenQuiet": false, // Phase 3 switch; off in Phase 1
-		"allowIsolatedExtremeWhenQuiet": false,
-		"isolatedExtremeMinZ":           4.0,
 	})
 }

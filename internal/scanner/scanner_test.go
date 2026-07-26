@@ -127,23 +127,23 @@ func TestDetectSupportAtBoxLow(t *testing.T) {
 func TestApplyStrategyActionGate(t *testing.T) {
 	s := NewMarketScanner(&types.Config{})
 
-	state, w := s.ApplyStrategyActionGate(string(types.ActionStateTradeCandidate), types.DirectionLong, "winter", "down")
-	if state != string(types.ActionStatePrepare) || len(w) == 0 {
+	state, w := s.ApplyStrategyActionGate(types.ActionStateTradeCandidate, types.DirectionLong, "winter", "down")
+	if state != types.ActionStatePrepare || len(w) == 0 {
 		t.Fatalf("winter long: state=%s warnings=%v", state, w)
 	}
 
-	state, w = s.ApplyStrategyActionGate(string(types.ActionStateTradeCandidate), types.DirectionShort, "winter", "down")
-	if state != string(types.ActionStateTradeCandidate) || len(w) != 0 {
+	state, w = s.ApplyStrategyActionGate(types.ActionStateTradeCandidate, types.DirectionShort, "winter", "down")
+	if state != types.ActionStateTradeCandidate || len(w) != 0 {
 		t.Fatalf("winter short should pass: state=%s warnings=%v", state, w)
 	}
 
-	state, w = s.ApplyStrategyActionGate(string(types.ActionStateTradeCandidate), types.DirectionLong, "autumn", "sideways")
-	if state != string(types.ActionStatePrepare) || len(w) == 0 {
+	state, w = s.ApplyStrategyActionGate(types.ActionStateTradeCandidate, types.DirectionLong, "autumn", "sideways")
+	if state != types.ActionStatePrepare || len(w) == 0 {
 		t.Fatalf("autumn non-resonance long: state=%s warnings=%v", state, w)
 	}
 
-	state, _ = s.ApplyStrategyActionGate(string(types.ActionStateWatch), types.DirectionLong, "winter", "down")
-	if state != string(types.ActionStateWatch) {
+	state, _ = s.ApplyStrategyActionGate(types.ActionStateWatch, types.DirectionLong, "winter", "down")
+	if state != types.ActionStateWatch {
 		t.Fatalf("non-candidate states unchanged: %s", state)
 	}
 }

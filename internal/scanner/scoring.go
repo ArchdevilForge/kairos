@@ -243,7 +243,7 @@ func (s *MarketScanner) scoreDirection(
 	actionState, gateWarnings := s.ApplyStrategyActionGate(actionState, direction, phase, btcTrend)
 	warnings = append(warnings, gateWarnings...)
 
-	if actionState != string(types.ActionStateTradeCandidate) && setupScore >= threshold {
+	if actionState != types.ActionStateTradeCandidate && setupScore >= threshold {
 		warnings = append(warnings, "score threshold met but trigger/RR requirements block trade_candidate")
 	}
 
@@ -256,7 +256,7 @@ func (s *MarketScanner) scoreDirection(
 
 	return types.Setup{
 		Symbol:             symbol,
-		Direction:          string(direction),
+		Direction:          direction,
 		SetupType:          &setupTypeStr,
 		ActionState:        actionState,
 		SetupScore:         setupScore,
@@ -441,37 +441,37 @@ func (s *MarketScanner) determineActionState(
 	setupScore, threshold, riskReward, requiredRR float64,
 	triggered, nearTrigger bool,
 	candidateScore float64,
-) string {
+) types.ActionState {
 	if setupScore >= threshold && riskReward >= requiredRR && triggered {
-		return string(types.ActionStateTradeCandidate)
+		return types.ActionStateTradeCandidate
 	}
 	if setupScore >= threshold-1.0 && nearTrigger {
-		return string(types.ActionStatePrepare)
+		return types.ActionStatePrepare
 	}
 	if candidateScore >= 2.0 {
-		return string(types.ActionStateWatch)
+		return types.ActionStateWatch
 	}
-	return string(types.ActionStateNoTrade)
+	return types.ActionStateNoTrade
 }
 
 // ApplyStrategyActionGate downgrades trade_candidate when market cycle policy
 // from docs/trading-system.md conflicts with a deterministic pass.
 func (s *MarketScanner) ApplyStrategyActionGate(
-	state string,
+	state types.ActionState,
 	direction types.Direction,
 	phase, btcTrend string,
-) (string, []string) {
-	if state != string(types.ActionStateTradeCandidate) {
+) (types.ActionState, []string) {
+	if state != types.ActionStateTradeCandidate {
 		return state, nil
 	}
 	var w []string
 	if phase == "winter" && direction == types.DirectionLong {
 		w = append(w, "winter cycle: long trade_candidate withheld (strategy: hibernate)")
-		return string(types.ActionStatePrepare), w
+		return types.ActionStatePrepare, w
 	}
 	if phase == "autumn" && direction == types.DirectionLong && btcTrend != "up" {
 		w = append(w, "autumn non-resonance: long trade_candidate downgraded to prepare")
-		return string(types.ActionStatePrepare), w
+		return types.ActionStatePrepare, w
 	}
 	return state, nil
 }

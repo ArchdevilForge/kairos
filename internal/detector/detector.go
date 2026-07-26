@@ -1,7 +1,6 @@
 package detector
 
 import (
-	"context"
 	"log/slog"
 	"sync"
 	"time"
@@ -9,18 +8,10 @@ import (
 	"github.com/ArchdevilForge/kairos/internal/types"
 )
 
-// Detector is the interface all anomaly detectors implement.
-type Detector interface {
-	Name() string
-	OnTicker(ctx context.Context, ticker types.Ticker)
-	OnMetricsUpdate(ctx context.Context, symbol string, oi float64, fundingRate float64)
-	OnLSSnapshot(symbol string, longRate, shortRate float64)
-	OnLiquidationSnapshot(symbol string, totalUSD, longUSD, shortUSD float64)
-	Events() <-chan types.AnomalyEvent
-	Reset()
-}
-
 // BaseDetector provides shared fields (cooldown, logger, event channel).
+// There is deliberately no umbrella Detector interface: the pipeline wires
+// concrete detectors directly, and a catch-all interface only forced no-op
+// methods (and a fake price=0 on metrics events) without compile-time value.
 type BaseDetector struct {
 	mu        sync.RWMutex
 	Logger    *slog.Logger

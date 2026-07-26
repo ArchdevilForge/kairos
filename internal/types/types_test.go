@@ -2,6 +2,7 @@ package types
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -87,5 +88,44 @@ func TestBoxPattern_Methods(t *testing.T) {
 	zero := BoxPattern{Low: 0}
 	if zero.HeightPct() != 0 {
 		t.Fatal("zero low")
+	}
+}
+
+func TestAnomalyEventSerializationRoundTrip(t *testing.T) {
+	evt := AnomalyEvent{
+		Symbol:    "BTC/USDT:USDT",
+		EventType: "price_velocity",
+		Severity:  SeverityHigh,
+		Data:      map[string]any{"change_pct": 1.2},
+		Timestamp: 1753500000.5,
+		Exchange:  "okx",
+		EventID:   "okx:BTC/USDT:USDT:price_velocity:1753500000",
+	}
+	raw, err := json.Marshal(evt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back AnomalyEvent
+	if err := json.Unmarshal(raw, &back); err != nil {
+		t.Fatal(err)
+	}
+	if back.Exchange != evt.Exchange || back.EventID != evt.EventID || back.Timestamp != evt.Timestamp {
+		t.Fatalf("round trip lost provenance: %+v", back)
+	}
+}
+
+func TestMarketSnapshotJSONTags(t *testing.T) {
+	raw, err := json.Marshal(MarketSnapshot{Timestamp: 1, ValidSymbols: 2, DataOK: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(raw)
+	for _, want := range []string{`"timestamp"`, `"valid_symbols"`, `"data_ok"`, `"up_breadth_60s"`} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("snapshot JSON missing snake_case key %s: %s", want, s)
+		}
+	}
+	if strings.Contains(s, `"ValidSymbols"`) {
+		t.Fatalf("snapshot JSON leaked PascalCase keys: %s", s)
 	}
 }

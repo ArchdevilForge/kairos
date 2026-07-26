@@ -10,8 +10,8 @@ import (
 // TestCycleStrategyGate documents that winter long candidates are withheld in scanner scoring.
 func TestCycleStrategyGate(t *testing.T) {
 	s := scanner.NewMarketScanner(&types.Config{})
-	state, w := s.ApplyStrategyActionGate(string(types.ActionStateTradeCandidate), types.DirectionLong, "winter", "down")
-	if state != string(types.ActionStatePrepare) {
+	state, w := s.ApplyStrategyActionGate(types.ActionStateTradeCandidate, types.DirectionLong, "winter", "down")
+	if state != types.ActionStatePrepare {
 		t.Fatalf("winter long gate: %s", state)
 	}
 	if len(w) == 0 {

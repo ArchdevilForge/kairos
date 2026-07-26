@@ -166,7 +166,7 @@ func (s *MarketScanner) ScanMarket(ctx context.Context, exchangeName string) *ty
 				setup := s.analyzeCandidate(candCtx, exch, c, btcCtx)
 				mu.Lock()
 				setups = append(setups, setup)
-				if setup.ActionState == string(types.ActionStateTradeCandidate) {
+				if setup.ActionState == types.ActionStateTradeCandidate {
 					qualifiedSetups = append(qualifiedSetups, setup)
 				}
 				mu.Unlock()
@@ -266,9 +266,9 @@ func (s *MarketScanner) AnalyzeSymbolSetup(ctx context.Context, symbol, exchange
 	}
 
 	if quoteVolume < minLiq {
-		actionState := string(types.ActionStateWatch)
+		actionState := types.ActionStateWatch
 		if quoteVolume <= 0 {
-			actionState = string(types.ActionStateNoTrade)
+			actionState = types.ActionStateNoTrade
 		}
 		warning := fmt.Sprintf("%s quoteVolume %.0f is below minimum %.0f; not eligible for trade_candidate.",
 			canonical, quoteVolume, minLiq)
@@ -287,7 +287,7 @@ func (s *MarketScanner) AnalyzeSymbolSetup(ctx context.Context, symbol, exchange
 
 	var setup types.Setup
 	if btcCtx == nil {
-		setup = s.emptySetup(canonical, string(types.ActionStateWatch),
+		setup = s.emptySetup(canonical, types.ActionStateWatch,
 			[]string{"BTC context is required before a trade candidate can be returned"},
 			btcWarnings)
 	} else {
@@ -587,7 +587,7 @@ func (s *MarketScanner) analyzeCandidate(
 		}
 	}
 	if len(missing) > 0 {
-		return s.emptySetup(symbol, string(types.ActionStateWatch),
+		return s.emptySetup(symbol, types.ActionStateWatch,
 			[]string{fmt.Sprintf("missing required timeframes: %s", strings.Join(missing, ", "))},
 			warnings)
 	}
@@ -681,7 +681,7 @@ func (s *MarketScanner) structure(symbol, timeframe string, ohlcv *types.OHLCVAr
 // Empty setup  (ported from _empty_setup)
 // ---------------------------------------------------------------------------
 
-func (s *MarketScanner) emptySetup(symbol, actionState string, reasons, warnings []string) types.Setup {
+func (s *MarketScanner) emptySetup(symbol string, actionState types.ActionState, reasons, warnings []string) types.Setup {
 	if reasons == nil {
 		reasons = []string{}
 	}

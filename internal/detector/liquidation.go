@@ -166,9 +166,6 @@ func (d *LiquidationDetector) OnLiquidationSnapshot(symbol string, totalUSD, lon
 	d.lastMu.Unlock()
 }
 
-// Implements the Detector interface — Go type-check trick.
-var _ Detector = (*LiquidationDetector)(nil)
-
 func (d *LiquidationDetector) Events() <-chan types.AnomalyEvent { return d.events }
 
 func (d *LiquidationDetector) Reset() {

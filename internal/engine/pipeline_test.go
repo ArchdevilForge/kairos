@@ -94,7 +94,7 @@ func TestShouldGateIndividualAlert_Quiet(t *testing.T) {
 	cfg, err := config.LoadString(`
 marketPulse:
   enabled: true
-  shadowMode: true
+  shadowMode: false
   gateIndividualAlertsWhenQuiet: true
 `)
 	if err != nil {
@@ -118,6 +118,13 @@ marketPulse:
 	if !p.shouldGateIndividualAlert(evt) {
 		t.Fatal("QUIET should gate price_velocity")
 	}
+
+	// Shadow mode must never change single-symbol behaviour.
+	p.cfg.MarketPulse.ShadowMode = true
+	if p.shouldGateIndividualAlert(evt) {
+		t.Fatal("shadow mode must not gate single-symbol alerts")
+	}
+	p.cfg.MarketPulse.ShadowMode = false
 
 	// Gate switch off → allow.
 	p.cfg.MarketPulse.GateIndividualAlertsWhenQuiet = false

@@ -32,7 +32,6 @@ func testMPConfig() types.MarketPulseConfig {
 			FloorPct:  0.03,
 		},
 		Impulse: types.MarketPulseImpulseConfig{
-			WindowSeconds:             60,
 			MinBreadth:                0.65,
 			MinMedianReturnPct:        0.18,
 			MinMedianZ:                1.5,
@@ -40,7 +39,6 @@ func testMPConfig() types.MarketPulseConfig {
 			ConfirmationWindowSamples: 4,
 		},
 		Trend: types.MarketPulseTrendConfig{
-			WindowSeconds:             300,
 			MinBreadth:                0.60,
 			MinMedianReturnPct:        0.45,
 			MinPersistSeconds:         20, // short for tests
@@ -48,7 +46,6 @@ func testMPConfig() types.MarketPulseConfig {
 			ConfirmationWindowSamples: 4,
 		},
 		Stress: types.MarketPulseStressConfig{
-			WindowSeconds:      60,
 			MinBreadth:         0.80,
 			MinMedianReturnPct: 0.35,
 			MinMedianZ:         2.5,

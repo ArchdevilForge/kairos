@@ -47,7 +47,6 @@ func TestPipeline_Start_MockExchange(t *testing.T) {
 
 	cfg, err := config.LoadString(`
 dataManager:
-  exchanges: [mock]
   topSymbols: 5
   refreshIntervalHours: 999
 priceVelocity:
@@ -70,6 +69,9 @@ alertPolicy:
 	if err != nil {
 		t.Fatal(err)
 	}
+	// "mock" is not a real adapter, so it is injected after validation.
+	cfg.Exchanges.Primary = "mock"
+	cfg.DataManager.Exchanges = []string{"mock"}
 
 	p := NewPipeline(cfg, nil)
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
@@ -108,8 +110,11 @@ func TestTelegramDeliverer_Cancel(t *testing.T) {
 }
 
 func TestResonanceDeliverer_Cancel(t *testing.T) {
-	cfg, _ := config.LoadString(`resonanceScorer:
+	cfg, err := config.LoadString(`resonanceScorer:
   enabled: true`)
+	if err != nil {
+		t.Fatal(err)
+	}
 	p := NewPipeline(cfg, nil)
 	p.resonanceScorer = nil
 	ctx, cancel := context.WithCancel(context.Background())

@@ -30,7 +30,7 @@ func main() {
 		AddSource: true,
 	})))
 
-	slog.Info("starting kairosd", "exchange", cfg.Exchange, "timezone", cfg.NotificationTimezone)
+	slog.Info("starting kairosd", "primary", cfg.Exchanges.Primary, "realtime", cfg.DataManager.Exchanges)
 
 	var tg *notify.TelegramClient
 	if cfg.Telegram.Enabled && cfg.Telegram.BotToken != "" && cfg.Telegram.ChatID != "" {

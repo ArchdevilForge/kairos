@@ -1222,21 +1222,16 @@ func (p *Pipeline) buildAlert(evt types.AnomalyEvent) types.AlertEvent {
 }
 
 // shouldGateIndividualAlert reports whether a single-symbol alert should be
-// suppressed because the market is QUIET (Phase 3).
+// suppressed because the market is QUIET (Phase 3). Shadow mode never gates:
+// it must not change single-symbol delivery behaviour.
 func (p *Pipeline) shouldGateIndividualAlert(evt types.AnomalyEvent) bool {
 	if p.marketPulseDet == nil || !p.cfg.MarketPulse.GateIndividualAlertsWhenQuiet {
 		return false
 	}
-	st := p.marketPulseDet.State()
-	if st != types.MarketStateQuiet {
+	if p.cfg.MarketPulse.ShadowMode {
 		return false
 	}
-	if p.cfg.MarketPulse.AllowIsolatedExtremeWhenQuiet {
-		// Optional escape hatch: very large single-name z may pass (not wired
-		// from price_velocity data yet — reserved for future enrichment).
-		_ = p.cfg.MarketPulse.IsolatedExtremeMinZ
-	}
-	return true
+	return p.marketPulseDet.State() == types.MarketStateQuiet
 }
 
 // MarketState returns the current MarketPulse state, or QUIET if disabled.
