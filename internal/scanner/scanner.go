@@ -39,7 +39,7 @@ type MarketScanner struct {
 	cycleDetector   *indicators.CycleDetector
 	hints           *storage.HintStore
 	log             *slog.Logger
-	exchangeFactory func(string) (exchange.Exchange, error) // tests only
+	exchangeFactory func(string) (exchange.Exchange, error)                 // tests only
 	rsiLoader       func(context.Context) (map[string]data.CoinRSI, string) // tests only
 }
 
@@ -192,8 +192,8 @@ func (s *MarketScanner) ScanMarket(ctx context.Context, exchangeName string) *ty
 	}
 
 	scoreMap := map[string]any{
-		"candidate_count":      len(candidates),
-		"analyzed_count":       len(setups),
+		"candidate_count":       len(candidates),
+		"analyzed_count":        len(setups),
 		"qualified_setup_count": len(qualifiedSetups),
 	}
 	if btcCtx != nil {
@@ -209,9 +209,9 @@ func (s *MarketScanner) ScanMarket(ctx context.Context, exchangeName string) *ty
 			"default":        exchangeName == "okx",
 		},
 		"limits": map[string]any{
-			"candidate_limit":              s.config.Scanner.CandidateLimit,
-			"deep_analysis_limit":          s.config.Scanner.DeepAnalysisLimit,
-			"total_timeout_seconds":        s.config.Scanner.TotalTimeoutSeconds,
+			"candidate_limit":                  s.config.Scanner.CandidateLimit,
+			"deep_analysis_limit":              s.config.Scanner.DeepAnalysisLimit,
+			"total_timeout_seconds":            s.config.Scanner.TotalTimeoutSeconds,
 			"exchange_request_timeout_seconds": s.config.Scanner.ExchangeRequestTimeoutSeconds,
 			"symbol_analysis_timeout_seconds":  s.config.Scanner.SymbolAnalysisTimeoutSeconds,
 		},
@@ -219,10 +219,10 @@ func (s *MarketScanner) ScanMarket(ctx context.Context, exchangeName string) *ty
 		"setups":           setupData,
 		"qualified_setups": qualData,
 		"scanner_policy": map[string]any{
-			"primary_workflow": "scanner",
-			"websocket_role":   "candidate_hint_only",
-			"charts_generated": false,
-			"telegram_pushed":  false,
+			"primary_workflow":  "scanner",
+			"websocket_role":    "candidate_hint_only",
+			"charts_generated":  false,
+			"telegram_pushed":   false,
 			"execution_enabled": false,
 		},
 	}
@@ -689,14 +689,14 @@ func (s *MarketScanner) emptySetup(symbol, actionState string, reasons, warnings
 		warnings = []string{}
 	}
 	return types.Setup{
-		Symbol:      symbol,
-		Direction:   "",
-		SetupType:   nil,
-		ActionState: actionState,
-		SetupScore:  0.0,
-		Threshold:   nil,
+		Symbol:             symbol,
+		Direction:          "",
+		SetupType:          nil,
+		ActionState:        actionState,
+		SetupScore:         0.0,
+		Threshold:          nil,
 		RequiredRiskReward: nil,
-		Structure:   map[string]any{},
+		Structure:          map[string]any{},
 		Risk: types.RiskBounds{
 			MaxPositionPct:   0.0,
 			MaxLeverage:      0.0,
@@ -724,12 +724,12 @@ func (s *MarketScanner) emptySetup(symbol, actionState string, reasons, warnings
 
 func candidateToMap(c types.Candidate) map[string]any {
 	m := map[string]any{
-		"symbol":            c.Symbol,
-		"exchange":          c.Exchange,
-		"quote_volume_24h":  c.QuoteVolume24h,
-		"candidate_score":   c.CandidateScore,
-		"score_reasons":     c.ScoreReasons,
-		"warnings":          c.Warnings,
+		"symbol":           c.Symbol,
+		"exchange":         c.Exchange,
+		"quote_volume_24h": c.QuoteVolume24h,
+		"candidate_score":  c.CandidateScore,
+		"score_reasons":    c.ScoreReasons,
+		"warnings":         c.Warnings,
 	}
 	if c.LastPrice != nil {
 		m["last_price"] = *c.LastPrice

@@ -67,8 +67,8 @@ type Summary struct {
 
 // Result bundles the summary and trade log returned from Run.
 type Result struct {
-	Summary Summary        `json:"summary"`
-	Trades  []Trade        `json:"trades"`
+	Summary Summary `json:"summary"`
+	Trades  []Trade `json:"trades"`
 }
 
 // BacktestRunner executes the box-breakout backtest on historical OHLCV data.

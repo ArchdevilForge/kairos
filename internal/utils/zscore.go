@@ -8,12 +8,12 @@ import (
 // RollingZScore computes a rolling-window z-score over recent values using a
 // circular buffer.  Ported from src/kairos/utils/zscore.py.
 type RollingZScore struct {
-	buffer    []float64
-	size      int
-	count     int
-	head      int // next write position
+	buffer     []float64
+	size       int
+	count      int
+	head       int // next write position
 	minSamples int
-	mu        sync.RWMutex
+	mu         sync.RWMutex
 }
 
 // NewRollingZScore creates a tracker with the given window size.

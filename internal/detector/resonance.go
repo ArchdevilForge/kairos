@@ -11,11 +11,11 @@ import (
 
 // ResonanceEvent is a multi-dimension resonance-scored alert.
 type ResonanceEvent struct {
-	Symbol         string                       `json:"symbol" yaml:"symbol"`
-	SignalScore    float64                      `json:"signal_score" yaml:"signal_score"`
-	DimensionCount int                          `json:"dimension_count" yaml:"dimension_count"`
+	Symbol         string                        `json:"symbol" yaml:"symbol"`
+	SignalScore    float64                       `json:"signal_score" yaml:"signal_score"`
+	DimensionCount int                           `json:"dimension_count" yaml:"dimension_count"`
 	Dimensions     map[string]types.AnomalyEvent `json:"dimensions" yaml:"dimensions"`
-	Timestamp      float64                      `json:"timestamp" yaml:"timestamp"`
+	Timestamp      float64                       `json:"timestamp" yaml:"timestamp"`
 }
 
 // ToAlertEvent converts the ResonanceEvent to a standard AnomalyEvent.

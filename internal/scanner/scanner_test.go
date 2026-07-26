@@ -42,10 +42,10 @@ func TestComputeRiskBounds_InverseCycleMultiplier(t *testing.T) {
 	cfg := &types.Config{
 		Risk: types.RiskConfig{
 			MaxPositionPct:                 map[string]float64{"altcoin": 33.0},
-			MaxLeverage:                      map[string]float64{"altcoin": 5.0},
-			InverseCyclePositionMultiplier:   0.5,
-			ShortPositionMultiplier:          0.75,
-			WeakCyclePositionMultiplier:      0.5,
+			MaxLeverage:                    map[string]float64{"altcoin": 5.0},
+			InverseCyclePositionMultiplier: 0.5,
+			ShortPositionMultiplier:        0.75,
+			WeakCyclePositionMultiplier:    0.5,
 		},
 	}
 	s := NewMarketScanner(cfg)

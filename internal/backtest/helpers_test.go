@@ -35,11 +35,11 @@ func TestDetectBreakoutAndEntry(t *testing.T) {
 
 func TestCheckExit_LongAndShort(t *testing.T) {
 	pos := &position{
-		direction:  types.DirectionLong,
-		entryPrice: 100,
-		stop:       95,
-		target:     110,
-		entryTime:  "2024-01-01T00:00:00Z",
+		direction:   types.DirectionLong,
+		entryPrice:  100,
+		stop:        95,
+		target:      110,
+		entryTime:   "2024-01-01T00:00:00Z",
 		entryTimeMs: 0,
 	}
 	if tr := checkExit(pos, 105, 96, "2024-01-01T04:00:00Z", 1, 0.12); tr != nil {
@@ -126,7 +126,7 @@ func TestRun_FlatSeries(t *testing.T) {
 		price := 100.0
 		candles[i] = types.Candle{
 			Timestamp: baseTs + int64(i)*3600*4,
-			Open: price, High: price + 0.5, Low: price - 0.5, Close: price,
+			Open:      price, High: price + 0.5, Low: price - 0.5, Close: price,
 			Volume: 1000,
 		}
 	}

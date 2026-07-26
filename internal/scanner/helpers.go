@@ -170,15 +170,15 @@ func OHLCVToArrays(candles []types.Candle) *types.OHLCVArrays {
 // CycleToDict converts a MarketCycle struct to a map for JSON output.
 func CycleToDict(cycle types.MarketCycle) map[string]any {
 	return map[string]any{
-		"phase":                string(cycle.Phase),
-		"confidence":           cycle.Confidence,
-		"btc_trend":            cycle.BtcTrend,
-		"btc_change_30d":       cycle.BtcChange30D,
-		"btc_change_7d":        cycle.BtcChange7D,
-		"volatility":           cycle.Volatility,
-		"volume_trend":         cycle.VolumeTrend,
-		"altcoin_correlation":  cycle.AltcoinCorrelation,
-		"funding_rates_avg":    cycle.FundingRatesAvg,
+		"phase":               string(cycle.Phase),
+		"confidence":          cycle.Confidence,
+		"btc_trend":           cycle.BtcTrend,
+		"btc_change_30d":      cycle.BtcChange30D,
+		"btc_change_7d":       cycle.BtcChange7D,
+		"volatility":          cycle.Volatility,
+		"volume_trend":        cycle.VolumeTrend,
+		"altcoin_correlation": cycle.AltcoinCorrelation,
+		"funding_rates_avg":   cycle.FundingRatesAvg,
 	}
 }
 

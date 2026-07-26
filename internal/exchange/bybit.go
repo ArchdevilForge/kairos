@@ -91,12 +91,12 @@ func (b *bybitExchange) FetchTickers(ctx context.Context) (map[string]*types.Tic
 		RetCode int `json:"retCode"`
 		Result  struct {
 			List []struct {
-				Symbol        string `json:"symbol"`
-				LastPrice     string `json:"lastPrice"`
-				Turnover24h   string `json:"turnover24h"`
-				Price24hPcnt  string `json:"price24hPcnt"`
-				FundingRate   string `json:"fundingRate"`
-				OpenInterest  string `json:"openInterest"`
+				Symbol       string `json:"symbol"`
+				LastPrice    string `json:"lastPrice"`
+				Turnover24h  string `json:"turnover24h"`
+				Price24hPcnt string `json:"price24hPcnt"`
+				FundingRate  string `json:"fundingRate"`
+				OpenInterest string `json:"openInterest"`
 			} `json:"list"`
 		} `json:"result"`
 	}
@@ -261,9 +261,9 @@ func (b *bybitExchange) readTickers(ctx context.Context, conn *websocket.Conn, t
 			return err
 		}
 		var raw struct {
-			Op   string `json:"op"`
-			Topic string `json:"topic"`
-			Data map[string]any `json:"data"`
+			Op    string         `json:"op"`
+			Topic string         `json:"topic"`
+			Data  map[string]any `json:"data"`
 		}
 		if err := json.Unmarshal(msg, &raw); err != nil {
 			continue

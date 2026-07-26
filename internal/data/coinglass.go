@@ -53,8 +53,8 @@ type CoinGlassDecodeError struct{ CoinGlassError }
 // ---------------------------------------------------------------------------
 
 type ecb struct {
-	b   cipher.Block
-	bs  int
+	b  cipher.Block
+	bs int
 }
 
 func newECB(b cipher.Block) *ecb {

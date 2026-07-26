@@ -21,26 +21,26 @@ import (
 type LiquidationDetector struct {
 	BaseDetector
 
-	enabled             bool
-	absThresholdUsd     float64
-	zscoreThreshold     float64
-	zscoreWindow        int
-	imbalanceThreshold  float64
-	minNotifyInterval   time.Duration
+	enabled            bool
+	absThresholdUsd    float64
+	zscoreThreshold    float64
+	zscoreWindow       int
+	imbalanceThreshold float64
+	minNotifyInterval  time.Duration
 
 	// symbol -> RollingZScore for liquidation USD totals
 	zscore map[string]*utils.RollingZScore
 	zsMu   sync.RWMutex
 	// symbol -> (timestamp, total, long, short)
-	last map[string]liqSnapshot
+	last   map[string]liqSnapshot
 	lastMu sync.RWMutex
 }
 
 type liqSnapshot struct {
-	ts        float64
-	totalUSD  float64
-	longUSD   float64
-	shortUSD  float64
+	ts       float64
+	totalUSD float64
+	longUSD  float64
+	shortUSD float64
 }
 
 // NewLiquidationDetector creates a detector from config.
@@ -80,7 +80,7 @@ func NewLiquidationDetector(cfg types.LiquidationConfig) *LiquidationDetector {
 
 func (d *LiquidationDetector) Name() string { return "liquidation" }
 
-func (d *LiquidationDetector) OnTicker(_ context.Context, _ types.Ticker)        {}
+func (d *LiquidationDetector) OnTicker(_ context.Context, _ types.Ticker)                        {}
 func (d *LiquidationDetector) OnMetricsUpdate(_ context.Context, _ string, _ float64, _ float64) {}
 
 func (d *LiquidationDetector) OnLSSnapshot(_ string, _, _ float64) {}
@@ -227,18 +227,18 @@ func (d *LiquidationDetector) emitLiquidation(symbol string, ts, totalUSD, longU
 	}
 
 	data := map[string]any{
-		"total_liquidation_usd":     math.Round(totalUSD*100) / 100,
+		"total_liquidation_usd":      math.Round(totalUSD*100) / 100,
 		"total_liquidation_millions": math.Round(totalM*100) / 100,
-		"long_liquidation_usd":      math.Round(longUSD*100) / 100,
-		"short_liquidation_usd":     math.Round(shortUSD*100) / 100,
-		"long_liquidation_pct":      longPct,
-		"short_liquidation_pct":     shortPct,
-		"reason":                    reason,
-		"trigger_value":             math.Round(triggerValue*10000) / 10000,
-		"zscore":                    math.Round(zs*10000) / 10000,
-		"threshold_abs_usd":         d.absThresholdUsd,
-		"threshold_zscore":          d.zscoreThreshold,
-		"threshold_imbalance":       d.imbalanceThreshold,
+		"long_liquidation_usd":       math.Round(longUSD*100) / 100,
+		"short_liquidation_usd":      math.Round(shortUSD*100) / 100,
+		"long_liquidation_pct":       longPct,
+		"short_liquidation_pct":      shortPct,
+		"reason":                     reason,
+		"trigger_value":              math.Round(triggerValue*10000) / 10000,
+		"zscore":                     math.Round(zs*10000) / 10000,
+		"threshold_abs_usd":          d.absThresholdUsd,
+		"threshold_zscore":           d.zscoreThreshold,
+		"threshold_imbalance":        d.imbalanceThreshold,
 	}
 	if zs == 0 {
 		data["zscore"] = nil

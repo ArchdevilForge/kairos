@@ -86,7 +86,7 @@ func (d *FuturesMetricsDetector) OnMetricsUpdate(_ context.Context, symbol strin
 	d.checkFundingRate(symbol, ts, fundingRate, now)
 }
 
-func (d *FuturesMetricsDetector) OnLSSnapshot(_ string, _, _ float64)              {}
+func (d *FuturesMetricsDetector) OnLSSnapshot(_ string, _, _ float64)             {}
 func (d *FuturesMetricsDetector) OnLiquidationSnapshot(_ string, _, _, _ float64) {}
 
 func (d *FuturesMetricsDetector) Events() <-chan types.AnomalyEvent { return d.events }
@@ -169,11 +169,11 @@ func (d *FuturesMetricsDetector) checkOpenInterest(symbol string, now float64, o
 	}
 
 	evt := NewEvent(symbol, "open_interest_change", string(severity), map[string]any{
-		"price":               0.0,
-		"open_interest":       round(oi, 8),
+		"price":                  0.0,
+		"open_interest":          round(oi, 8),
 		"previous_open_interest": round(previous, 8),
-		"change_pct":          round(changePct, 2),
-		"threshold_pct":       d.oiMinChangePct,
+		"change_pct":             round(changePct, 2),
+		"threshold_pct":          d.oiMinChangePct,
 	})
 	evt.Timestamp = now
 	d.emit(evt)
@@ -231,13 +231,13 @@ func (d *FuturesMetricsDetector) checkFundingRate(symbol string, now float64, fu
 	}
 
 	evt := NewEvent(symbol, "funding_rate_anomaly", string(severity), map[string]any{
-		"price":                0.0,
-		"funding_rate":        fundingRate,
+		"price":                 0.0,
+		"funding_rate":          fundingRate,
 		"previous_funding_rate": previous,
-		"change_abs":          changeAbs,
-		"abs_threshold":       d.fundingAbsThreshold,
-		"change_threshold":    d.fundingMinChangeAbs,
-		"reason":              reason,
+		"change_abs":            changeAbs,
+		"abs_threshold":         d.fundingAbsThreshold,
+		"change_threshold":      d.fundingMinChangeAbs,
+		"reason":                reason,
 	})
 	evt.Timestamp = now
 	d.emit(evt)

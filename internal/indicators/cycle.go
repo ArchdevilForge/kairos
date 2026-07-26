@@ -69,16 +69,16 @@ func (d *CycleDetector) DetectPhase(
 	)
 
 	return types.MarketCycle{
-		Phase:               phase,
-		Confidence:          confidence,
-		BtcTrend:            btcTrend,
-		BtcChange30D:        btcChange30d,
-		BtcChange7D:         btcChange7d,
-		Volatility:          volatility,
-		VolumeTrend:         volumeTrend,
-		AltcoinCorrelation:  altcoinCorrelation,
-		FundingRatesAvg:     avgFundingRate,
-		MarketCapChange30D:  totalMarketCapChange30d,
+		Phase:              phase,
+		Confidence:         confidence,
+		BtcTrend:           btcTrend,
+		BtcChange30D:       btcChange30d,
+		BtcChange7D:        btcChange7d,
+		Volatility:         volatility,
+		VolumeTrend:        volumeTrend,
+		AltcoinCorrelation: altcoinCorrelation,
+		FundingRatesAvg:    avgFundingRate,
+		MarketCapChange30D: totalMarketCapChange30d,
 	}
 }
 

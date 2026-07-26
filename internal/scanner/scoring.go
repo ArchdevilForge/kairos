@@ -375,17 +375,17 @@ func (s *MarketScanner) computeRiskBounds(
 	}
 
 	return types.RiskBounds{
-		MaxPositionPct:  math.Round(maxPositionPct*100) / 100,
-		MaxLeverage:     math.Round(maxLeverage*100) / 100,
-		EntryZone:       []float64{math.Round(entryZone[0]*1e8) / 1e8, math.Round(entryZone[1]*1e8) / 1e8},
-		StructuralStop:  float64Ptr(math.Round(stop*1e8) / 1e8),
-		Targets:         validTargets,
-		RiskReward:      math.Round(rr*100) / 100,
+		MaxPositionPct:   math.Round(maxPositionPct*100) / 100,
+		MaxLeverage:      math.Round(maxLeverage*100) / 100,
+		EntryZone:        []float64{math.Round(entryZone[0]*1e8) / 1e8, math.Round(entryZone[1]*1e8) / 1e8},
+		StructuralStop:   float64Ptr(math.Round(stop*1e8) / 1e8),
+		Targets:          validTargets,
+		RiskReward:       math.Round(rr*100) / 100,
 		RiskRewardTarget: riskRewardTarget,
-		Invalidation:    strPtr(invalidation),
-		Triggered:       triggered,
-		NearTrigger:     nearTrigger,
-		AccountSizing:   false,
+		Invalidation:     strPtr(invalidation),
+		Triggered:        triggered,
+		NearTrigger:      nearTrigger,
+		AccountSizing:    false,
 	}
 }
 

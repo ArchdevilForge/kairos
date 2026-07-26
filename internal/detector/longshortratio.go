@@ -79,9 +79,9 @@ func NewLongShortRatioDetector(cfg types.LongShortRatioConfig) *LongShortRatioDe
 
 func (d *LongShortRatioDetector) Name() string { return "long_short_ratio" }
 
-func (d *LongShortRatioDetector) OnTicker(_ context.Context, _ types.Ticker)                      {}
+func (d *LongShortRatioDetector) OnTicker(_ context.Context, _ types.Ticker)                        {}
 func (d *LongShortRatioDetector) OnMetricsUpdate(_ context.Context, _ string, _ float64, _ float64) {}
-func (d *LongShortRatioDetector) OnLiquidationSnapshot(_ string, _, _, _ float64)                  {}
+func (d *LongShortRatioDetector) OnLiquidationSnapshot(_ string, _, _, _ float64)                   {}
 
 // OnLSSnapshot processes one long/short ratio snapshot.
 func (d *LongShortRatioDetector) OnLSSnapshot(symbol string, longRate, shortRate float64) {
@@ -218,14 +218,14 @@ func (d *LongShortRatioDetector) emitLS(symbol string, ts, longRate, shortRate f
 	}
 
 	data := map[string]any{
-		"long_rate":             math.Round(longRate*100) / 100,
-		"short_rate":            math.Round(shortRate*100) / 100,
-		"ls_ratio":              lsRatio,
-		"reason":                reason,
-		"trigger_value":         math.Round(value*10000) / 10000,
-		"zscore":                math.Round(zs*10000) / 10000,
-		"threshold_abs":         d.absThreshold,
-		"threshold_zscore":      d.zscoreThreshold,
+		"long_rate":              math.Round(longRate*100) / 100,
+		"short_rate":             math.Round(shortRate*100) / 100,
+		"ls_ratio":               lsRatio,
+		"reason":                 reason,
+		"trigger_value":          math.Round(value*10000) / 10000,
+		"zscore":                 math.Round(zs*10000) / 10000,
+		"threshold_abs":          d.absThreshold,
+		"threshold_zscore":       d.zscoreThreshold,
 		"threshold_velocity_pct": d.velocityThresholdPct,
 	}
 	if zs == 0 {

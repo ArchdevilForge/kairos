@@ -101,8 +101,8 @@ func (d *VolumeSpikeDetector) OnTicker(_ context.Context, ticker types.Ticker) {
 }
 
 func (d *VolumeSpikeDetector) OnMetricsUpdate(_ context.Context, _ string, _ float64, _ float64) {}
-func (d *VolumeSpikeDetector) OnLSSnapshot(_ string, _, _ float64)                              {}
-func (d *VolumeSpikeDetector) OnLiquidationSnapshot(_ string, _, _, _ float64)                    {}
+func (d *VolumeSpikeDetector) OnLSSnapshot(_ string, _, _ float64)                               {}
+func (d *VolumeSpikeDetector) OnLiquidationSnapshot(_ string, _, _, _ float64)                   {}
 
 func (d *VolumeSpikeDetector) Events() <-chan types.AnomalyEvent { return d.events }
 func (d *VolumeSpikeDetector) Reset() {

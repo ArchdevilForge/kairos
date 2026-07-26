@@ -44,8 +44,8 @@ func TestVolumeSpikeDetector_Emits(t *testing.T) {
 
 func TestPriceVelocityDetector_Emits(t *testing.T) {
 	d := NewPriceVelocityDetector(types.PriceVelocityConfig{
-		Enabled: true,
-		Windows: []types.PriceWindow{{Seconds: 30, Threshold: 0.5}},
+		Enabled:         true,
+		Windows:         []types.PriceWindow{{Seconds: 30, Threshold: 0.5}},
 		CooldownSeconds: 0,
 	})
 	d.cooldown = 0

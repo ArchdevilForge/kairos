@@ -132,7 +132,7 @@ func TestFormatAlert_WatchState(t *testing.T) {
 				{
 					"symbol": "X/USDT:USDT", "direction": "long", "setup_type": "range_breakout",
 					"action_state": "watch", "setup_score": 4.0, "threshold": 5.0,
-					"risk": map[string]any{"entry_zone": []float64{1, 2}},
+					"risk":    map[string]any{"entry_zone": []float64{1, 2}},
 					"reasons": []any{"15m price is near trigger"},
 				},
 			},

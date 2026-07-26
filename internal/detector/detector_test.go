@@ -35,8 +35,8 @@ func TestFuturesMetricsDetector_OpenInterestChange(t *testing.T) {
 	d := NewFuturesMetricsDetector(types.FuturesMetricsConfig{
 		Enabled: true,
 		OpenInterest: types.OIConfig{
-			Enabled:          true,
-			MinChangePct:     5.0,
+			Enabled:           true,
+			MinChangePct:      5.0,
 			MinNotifyInterval: "0s",
 		},
 	})

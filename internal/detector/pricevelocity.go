@@ -16,9 +16,9 @@ import (
 type PriceVelocityDetector struct {
 	BaseDetector
 
-	enabled   bool
-	windows   []types.PriceWindow
-	cooldown  time.Duration
+	enabled  bool
+	windows  []types.PriceWindow
+	cooldown time.Duration
 
 	// symbol -> ring of (timestamp, price)
 	priceHistory map[string][]pricePoint
@@ -29,7 +29,7 @@ type PriceVelocityDetector struct {
 }
 
 type pricePoint struct {
-	ts  float64
+	ts    float64
 	price float64
 }
 
@@ -87,8 +87,8 @@ func (d *PriceVelocityDetector) OnTicker(_ context.Context, ticker types.Ticker)
 }
 
 func (d *PriceVelocityDetector) OnMetricsUpdate(_ context.Context, _ string, _ float64, _ float64) {}
-func (d *PriceVelocityDetector) OnLSSnapshot(_ string, _, _ float64)                              {}
-func (d *PriceVelocityDetector) OnLiquidationSnapshot(_ string, _, _, _ float64)                    {}
+func (d *PriceVelocityDetector) OnLSSnapshot(_ string, _, _ float64)                               {}
+func (d *PriceVelocityDetector) OnLiquidationSnapshot(_ string, _, _, _ float64)                   {}
 
 func (d *PriceVelocityDetector) Events() <-chan types.AnomalyEvent { return d.events }
 func (d *PriceVelocityDetector) Reset() {
@@ -166,7 +166,7 @@ func (d *PriceVelocityDetector) checkVelocity(symbol string, currentPrice float6
 		}
 
 		evt := NewEvent(symbol, "price_velocity", string(severity), map[string]any{
-			"change_pct":    round(changePct, 2),
+			"change_pct":     round(changePct, 2),
 			"window_seconds": win.Seconds,
 			"threshold":      win.Threshold,
 			"price_from":     round(pastPrice, 8),

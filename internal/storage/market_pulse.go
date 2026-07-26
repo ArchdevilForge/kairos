@@ -31,9 +31,9 @@ type MarketPulseRecord struct {
 
 // MarketPulseStore is an append-only JSONL log of market pulse events and outcomes.
 type MarketPulseStore struct {
-	path         string
-	outcomePath  string
-	mu           sync.Mutex
+	path        string
+	outcomePath string
+	mu          sync.Mutex
 }
 
 // NewMarketPulseStore opens or creates the market pulse event log.
