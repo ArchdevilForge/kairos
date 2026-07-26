@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -98,19 +99,31 @@ type Pipeline struct {
 	marketCapByCoin map[string]float64
 	marketCapRefUSD float64
 
+	// symMu guards symbolsByExchange: refreshLoop writes while WS
+	// subscription, metrics and CoinGlass pollers read snapshots.
+	symMu sync.RWMutex
+
+	// refreshInterval overrides cfg.DataManager.RefreshIntervalHours when
+	// non-zero (test seam for fast refresh ticks).
+	refreshInterval time.Duration
+
 	// Lifecycle
 	cancel context.CancelFunc
 }
 
-// exchangeState holds per-exchange state: the exchange handle, discovered
-// symbols, and the real-time + periodic detectors registered for it.
+// exchangeState holds per-exchange state: the exchange handle and the
+// real-time + periodic detectors registered for it. The live symbol universe
+// is read from Pipeline.symbolsSnapshot so refreshes reach every consumer.
 type exchangeState struct {
-	name    string
-	ex      exchange.Exchange
-	symbols []string
+	name string
+	ex   exchange.Exchange
 
 	// Ticker channel from WS reader, consumed by fan-out goroutine
 	tickerCh chan types.Ticker
+
+	// resubCh signals the subscription loop that the universe changed and the
+	// WS feed must be restarted with the new symbol list (buffered, len 1).
+	resubCh chan struct{}
 
 	// Real-time detectors
 	velocity *detector.PriceVelocityDetector
@@ -232,7 +245,7 @@ func (p *Pipeline) Start(ctx context.Context) error {
 			p.log.Warn("symbol discovery failed, skipping WS", "exchange", name, "error", err)
 			symbols = nil
 		}
-		p.symbolsByExchange[name] = symbols
+		p.setSymbols(name, symbols)
 		p.log.Info("symbols discovered", "exchange", name, "count", len(symbols), "symbols", strings.Join(symbols, ","))
 	}
 
@@ -240,12 +253,11 @@ func (p *Pipeline) Start(ctx context.Context) error {
 
 	// 3. Create exchange states with detectors.
 	for name, ex := range p.exchanges {
-		symbols := p.symbolsByExchange[name]
 		es := &exchangeState{
 			name:     name,
 			ex:       ex,
-			symbols:  symbols,
 			tickerCh: make(chan types.Ticker, 512),
+			resubCh:  make(chan struct{}, 1),
 		}
 		p.registerDetectors(es)
 		p.exchangeStates[name] = es
@@ -266,17 +278,15 @@ func (p *Pipeline) Start(ctx context.Context) error {
 	// 3d. Market pulse (primary exchange only; after symbol discovery).
 	if p.cfg.MarketPulse.Enabled {
 		p.marketPulseDet = detector.NewMarketPulseDetector(p.cfg.MarketPulse)
-		primary := p.cfg.Exchanges.Primary
-		if primary == "" {
-			primary = p.cfg.Exchange
-		}
-		if syms := p.symbolsByExchange[primary]; len(syms) > 0 {
+		primary := p.primaryExchange()
+		syms := p.symbolsSnapshot(primary)
+		if len(syms) > 0 {
 			p.marketPulseDet.UpdateUniverse(syms)
 		}
 		p.log.Info("market pulse detector registered",
 			"shadow", p.cfg.MarketPulse.ShadowMode,
 			"primary", primary,
-			"universe", len(p.symbolsByExchange[primary]),
+			"universe", len(syms),
 		)
 	}
 
@@ -306,15 +316,11 @@ func (p *Pipeline) Start(ctx context.Context) error {
 	// 5. Launch goroutines via errgroup.
 	g, gCtx := errgroup.WithContext(ctx)
 
-	// 5a. WS reader per exchange (blocking, reconnect internally).
+	// 5a. WS subscription loop per exchange (restartable on universe refresh).
 	for _, es := range p.exchangeStates {
-		if len(es.symbols) == 0 {
-			continue
-		}
 		es := es
 		g.Go(func() error {
-			p.log.Info("connecting WS feed", "exchange", es.name, "symbols", len(es.symbols))
-			return es.ex.SubscribeTickers(gCtx, es.symbols, es.tickerCh)
+			return p.runSubscription(gCtx, es)
 		})
 	}
 
@@ -330,7 +336,7 @@ func (p *Pipeline) Start(ctx context.Context) error {
 
 	// 5c. Futures metrics polling per exchange.
 	for _, es := range p.exchangeStates {
-		if es.metrics == nil || len(es.symbols) == 0 {
+		if es.metrics == nil {
 			continue
 		}
 		es := es
@@ -405,6 +411,112 @@ func (p *Pipeline) Start(ctx context.Context) error {
 		return err
 	}
 	return nil
+}
+
+// ── Symbol universe (locked) ───────────────────────────────────
+
+// symbolsSnapshot returns a copy of the current universe for one exchange.
+func (p *Pipeline) symbolsSnapshot(name string) []string {
+	p.symMu.RLock()
+	defer p.symMu.RUnlock()
+	syms := p.symbolsByExchange[name]
+	out := make([]string, len(syms))
+	copy(out, syms)
+	return out
+}
+
+// allSymbolsSnapshot returns a copy of the whole universe map.
+func (p *Pipeline) allSymbolsSnapshot() map[string][]string {
+	p.symMu.RLock()
+	defer p.symMu.RUnlock()
+	out := make(map[string][]string, len(p.symbolsByExchange))
+	for name, syms := range p.symbolsByExchange {
+		cp := make([]string, len(syms))
+		copy(cp, syms)
+		out[name] = cp
+	}
+	return out
+}
+
+// setSymbols replaces the universe for one exchange.
+func (p *Pipeline) setSymbols(name string, symbols []string) {
+	p.symMu.Lock()
+	p.symbolsByExchange[name] = symbols
+	p.symMu.Unlock()
+}
+
+// primaryExchange resolves the primary authority (Normalize guarantees it is
+// set for loaded configs; the legacy field covers hand-built test configs).
+func (p *Pipeline) primaryExchange() string {
+	if p.cfg.Exchanges.Primary != "" {
+		return p.cfg.Exchanges.Primary
+	}
+	return p.cfg.Exchange
+}
+
+// coinglassSymbols picks the universe used for CoinGlass per-symbol polling:
+// the primary exchange when it has symbols, otherwise the first enabled
+// exchange with a non-empty universe.
+func (p *Pipeline) coinglassSymbols() []string {
+	if syms := p.symbolsSnapshot(p.primaryExchange()); len(syms) > 0 {
+		return syms
+	}
+	p.symMu.RLock()
+	names := make([]string, 0, len(p.symbolsByExchange))
+	for name := range p.symbolsByExchange {
+		names = append(names, name)
+	}
+	p.symMu.RUnlock()
+	sort.Strings(names)
+	for _, name := range names {
+		if syms := p.symbolsSnapshot(name); len(syms) > 0 {
+			return syms
+		}
+	}
+	return nil
+}
+
+// ── WS subscription loop ───────────────────────────────────────
+
+// runSubscription owns the WS feed for one exchange. It subscribes with the
+// current universe snapshot and restarts the subscription whenever the
+// refresh loop signals a universe change, so realtime data always follows
+// the advertised symbol list.
+func (p *Pipeline) runSubscription(ctx context.Context, es *exchangeState) error {
+	for {
+		symbols := p.symbolsSnapshot(es.name)
+		if len(symbols) == 0 {
+			// No universe yet — wait for a refresh to provide one.
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-es.resubCh:
+				continue
+			}
+		}
+
+		subCtx, cancel := context.WithCancel(ctx)
+		done := make(chan error, 1)
+		p.log.Info("connecting WS feed", "exchange", es.name, "symbols", len(symbols))
+		go func() {
+			done <- es.ex.SubscribeTickers(subCtx, symbols, es.tickerCh)
+		}()
+
+		select {
+		case <-ctx.Done():
+			cancel()
+			<-done
+			return ctx.Err()
+		case <-es.resubCh:
+			p.log.Info("universe changed; resubscribing WS feed", "exchange", es.name)
+			cancel()
+			<-done // wait for the old subscription to fully exit
+			continue
+		case err := <-done:
+			cancel()
+			return err
+		}
+	}
 }
 
 // Stop gracefully cancels the pipeline and waits for shutdown.
@@ -546,14 +658,8 @@ func (p *Pipeline) consumeTickers(ctx context.Context, es *exchangeState) {
 				es.spike.OnTicker(ctx, t)
 			}
 			// Market pulse: primary exchange only.
-			if p.marketPulseDet != nil {
-				primary := p.cfg.Exchanges.Primary
-				if primary == "" {
-					primary = p.cfg.Exchange
-				}
-				if es.name == primary {
-					p.marketPulseDet.OnTicker(ctx, t)
-				}
+			if p.marketPulseDet != nil && es.name == p.primaryExchange() {
+				p.marketPulseDet.OnTicker(ctx, t)
 			}
 		}
 	}
@@ -591,7 +697,8 @@ func (p *Pipeline) metricsPollLoop(ctx context.Context, es *exchangeState) {
 }
 
 func (p *Pipeline) pollMetrics(ctx context.Context, es *exchangeState) error {
-	if es.metrics == nil || len(es.symbols) == 0 {
+	symbols := p.symbolsSnapshot(es.name)
+	if es.metrics == nil || len(symbols) == 0 {
 		return nil
 	}
 
@@ -600,7 +707,7 @@ func (p *Pipeline) pollMetrics(ctx context.Context, es *exchangeState) error {
 		return fmt.Errorf("fetch tickers for metrics: %w", err)
 	}
 
-	for _, sym := range es.symbols {
+	for _, sym := range symbols {
 		t, ok := tickers[sym]
 		if !ok || t == nil {
 			continue
@@ -645,11 +752,7 @@ func (p *Pipeline) pollLongShort(ctx context.Context) {
 		return
 	}
 
-	// Use symbols from the first exchange that has some.
-	symbols := p.symbolsByExchange["okx"]
-	if len(symbols) == 0 {
-		symbols = p.symbolsByExchange["binance"]
-	}
+	symbols := p.coinglassSymbols()
 	if len(symbols) == 0 {
 		return
 	}
@@ -749,10 +852,7 @@ func (p *Pipeline) pollLiquidations(ctx context.Context) {
 		return
 	}
 
-	symbols := p.symbolsByExchange["okx"]
-	if len(symbols) == 0 {
-		symbols = p.symbolsByExchange["binance"]
-	}
+	symbols := p.coinglassSymbols()
 	if len(symbols) == 0 {
 		return
 	}
@@ -1275,7 +1375,10 @@ func buildCondition(evt types.AnomalyEvent) string {
 // ── Symbol Refresh Loop ────────────────────────────────────────
 
 func (p *Pipeline) refreshLoop(ctx context.Context) {
-	interval := time.Duration(p.cfg.DataManager.RefreshIntervalHours) * time.Hour
+	interval := p.refreshInterval
+	if interval <= 0 {
+		interval = time.Duration(p.cfg.DataManager.RefreshIntervalHours) * time.Hour
+	}
 	if interval <= 0 {
 		interval = 4 * time.Hour
 	}
@@ -1289,34 +1392,45 @@ func (p *Pipeline) refreshLoop(ctx context.Context) {
 			return
 		case <-ticker.C:
 			p.log.Info("periodic symbol refresh starting")
-			for name, ex := range p.exchanges {
-				newSymbols, err := p.discoverSymbols(ctx, ex, p.cfg.DataManager.TopSymbols)
-				if err != nil {
-					p.log.Warn("refresh failed", "exchange", name, "error", err)
-					continue
-				}
-				old := p.symbolsByExchange[name]
-				added := diffSymbols(newSymbols, old)
-				removed := diffSymbols(old, newSymbols)
-				p.symbolsByExchange[name] = newSymbols
-				if len(added) > 0 || len(removed) > 0 {
-					p.log.Warn("symbol universe changed",
-						"exchange", name,
-						"added", len(added),
-						"removed", len(removed),
-					)
-				}
-				primary := p.cfg.Exchanges.Primary
-				if primary == "" {
-					primary = p.cfg.Exchange
-				}
-				if p.marketPulseDet != nil && name == primary {
-					p.marketPulseDet.UpdateUniverse(newSymbols)
-				}
-			}
-			p.loadMarketCaps(ctx)
+			p.refreshOnce(ctx)
 		}
 	}
+}
+
+// refreshOnce re-discovers the universe on every exchange, publishes the new
+// snapshots, updates MarketPulse (primary only), and asks the affected WS
+// subscription loops to resubscribe.
+func (p *Pipeline) refreshOnce(ctx context.Context) {
+	primary := p.primaryExchange()
+	for name, ex := range p.exchanges {
+		newSymbols, err := p.discoverSymbols(ctx, ex, p.cfg.DataManager.TopSymbols)
+		if err != nil {
+			p.log.Warn("refresh failed", "exchange", name, "error", err)
+			continue
+		}
+		old := p.symbolsSnapshot(name)
+		added := diffSymbols(newSymbols, old)
+		removed := diffSymbols(old, newSymbols)
+		p.setSymbols(name, newSymbols)
+		if len(added) == 0 && len(removed) == 0 {
+			continue
+		}
+		p.log.Warn("symbol universe changed",
+			"exchange", name,
+			"added", len(added),
+			"removed", len(removed),
+		)
+		if p.marketPulseDet != nil && name == primary {
+			p.marketPulseDet.UpdateUniverse(newSymbols)
+		}
+		if es := p.exchangeStates[name]; es != nil {
+			select {
+			case es.resubCh <- struct{}{}:
+			default: // a resubscribe is already pending
+			}
+		}
+	}
+	p.loadMarketCaps(ctx)
 }
 
 func diffSymbols(a, b []string) []string {
@@ -1336,6 +1450,8 @@ func diffSymbols(a, b []string) []string {
 // ── Helpers ────────────────────────────────────────────────────
 
 func (p *Pipeline) totalSymbols() int {
+	p.symMu.RLock()
+	defer p.symMu.RUnlock()
 	n := 0
 	for _, symbols := range p.symbolsByExchange {
 		n += len(symbols)

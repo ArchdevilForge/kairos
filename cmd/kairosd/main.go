@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -15,6 +16,62 @@ import (
 	"github.com/ArchdevilForge/kairos/internal/engine"
 	"github.com/ArchdevilForge/kairos/internal/notify"
 )
+
+// pipelineRunner is the slice of engine.Pipeline that the daemon lifecycle
+// needs; run is tested against a fake implementation.
+type pipelineRunner interface {
+	Start(ctx context.Context) error
+	Stop()
+	Close()
+}
+
+// shutdownGrace bounds how long run waits for Pipeline.Start to return after
+// a stop request before forcing exit.
+const shutdownGrace = 15 * time.Second
+
+// errPipelineExited marks a pipeline that returned without a shutdown
+// request — the daemon must exit non-zero so the supervisor restarts it
+// instead of leaving a falsely-healthy process behind.
+var errPipelineExited = errors.New("pipeline exited while daemon was expected to keep running")
+
+// run owns the daemon lifecycle: it starts the pipeline, waits for either an
+// OS shutdown signal (ctx cancelled) or an early pipeline exit, and shuts
+// down in order: stop → wait for goroutines → close exchanges.
+func run(ctx context.Context, p pipelineRunner) error {
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- p.Start(ctx)
+	}()
+
+	var startErr error
+	var early bool
+
+	select {
+	case <-ctx.Done():
+		slog.Info("shutdown signal received")
+		p.Stop()
+		select {
+		case startErr = <-errCh:
+		case <-time.After(shutdownGrace):
+			p.Close()
+			return fmt.Errorf("shutdown timed out after %s", shutdownGrace)
+		}
+	case startErr = <-errCh:
+		// Pipeline returned on its own: never a healthy state for a daemon.
+		early = true
+		p.Stop()
+	}
+
+	p.Close()
+
+	if startErr != nil && !errors.Is(startErr, context.Canceled) {
+		return startErr
+	}
+	if early {
+		return errPipelineExited
+	}
+	return nil
+}
 
 func main() {
 	cfgPath := flag.String("config", "config.yaml", "path to config YAML file")
@@ -70,37 +127,22 @@ func main() {
 		_ = ding.SendText(startMsg)
 	}
 
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- pipeline.Start(ctx)
-	}()
-
-	slog.Info("kairosd running; waiting for shutdown signal")
-	<-ctx.Done()
-	slog.Info("shutting down...")
-	stop()
-
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-
-	pipeline.Stop()
-	pipeline.Close()
-
-	select {
-	case err := <-errCh:
-		if err != nil && err != context.Canceled {
-			slog.Error("pipeline exit", "error", err)
-		}
-	case <-shutdownCtx.Done():
-		slog.Warn("shutdown timed out, forcing exit")
-	}
+	runErr := run(ctx, pipeline)
 
 	stopMsg := "🔴 kairosd stopped"
+	if runErr != nil {
+		stopMsg = fmt.Sprintf("🔴 kairosd stopped: %v", runErr)
+	}
 	if tg != nil {
 		_ = tg.SendText(stopMsg)
 	}
 	if ding != nil {
 		_ = ding.SendText(stopMsg)
+	}
+
+	if runErr != nil {
+		slog.Error("kairosd exit", "error", runErr)
+		os.Exit(1)
 	}
 	slog.Info("shutdown complete")
 }

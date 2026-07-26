@@ -229,7 +229,8 @@ futuresMetrics:
 	ex := &mockPipelineExchange{tickers: map[string]*types.Ticker{
 		"BTC/USDT:USDT": {Symbol: "BTC/USDT:USDT", QuoteVolume: &vol, OpenInterest: &oi, FundingRate: &fr, LastPrice: &vol},
 	}}
-	es := &exchangeState{name: "okx", ex: ex, symbols: []string{"BTC/USDT:USDT"}, tickerCh: make(chan types.Ticker, 1)}
+	es := &exchangeState{name: "okx", ex: ex, tickerCh: make(chan types.Ticker, 1)}
+	p.setSymbols("okx", []string{"BTC/USDT:USDT"})
 	p.registerDetectors(es)
 
 	ctx, cancel := context.WithCancel(context.Background())

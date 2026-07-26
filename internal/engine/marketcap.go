@@ -23,7 +23,7 @@ func (p *Pipeline) loadMarketCaps(ctx context.Context) {
 		return
 	}
 
-	refCap, universeMax := marketCapReference(caps, p.symbolsByExchange)
+	refCap, universeMax := marketCapReference(caps, p.allSymbolsSnapshot())
 	if refCap <= 0 {
 		p.log.Warn("market cap reference unavailable; liquidity weight disabled until next refresh")
 		return

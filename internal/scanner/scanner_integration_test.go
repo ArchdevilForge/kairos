@@ -133,3 +133,53 @@ func TestScanMarket_MockExchange(t *testing.T) {
 		t.Fatalf("expected candidates in envelope, data=%v", env.Data)
 	}
 }
+
+// closeCountingExchange wraps mockScanExchange and counts Close calls.
+type closeCountingExchange struct {
+	mockScanExchange
+	name       string
+	closeCount int
+}
+
+func (c *closeCountingExchange) Name() string { return c.name }
+func (c *closeCountingExchange) Close() error {
+	c.closeCount++
+	return nil
+}
+
+// When the primary yields no candidates and a backup succeeds, the primary
+// must be closed exactly once and the backup exactly once (by the deferred
+// close at scan end) — no leaks, no double closes.
+func TestScanMarket_BackupFallbackClosesExchangesOnce(t *testing.T) {
+	primary := &closeCountingExchange{name: "primary"} // no tickers → no candidates
+	backup := &closeCountingExchange{
+		name: "backup",
+		mockScanExchange: mockScanExchange{
+			tickers: map[string]*types.Ticker{
+				"BTC/USDT:USDT": {QuoteVolume: ptrF(500), ChangePct: ptrF(1), Info: map[string]any{"instType": "SWAP"}},
+			},
+		},
+	}
+
+	cfg := testScannerConfig()
+	cfg.Exchanges.Backups = []string{"backup"}
+	s := NewMarketScanner(cfg)
+	s.exchangeFactory = func(name string) (exchange.Exchange, error) {
+		if name == "backup" {
+			return backup, nil
+		}
+		return primary, nil
+	}
+	s.rsiLoader = func(context.Context) (map[string]data.CoinRSI, string) { return nil, "" }
+
+	env := s.ScanMarket(context.Background(), "primary")
+	if !env.Success {
+		t.Fatalf("scan failed: %v", env.Errors)
+	}
+	if primary.closeCount != 1 {
+		t.Fatalf("primary close count = %d, want 1", primary.closeCount)
+	}
+	if backup.closeCount != 1 {
+		t.Fatalf("backup close count = %d, want 1", backup.closeCount)
+	}
+}
