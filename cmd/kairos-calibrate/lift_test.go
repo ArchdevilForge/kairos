@@ -99,3 +99,16 @@ func TestContinued(t *testing.T) {
 		t.Fatal("down")
 	}
 }
+
+func TestReportLiftSmoke(t *testing.T) {
+	// Exercises print paths (no assertions beyond non-panic).
+	reportLift(nil, nil, 0.08)
+	up := 0.3
+	outcomes := []outcomeRecord{{EventTS: 10, Direction: "up", MedianReturn5m: &up}}
+	reportLift(outcomes, nil, 0.08)
+	snaps := []snapshotRecord{
+		{Timestamp: 0, DataOK: true, MedianReturn60s: 0.2, MedianReturn300s: 0.05},
+		{Timestamp: 300, DataOK: true, MedianReturn60s: 0.1, MedianReturn300s: 0.25},
+	}
+	reportLift(outcomes, snaps, 0.08)
+}
