@@ -63,6 +63,36 @@ func TestExcludeWindows(t *testing.T) {
 	if inExclude(1000-301, wins) || inExclude(1000+901, wins) {
 		t.Fatal("outside window")
 	}
+	// Interval that starts outside but ends inside the alert window must count as overlap.
+	if !intervalOverlapsExclude(650, 950, wins) {
+		t.Fatal("650→950 should overlap exclude [700,1900]")
+	}
+	if intervalOverlapsExclude(100, 400, wins) {
+		t.Fatal("100→400 is fully before exclude")
+	}
+}
+
+// P1-1: baseline start outside exclude, but +5m end inside → must not enter control.
+func TestCollectBaselineExcludesForwardHorizonLeak(t *testing.T) {
+	// Alert @1000 → exclude [700, 1900].
+	// Start 650 is outside; forward ~950 is inside → whole sample is contaminated.
+	snaps := []snapshotRecord{
+		{Timestamp: 650, DataOK: true, MedianReturn60s: 0.25, MedianReturn300s: 0.05},
+		{Timestamp: 950, DataOK: true, MedianReturn60s: 0.10, MedianReturn300s: 0.40},
+		// Clean pair far from the alert window.
+		{Timestamp: 3000, DataOK: true, MedianReturn60s: 0.20, MedianReturn300s: 0.05},
+		{Timestamp: 3300, DataOK: true, MedianReturn60s: 0.10, MedianReturn300s: 0.30},
+	}
+	wins := alertExcludeWindows([]eventRecord{{Timestamp: 1000}}, nil)
+	base := collectBaseline(snaps, 0.08, wins)
+	for _, s := range base {
+		if s.ts == 650 {
+			t.Fatalf("forward-horizon leak: start 650 end 950 must be excluded, got %+v", base)
+		}
+	}
+	if len(base) != 1 || base[0].ts != 3000 {
+		t.Fatalf("want only clean t=3000, got %+v", base)
+	}
 }
 
 func TestCollectBaselineExcludesAlertWindow(t *testing.T) {
@@ -89,10 +119,10 @@ func TestCollectBaselineExcludesAlertWindow(t *testing.T) {
 }
 
 func TestStratifiedHourLift(t *testing.T) {
-	// Hour 0 baseline: 1 cont / 2 → Laplace (1+1)/(2+2)=0.5
+	// Hour 0 / up baseline: 1 cont / 2 → Laplace (1+1)/(2+2)=0.5
 	base := []baselineSample{
-		{ts: 0, hour: 0, bucket: 1, cont: true},
-		{ts: 60, hour: 0, bucket: 1, cont: false},
+		{ts: 0, hour: 0, bucket: 1, direction: "up", cont: true},
+		{ts: 60, hour: 0, bucket: 1, direction: "up", cont: false},
 	}
 	up := 0.4
 	outcomes := []outcomeRecord{{EventTS: 10, Direction: "up", MedianReturn5m: &up}}
@@ -106,8 +136,28 @@ func TestStratifiedHourLift(t *testing.T) {
 	}
 }
 
+// P1-2: up alerts must not match down baseline cells (and vice versa).
+func TestStratifiedLiftMatchesDirection(t *testing.T) {
+	base := []baselineSample{
+		{ts: 0, hour: 0, bucket: 1, direction: "down", cont: true},
+		{ts: 60, hour: 0, bucket: 1, direction: "down", cont: true},
+	}
+	up := 0.4
+	outcomes := []outcomeRecord{{EventTS: 10, Direction: "up", MedianReturn5m: &up}}
+	lift, used, _ := stratifiedLift(outcomes, nil, base, stratHourOnly)
+	if used != 0 || lift != 0 {
+		t.Fatalf("up alert must not use down baseline cell, used=%d lift=%v", used, lift)
+	}
+	// Same hour+bucket down cell still must not match under mag mode either.
+	events := []eventRecord{{Timestamp: 10, MedianReturn60s: 0.25}} // bucket 1
+	lift, used, _ = stratifiedLift(outcomes, events, base, stratHourMag)
+	if used != 0 || lift != 0 {
+		t.Fatalf("hour×dir×|med60|: up must not match down, used=%d lift=%v", used, lift)
+	}
+}
+
 func TestStratifiedHourMagRequiresEventMed(t *testing.T) {
-	base := []baselineSample{{ts: 0, hour: 0, bucket: 2, cont: true}}
+	base := []baselineSample{{ts: 0, hour: 0, bucket: 2, direction: "up", cont: true}}
 	up := 0.2
 	outcomes := []outcomeRecord{{EventTS: 10, Direction: "up", MedianReturn5m: &up}}
 	// no events → cannot match mag bucket
@@ -158,17 +208,17 @@ func TestEffectiveBaselineN(t *testing.T) {
 	}
 }
 
-func TestForwardMedian300(t *testing.T) {
+func TestForwardSnapshot300(t *testing.T) {
 	snaps := []snapshotRecord{
 		{Timestamp: 0, DataOK: true, MedianReturn300s: 0.1},
 		{Timestamp: 290, DataOK: true, MedianReturn300s: 0.5},
 		{Timestamp: 400, DataOK: true, MedianReturn300s: 0.9},
 	}
-	v, ok := forwardMedian300(snaps, 0, 300, 45)
-	if !ok || v != 0.5 {
-		t.Fatalf("got %v %v want 0.5 true", v, ok)
+	s, ok := forwardSnapshot300(snaps, 0, 300, 45)
+	if !ok || s.MedianReturn300s != 0.5 || s.Timestamp != 290 {
+		t.Fatalf("got %+v %v want ts=290 med=0.5", s, ok)
 	}
-	if _, ok := forwardMedian300(snaps, 0, 900, 45); ok {
+	if _, ok := forwardSnapshot300(snaps, 0, 900, 45); ok {
 		t.Fatal("expected miss far target")
 	}
 }

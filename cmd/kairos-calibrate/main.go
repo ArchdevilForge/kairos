@@ -444,6 +444,21 @@ func inExclude(ts float64, wins []excludeWindow) bool {
 	return false
 }
 
+// intervalOverlapsExclude is true when [start, end] shares any time with an
+// alert exclusion window. Baseline must drop samples whose whole +5m horizon
+// leaks into alert buildup/aftermath, not only those whose start is inside.
+func intervalOverlapsExclude(start, end float64, wins []excludeWindow) bool {
+	if end < start {
+		start, end = end, start
+	}
+	for _, w := range wins {
+		if start <= w.hi && end >= w.lo {
+			return true
+		}
+	}
+	return false
+}
+
 type rateCell struct {
 	n, cont int
 }
@@ -455,10 +470,11 @@ func (c rateCell) rateLaplace() float64 {
 
 // baselineSample is one non-alert directional minute used as a control.
 type baselineSample struct {
-	ts     float64
-	hour   int
-	bucket int // med60 magnitude bucket
-	cont   bool
+	ts        float64
+	hour      int
+	bucket    int // med60 magnitude bucket
+	direction string
+	cont      bool
 }
 
 func collectBaseline(snaps []snapshotRecord, noisePct float64, wins []excludeWindow) []baselineSample {
@@ -467,11 +483,13 @@ func collectBaseline(snaps []snapshotRecord, noisePct float64, wins []excludeWin
 		if !s.DataOK || math.Abs(s.MedianReturn60s) < noisePct {
 			continue
 		}
-		if inExclude(s.Timestamp, wins) {
+		fwd, ok := forwardSnapshot300(snaps, i, s.Timestamp+forwardHorizonSeconds, forwardMatchTol)
+		if !ok {
 			continue
 		}
-		fwd, ok := forwardMedian300(snaps, i, s.Timestamp+forwardHorizonSeconds, forwardMatchTol)
-		if !ok {
+		// Drop if start *or* the +5m horizon overlaps an alert window
+		// (buildup before the alert must not enter the control group).
+		if intervalOverlapsExclude(s.Timestamp, fwd.Timestamp, wins) {
 			continue
 		}
 		dir := "up"
@@ -479,10 +497,11 @@ func collectBaseline(snaps []snapshotRecord, noisePct float64, wins []excludeWin
 			dir = "down"
 		}
 		out = append(out, baselineSample{
-			ts:     s.Timestamp,
-			hour:   hourUTC(s.Timestamp),
-			bucket: magBucket(math.Abs(s.MedianReturn60s)),
-			cont:   continued(dir, fwd),
+			ts:        s.Timestamp,
+			hour:      hourUTC(s.Timestamp),
+			bucket:    magBucket(math.Abs(s.MedianReturn60s)),
+			direction: dir,
+			cont:      continued(dir, fwd.MedianReturn300s),
 		})
 	}
 	return out
@@ -508,7 +527,7 @@ func effectiveBaselineN(samples []baselineSample) int {
 func reportLift(outcomes []outcomeRecord, events []eventRecord, snaps []snapshotRecord, noisePct float64) {
 	fmt.Println("\n── 注意力 lift（experimental KPI）──")
 	fmt.Println("  对照名: non-alert directional baseline（非「真随机抽样」）")
-	fmt.Printf("  排除窗: 事件 [ts-%.0fs, ts+%.0fs] 内 snapshot 不进对照\n", excludePreSeconds, excludePostSeconds)
+	fmt.Printf("  排除窗: 事件 [ts-%.0fs, ts+%.0fs]；对照起点→+5m 终点整段不得与排除窗相交\n", excludePreSeconds, excludePostSeconds)
 
 	alertN, alertCont := alertContinuation(outcomes)
 	if alertN == 0 {
@@ -560,25 +579,25 @@ func reportLift(outcomes []outcomeRecord, events []eventRecord, snaps []snapshot
 	status := evidenceStatus(alertN)
 	printLiftLine("experimental_lift_5m (global)", globalLift, liftLo, liftHi, status, alertN)
 
-	// Hour-stratified: E[base | hour] under alert hour mix.
+	// Hour×direction stratified: E[base | hour, dir] under alert mix.
 	hourLift, hourUsed, hourBaseRate := stratifiedLift(outcomes, events, base, stratHourOnly)
 	if hourUsed > 0 && hourBaseRate > 0 {
 		hLo, hHi := ratioBounds(alo, ahi, hourBaseRate*0.8, math.Min(1, hourBaseRate*1.2)) // soft band only
 		_ = hLo
 		_ = hHi
-		fmt.Printf("  experimental_lift_5m (hour-stratified): %.2f×  [alerts with hour pool=%d, E[base]=%.1f%%]\n",
+		fmt.Printf("  experimental_lift_5m (hour×dir stratified): %.2f×  [alerts with pool=%d, E[base]=%.1f%%]\n",
 			hourLift, hourUsed, 100*hourBaseRate)
 	} else {
-		fmt.Println("  experimental_lift_5m (hour-stratified): n/a")
+		fmt.Println("  experimental_lift_5m (hour×dir stratified): n/a")
 	}
 
-	// Hour × |med60| bucket matched baseline (closer to "does the state machine add info?").
+	// Hour × direction × |med60| matched baseline.
 	matchLift, matchUsed, matchBaseRate := stratifiedLift(outcomes, events, base, stratHourMag)
 	if matchUsed > 0 && matchBaseRate > 0 {
-		fmt.Printf("  experimental_lift_5m (hour×|med60| matched): %.2f×  [matched alerts=%d, E[base]=%.1f%%]\n",
+		fmt.Printf("  experimental_lift_5m (hour×dir×|med60| matched): %.2f×  [matched alerts=%d, E[base]=%.1f%%]\n",
 			matchLift, matchUsed, 100*matchBaseRate)
 	} else {
-		fmt.Println("  experimental_lift_5m (hour×|med60| matched): n/a  (缺事件 med60 或桶内无对照)")
+		fmt.Println("  experimental_lift_5m (hour×dir×|med60| matched): n/a  (缺事件 med60 或桶内无对照)")
 	}
 
 	fmt.Println("  状态门槛: alert_n<30 exploratory · 30–99 provisional · ≥100 watch stability")
@@ -666,7 +685,7 @@ const (
 func stratifiedLift(outcomes []outcomeRecord, events []eventRecord, base []baselineSample, mode stratMode) (lift float64, used int, expectedBase float64) {
 	cells := map[string]*rateCell{}
 	for _, s := range base {
-		key := cellKey(s.hour, s.bucket, mode)
+		key := cellKey(s.hour, s.direction, s.bucket, mode)
 		c := cells[key]
 		if c == nil {
 			c = &rateCell{}
@@ -689,6 +708,10 @@ func stratifiedLift(outcomes []outcomeRecord, events []eventRecord, base []basel
 		if o.MedianReturn5m == nil || o.EventTS <= 0 {
 			continue
 		}
+		dir := o.Direction
+		if dir != "up" && dir != "down" {
+			continue
+		}
 		h := hourUTC(o.EventTS)
 		b := 0
 		if mode == stratHourMag {
@@ -698,13 +721,13 @@ func stratifiedLift(outcomes []outcomeRecord, events []eventRecord, base []basel
 			}
 			b = magBucket(math.Abs(med))
 		}
-		key := cellKey(h, b, mode)
+		key := cellKey(h, dir, b, mode)
 		c := cells[key]
 		if c == nil || c.n == 0 {
 			continue
 		}
 		alertN++
-		if continued(o.Direction, *o.MedianReturn5m) {
+		if continued(dir, *o.MedianReturn5m) {
 			alertCont++
 		}
 		sumExpected += c.rateLaplace()
@@ -720,11 +743,12 @@ func stratifiedLift(outcomes []outcomeRecord, events []eventRecord, base []basel
 	return alertRate / expectedBase, alertN, expectedBase
 }
 
-func cellKey(hour, bucket int, mode stratMode) string {
+// cellKey matches alerts to baseline cells by hour×direction, optionally ×|med60|.
+func cellKey(hour int, direction string, bucket int, mode stratMode) string {
 	if mode == stratHourOnly {
-		return fmt.Sprintf("h%d", hour)
+		return fmt.Sprintf("h%d_%s", hour, direction)
 	}
-	return fmt.Sprintf("h%d_b%d", hour, bucket)
+	return fmt.Sprintf("h%d_%s_b%d", hour, direction, bucket)
 }
 
 // magBucket bins |median_return_60s| for strength-matched baselines.
@@ -745,8 +769,8 @@ func hourUTC(ts float64) int {
 	return int(ts/3600) % 24
 }
 
-// forwardMedian300 finds MedianReturn300s near targetTS (≈ forward 5m from t0).
-func forwardMedian300(snaps []snapshotRecord, fromIdx int, targetTS, tol float64) (float64, bool) {
+// forwardSnapshot300 finds the DataOK snapshot nearest targetTS (≈ +5m from t0).
+func forwardSnapshot300(snaps []snapshotRecord, fromIdx int, targetTS, tol float64) (snapshotRecord, bool) {
 	best := -1
 	bestDelta := tol + 1
 	for j := fromIdx; j < len(snaps); j++ {
@@ -763,9 +787,9 @@ func forwardMedian300(snaps []snapshotRecord, fromIdx int, targetTS, tol float64
 		}
 	}
 	if best < 0 {
-		return 0, false
+		return snapshotRecord{}, false
 	}
-	return snaps[best].MedianReturn300s, true
+	return snaps[best], true
 }
 
 func printRate(label string, ok, n int) {
