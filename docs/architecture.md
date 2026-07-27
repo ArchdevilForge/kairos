@@ -44,9 +44,13 @@ kairosd
     -> Telegram + DingTalk hard-data alerts
 
 kairos-alert
-    one-shot scan_market (external cron/systemd timer)
+    optional one-shot scan_market (manual / post-MarketPulse explanation)
     -> deterministic setup scoring
-    -> Telegram candidate summary
+    -> Telegram candidate summary (not the default attention product)
+
+kairos-calibrate
+    events + outcomes + 60s snapshots JSONL
+    -> continuation buckets + lift_5m vs random same-hour baseline
 
 kairos-backtest
     flags-only historical backtest
@@ -91,9 +95,11 @@ purpose. Market-wide alerts are additionally capped by
 
 Analysis of the calibration logs is done out of band with `kairos-calibrate`,
 which joins events to outcomes and reports continuation rates bucketed by
-trigger strength — the table that should drive threshold changes.
+trigger strength, plus **lift_5m** (alert 5m continuation / random same-hour
+baseline from `market-pulse-snapshots.jsonl`). That table should drive threshold
+changes. Snapshots are written about once per 60s while MarketPulse is enabled.
 
-Scanner candidate states:
+Scanner candidate states (optional explanation layer):
 
 - `no_trade`: invalid or insufficient setup.
 - `watch`: interesting candidate, not actionable by itself.

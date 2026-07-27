@@ -8,8 +8,10 @@
 #   1. Copy this file to your Kairos config path.
 #   2. Export TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.
 #   3. Optional DingTalk mirror: DINGTALK_WEBHOOK_URL + DINGTALK_SECRET, dingTalk.enabled=true.
-#   4. Run `go run ./cmd/kairosd` (or built binary) for realtime alerts.
-#   5. Run `go run ./cmd/kairos-alert` from cron/systemd timer for scanner summaries.
+#   4. Run `go run ./cmd/kairosd` (or built binary) for realtime MarketPulse / price alerts.
+#   5. Optional: after a market alert, run `kairos-alert --dry-run` for a scanner
+#      explanation of leaders (not a scheduled trade-signal product).
+#   6. Calibrate: `go run ./cmd/kairos-calibrate --config ...` → lift_5m vs random.
 
 # Exchange authorities:
 #   exchanges.primary     — scanner / MarketPulse / provenance authority
@@ -118,7 +120,8 @@ resonanceScorer:
   minScore: 55
   cooldownSeconds: 600
 
-# scanner is one-shot; schedule kairos-alert with cron / systemd timer.
+# scanner is one-shot and optional. Prefer running it manually after a
+# MarketPulse alert (post-alert explanation). Do not cron it as the primary product.
 scanner:
   universeSize: 30
   candidateLimit: 20
@@ -183,8 +186,10 @@ risk:
   shortPositionMultiplier: 0.75
   inverseCyclePositionMultiplier: 0.5
 
-# databasePath anchors the storage directory; MarketPulse events/outcomes and
-# watch hints are append-only JSONL sidecar files next to it.
+# databasePath anchors the storage directory. Sidecar JSONL next to it:
+#   market-pulse-events.jsonl / market-pulse-outcomes.jsonl /
+#   market-pulse-snapshots.jsonl (60s cross-section for lift_5m baselines) /
+#   watch hints.
 storage:
   databasePath: "~/.local/share/kairos/kairos.db"
   watchHintRetentionHours: 24
@@ -198,8 +203,9 @@ storage:
 #   KAIROS_COINGLASS_PYTHON=/path/to/coinglass-decrypt/.venv/bin/python
 # KAIROS_COINGLASS_USE_PYTHON=0 forces native Go decrypt (legacy v only)
 
-# MarketPulse: cross-sectional market state detector.
+# MarketPulse: cross-sectional market state detector (primary product).
 # Defaults stay disabled; set enabled=true and shadowMode=false to send Telegram.
+# When enabled, kairosd also appends ~60s snapshot rows for kairos-calibrate lift_5m.
 # Quiet-market single-coin gate is independent (gateIndividualAlertsWhenQuiet).
 marketPulse:
   enabled: false

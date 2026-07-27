@@ -2,7 +2,8 @@
 
 > 状态：Engineering complete (Phase 0–4 tooling); product observation ongoing  
 > 核心原则：只有市场从安静切换到整体活跃时才叫醒用户；单币异动只用于解释谁在领涨/领跌。  
-> 实施优先级：P0 价格广度 → P1 告警门控 → P2 衍生品确认 → P3 板块扩散。
+> 90 天主 KPI：`lift_5m` = 告警后 5m 中位收益同向延续率 / 同时段随机对照延续率（snapshot JSONL）。  
+> 实施优先级：P0 价格广度 → P1 告警门控 → P4 校准（含随机对照）→ P2/P3 仅在 lift 无辨识度后再考虑。
 
 ## 一句话目标
 
@@ -46,9 +47,9 @@ QUIET → IMPULSE_UP|IMPULSE_DOWN → TRENDING_UP|TRENDING_DOWN → DECAY → QU
 | 1 | Shadow Mode | done | 计算 + 日志 + 测试；默认 shadow |
 | 2 | 市场告警 | done | format + policy + allow-list 含 market_* |
 | 3 | 单币门控 | done | `gateIndividualAlertsWhenQuiet`（默认 off） |
-| 4 | 回放校准 | tooling done | `market_outcome` + outcomes JSONL；参数观察仍需生产 |
-| 5 | 衍生品 enrichment | out of scope | OI / 量 / 费率 / 爆仓（非硬门槛） |
-| 6 | 板块 impulse | non-blocking | |
+| 4 | 回放校准 | tooling done | `market_outcome` + outcomes + **60s snapshots** JSONL；`kairos-calibrate` → `lift_5m` |
+| 5 | 衍生品 enrichment | out of scope (90d) | OI / 量 / 费率 / 爆仓；仅当 lift≈1 再评估单一量能副表 |
+| 6 | 板块 impulse | deferred | 多 universe 在单一市场 lift 稳定前不做 |
 
 ## 工程约束
 
@@ -90,8 +91,10 @@ alertPolicy:
 
 ## 成功标准（摘要）
 
-- 工程：`make check`、race 测试、断流/universe 刷新不误触发
-- 产品（≥7 天观察）：市场告警 1–8 条/天；Telegram 总量下降 ≥50%；主观有效 impulse ≥60%
+- 工程：`make check`、race 测试、断流/universe 刷新不误触发；snapshot 持续写入
+- 产品（≥7 天观察）：`lift_5m` 稳定 **>1.5×**；市场告警约 1–8 条/天（注意力预算内）
+- scanner / 入场止损叙事：非默认推送；仅作 MarketPulse 后的可选解释
+- 失败信号：有样本后 lift≈1 → 改事件定义/阈值，不扩维、不接执行框架
 
 ## 相关文件
 

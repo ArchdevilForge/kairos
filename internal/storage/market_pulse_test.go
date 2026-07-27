@@ -52,6 +52,49 @@ func TestMarketPulseStore_NilSafe(t *testing.T) {
 	if err := s.RecordOutcome(types.AnomalyEvent{}); err != nil {
 		t.Fatal(err)
 	}
+	if err := s.RecordSnapshot(types.MarketSnapshot{Timestamp: 1}, "QUIET"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMarketPulseStore_RecordSnapshotThrottle(t *testing.T) {
+	dir := t.TempDir()
+	cfg := types.StorageConfig{DatabasePath: filepath.Join(dir, "kairos.db")}
+	s, err := NewMarketPulseStore(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap := types.MarketSnapshot{
+		Timestamp:       1000,
+		DataOK:          true,
+		ValidSymbols:    20,
+		MedianReturn60s: 0.12,
+		UpBreadth60s:    0.6,
+	}
+	if err := s.RecordSnapshot(snap, "QUIET"); err != nil {
+		t.Fatal(err)
+	}
+	// Within 60s window — must not write a second line.
+	snap.Timestamp = 1030
+	snap.MedianReturn60s = 0.99
+	if err := s.RecordSnapshot(snap, "QUIET"); err != nil {
+		t.Fatal(err)
+	}
+	snap.Timestamp = 1061
+	if err := s.RecordSnapshot(snap, "IMPULSE_UP"); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(s.SnapshotPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("want 2 snapshot lines, got %d: %s", len(lines), b)
+	}
+	if !strings.Contains(lines[1], "IMPULSE_UP") {
+		t.Fatalf("second line: %s", lines[1])
+	}
 }
 
 func TestMarketPulseStore_RecordOutcome(t *testing.T) {

@@ -57,15 +57,17 @@ func main() {
 	cfgPath := flag.String("config", "config.yaml", "config file used to locate the storage directory")
 	eventsPath := flag.String("events", "", "override path to market-pulse-events.jsonl")
 	outcomesPath := flag.String("outcomes", "", "override path to market-pulse-outcomes.jsonl")
+	snapshotsPath := flag.String("snapshots", "", "override path to market-pulse-snapshots.jsonl")
 	includeShadow := flag.Bool("include-shadow", true, "include events recorded in shadow mode")
+	noisePct := flag.Float64("noise-pct", 0.08, "|median_return_60s| floor for random directional samples")
 	flag.Parse()
 
-	evPath, outPath := *eventsPath, *outcomesPath
-	if evPath == "" || outPath == "" {
+	evPath, outPath, snapPath := *eventsPath, *outcomesPath, *snapshotsPath
+	if evPath == "" || outPath == "" || snapPath == "" {
 		cfg, err := config.Load(*cfgPath)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "无法从配置定位存储目录: %v\n", err)
-			fmt.Fprintln(os.Stderr, "可用 --events / --outcomes 直接指定文件路径。")
+			fmt.Fprintln(os.Stderr, "可用 --events / --outcomes / --snapshots 直接指定文件路径。")
 			os.Exit(2)
 		}
 		if evPath == "" {
@@ -73,6 +75,9 @@ func main() {
 		}
 		if outPath == "" {
 			outPath = storage.MarketPulseOutcomesPath(cfg.Storage)
+		}
+		if snapPath == "" {
+			snapPath = storage.MarketPulseSnapshotsPath(cfg.Storage)
 		}
 	}
 
@@ -87,25 +92,34 @@ func main() {
 		// normal state early on, not a failure.
 		fmt.Fprintf(os.Stderr, "读取校准结果失败 %s: %v\n", outPath, err)
 	}
+	snaps, err := loadSnapshots(snapPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "读取 snapshot 失败 %s: %v\n", snapPath, err)
+	}
 
 	if !*includeShadow {
 		events = filterEvents(events, func(e eventRecord) bool { return !e.ShadowMode })
 	}
 
 	fmt.Printf("事件文件: %s (%d 条)\n", evPath, len(events))
-	fmt.Printf("结果文件: %s (%d 条)\n\n", outPath, len(outcomes))
+	fmt.Printf("结果文件: %s (%d 条)\n", outPath, len(outcomes))
+	fmt.Printf("快照文件: %s (%d 条)\n\n", snapPath, len(snaps))
 
 	reportEvents(events)
 
 	if len(outcomes) == 0 {
-		fmt.Println("\n尚无 outcome 记录，无法评估精确率。")
+		fmt.Println("\n尚无 outcome 记录，无法评估精确率 / lift。")
 		fmt.Println("outcome 在事件发生约 15 分钟后写入，需要进程在此期间持续运行。")
+		if len(snaps) == 0 {
+			fmt.Println("snapshot 亦为空：启用 MarketPulse 后会每 60s 写入一条轻量横截面样本。")
+		}
 		return
 	}
 
 	pairs := join(events, outcomes)
 	reportOutcomes(outcomes, pairs)
 	reportBuckets(pairs)
+	reportLift(outcomes, snaps, *noisePct)
 }
 
 func loadEvents(path string) ([]eventRecord, error) {
@@ -317,6 +331,191 @@ func continued(direction string, ret float64) bool {
 		return ret < 0
 	}
 	return ret > 0
+}
+
+type snapshotRecord struct {
+	Timestamp        float64 `json:"timestamp"`
+	DataOK           bool    `json:"data_ok"`
+	MedianReturn60s  float64 `json:"median_return_60s"`
+	MedianReturn300s float64 `json:"median_return_300s"`
+}
+
+func loadSnapshots(path string) ([]snapshotRecord, error) {
+	var out []snapshotRecord
+	err := eachLine(path, func(line []byte) error {
+		var r snapshotRecord
+		if err := json.Unmarshal(line, &r); err != nil {
+			return err
+		}
+		out = append(out, r)
+		return nil
+	})
+	sort.Slice(out, func(i, j int) bool { return out[i].Timestamp < out[j].Timestamp })
+	return out, err
+}
+
+// reportLift prints attention lift: alert 5m continuation vs random same-hour baseline.
+// Random forward 5m uses MedianReturn300s at ~t0+300 (trailing 300s ending then ≈ [t0,t0+300]).
+func reportLift(outcomes []outcomeRecord, snaps []snapshotRecord, noisePct float64) {
+	fmt.Println("\n── 注意力 lift（主 KPI）──")
+	alertN, alertCont := alertContinuation(outcomes)
+	if alertN == 0 {
+		fmt.Println("  告警侧无 +5m 样本，无法算 lift。")
+		return
+	}
+	alertRate := float64(alertCont) / float64(alertN)
+	fmt.Printf("  告警 +5m 同向延续: %d/%d (%.1f%%)\n", alertCont, alertN, 100*alertRate)
+
+	if len(snaps) < 2 {
+		fmt.Println("  snapshot 不足：需要 data_ok 的 60s 快照序列才能建随机对照。")
+		fmt.Println("  lift_5m: n/a")
+		return
+	}
+
+	randomN, randomCont := randomContinuation(snaps, noisePct)
+	if randomN == 0 {
+		fmt.Println("  随机对照无可用样本（需要 data_ok 且 |med60|≥noise，并存在 ≈+300s 快照）。")
+		fmt.Println("  lift_5m: n/a")
+		return
+	}
+	randomRate := float64(randomCont) / float64(randomN)
+	fmt.Printf("  随机同时段对照:   %d/%d (%.1f%%)  [noise=%.3f%%]\n",
+		randomCont, randomN, 100*randomRate, noisePct)
+
+	hourLift, hourN := sameHourLift(outcomes, snaps, noisePct)
+	if randomRate <= 0 {
+		fmt.Println("  随机延续率为 0，lift 无定义（对照过严或样本异常）。")
+		fmt.Println("  lift_5m: n/a")
+		return
+	}
+	lift := alertRate / randomRate
+	fmt.Printf("  lift_5m (全局):    %.2f×  (目标起步 >1.5×)\n", lift)
+	if hourN > 0 {
+		fmt.Printf("  lift_5m (同时段):  %.2f×  [按告警 UTC 小时匹配随机池, %d 个有对照的告警]\n",
+			hourLift, hourN)
+	} else {
+		fmt.Println("  lift_5m (同时段):  n/a  (告警小时在随机池中无样本)")
+	}
+	fmt.Println("  读法: lift≈1 表示提醒不比随机看盘更有信息；>1.5 且日打扰在预算内再谈扩维/执行。")
+}
+
+func alertContinuation(outcomes []outcomeRecord) (n, cont int) {
+	for _, o := range outcomes {
+		if o.MedianReturn5m == nil {
+			continue
+		}
+		n++
+		if continued(o.Direction, *o.MedianReturn5m) {
+			cont++
+		}
+	}
+	return n, cont
+}
+
+// randomContinuation scores non-alert times: direction = sign(med60 at t0),
+// forward ≈ MedianReturn300s at t0+300.
+func randomContinuation(snaps []snapshotRecord, noisePct float64) (n, cont int) {
+	const horizon = 300.0
+	const tol = 45.0
+	for i, s := range snaps {
+		if !s.DataOK || math.Abs(s.MedianReturn60s) < noisePct {
+			continue
+		}
+		fwd, ok := forwardMedian300(snaps, i, s.Timestamp+horizon, tol)
+		if !ok {
+			continue
+		}
+		dir := "up"
+		if s.MedianReturn60s < 0 {
+			dir = "down"
+		}
+		n++
+		if continued(dir, fwd) {
+			cont++
+		}
+	}
+	return n, cont
+}
+
+// sameHourLift averages (alert cont / hour random cont) over alerts that have a
+// random pool in the same UTC hour-of-day.
+func sameHourLift(outcomes []outcomeRecord, snaps []snapshotRecord, noisePct float64) (lift float64, used int) {
+	type rate struct{ n, cont int }
+	byHour := map[int]*rate{}
+	const horizon = 300.0
+	const tol = 45.0
+	for i, s := range snaps {
+		if !s.DataOK || math.Abs(s.MedianReturn60s) < noisePct {
+			continue
+		}
+		fwd, ok := forwardMedian300(snaps, i, s.Timestamp+horizon, tol)
+		if !ok {
+			continue
+		}
+		dir := "up"
+		if s.MedianReturn60s < 0 {
+			dir = "down"
+		}
+		h := hourUTC(s.Timestamp)
+		r := byHour[h]
+		if r == nil {
+			r = &rate{}
+			byHour[h] = r
+		}
+		r.n++
+		if continued(dir, fwd) {
+			r.cont++
+		}
+	}
+	var sum float64
+	for _, o := range outcomes {
+		if o.MedianReturn5m == nil || o.EventTS <= 0 {
+			continue
+		}
+		r := byHour[hourUTC(o.EventTS)]
+		if r == nil || r.n == 0 || r.cont == 0 {
+			// cont==0 → hour random rate 0; skip to avoid div-by-zero inflation
+			continue
+		}
+		alertCont := 0.0
+		if continued(o.Direction, *o.MedianReturn5m) {
+			alertCont = 1
+		}
+		randomRate := float64(r.cont) / float64(r.n)
+		sum += alertCont / randomRate
+		used++
+	}
+	if used == 0 {
+		return 0, 0
+	}
+	return sum / float64(used), used
+}
+
+func hourUTC(ts float64) int {
+	return int(ts/3600) % 24
+}
+
+// forwardMedian300 finds MedianReturn300s near targetTS (≈ forward 5m from t0).
+func forwardMedian300(snaps []snapshotRecord, fromIdx int, targetTS, tol float64) (float64, bool) {
+	best := -1
+	bestDelta := tol + 1
+	for j := fromIdx; j < len(snaps); j++ {
+		d := math.Abs(snaps[j].Timestamp - targetTS)
+		if snaps[j].Timestamp > targetTS+tol {
+			break
+		}
+		if !snaps[j].DataOK {
+			continue
+		}
+		if d <= tol && d < bestDelta {
+			bestDelta = d
+			best = j
+		}
+	}
+	if best < 0 {
+		return 0, false
+	}
+	return snaps[best].MedianReturn300s, true
 }
 
 func printRate(label string, ok, n int) {
