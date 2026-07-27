@@ -29,11 +29,14 @@ type MarketPulseRecord struct {
 	RecordedAt       time.Time      `json:"recorded_at"`
 }
 
-// MarketPulseStore is an append-only JSONL log of market pulse events and outcomes.
+// MarketPulseStore is an append-only JSONL log of market pulse events, outcomes,
+// and periodic cross-sectional snapshots used for attention-lift calibration.
 type MarketPulseStore struct {
-	path        string
-	outcomePath string
-	mu          sync.Mutex
+	path         string
+	outcomePath  string
+	snapshotPath string
+	mu           sync.Mutex
+	lastSnapTS   float64 // last persisted snapshot timestamp (throttle)
 }
 
 // Dir returns the directory that anchors every storage sidecar file, so
@@ -52,15 +55,25 @@ func MarketPulseOutcomesPath(cfg types.StorageConfig) string {
 	return filepath.Join(Dir(cfg), "market-pulse-outcomes.jsonl")
 }
 
+// MarketPulseSnapshotsPath names the 60s cross-sectional baseline log.
+func MarketPulseSnapshotsPath(cfg types.StorageConfig) string {
+	return filepath.Join(Dir(cfg), "market-pulse-snapshots.jsonl")
+}
+
+// snapshotMinIntervalSeconds is the floor between persisted snapshot rows.
+// Detector evaluate may run every 5s; calibration only needs ~1 sample/minute.
+const snapshotMinIntervalSeconds = 60
+
 // NewMarketPulseStore opens or creates the market pulse event log.
 func NewMarketPulseStore(cfg types.StorageConfig) (*MarketPulseStore, error) {
 	dir := Dir(cfg)
 	path := MarketPulseEventsPath(cfg)
 	outcomePath := MarketPulseOutcomesPath(cfg)
+	snapshotPath := MarketPulseSnapshotsPath(cfg)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("market pulse store mkdir: %w", err)
 	}
-	return &MarketPulseStore{path: path, outcomePath: outcomePath}, nil
+	return &MarketPulseStore{path: path, outcomePath: outcomePath, snapshotPath: snapshotPath}, nil
 }
 
 // Path returns the events JSONL file path.
@@ -77,6 +90,14 @@ func (s *MarketPulseStore) OutcomePath() string {
 		return ""
 	}
 	return s.outcomePath
+}
+
+// SnapshotPath returns the periodic snapshot JSONL file path.
+func (s *MarketPulseStore) SnapshotPath() string {
+	if s == nil {
+		return ""
+	}
+	return s.snapshotPath
 }
 
 // Record appends one market event. Nil-safe.
@@ -139,6 +160,68 @@ type MarketPulseOutcomeRecord struct {
 	ShadowMode       bool           `json:"shadow_mode"`
 	Payload          map[string]any `json:"payload"`
 	RecordedAt       time.Time      `json:"recorded_at"`
+}
+
+// MarketPulseSnapshotRecord is one lightweight cross-sectional sample for
+// random-baseline attention lift. Keep fields small: ~1.4k rows/day.
+type MarketPulseSnapshotRecord struct {
+	Timestamp        float64   `json:"timestamp"`
+	State            string    `json:"state"`
+	DataOK           bool      `json:"data_ok"`
+	ValidSymbols     int       `json:"valid_symbols"`
+	ValidZSymbols    int       `json:"valid_z_symbols"`
+	ZUsable          bool      `json:"z_usable"`
+	FreshRatio       float64   `json:"fresh_ratio"`
+	MedianReturn60s  float64   `json:"median_return_60s"`
+	MedianReturn180s float64   `json:"median_return_180s"`
+	MedianReturn300s float64   `json:"median_return_300s"`
+	MedianZ60s       float64   `json:"median_z_60s"`
+	UpBreadth60s     float64   `json:"up_breadth_60s"`
+	DownBreadth60s   float64   `json:"down_breadth_60s"`
+	RecordedAt       time.Time `json:"recorded_at"`
+}
+
+// RecordSnapshot appends one snapshot row, throttled to one per 60s of snap time.
+// Nil-safe. Skips zero-timestamp snapshots (detector not yet evaluated).
+func (s *MarketPulseStore) RecordSnapshot(snap types.MarketSnapshot, state string) error {
+	if s == nil || snap.Timestamp <= 0 {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.lastSnapTS > 0 && snap.Timestamp-s.lastSnapTS < snapshotMinIntervalSeconds {
+		return nil
+	}
+	rec := MarketPulseSnapshotRecord{
+		Timestamp:        snap.Timestamp,
+		State:            state,
+		DataOK:           snap.DataOK,
+		ValidSymbols:     snap.ValidSymbols,
+		ValidZSymbols:    snap.ValidZSymbols,
+		ZUsable:          snap.ZUsable,
+		FreshRatio:       snap.FreshRatio,
+		MedianReturn60s:  snap.MedianReturn60s,
+		MedianReturn180s: snap.MedianReturn180s,
+		MedianReturn300s: snap.MedianReturn300s,
+		MedianZ60s:       snap.MedianZ60s,
+		UpBreadth60s:     snap.UpBreadth60s,
+		DownBreadth60s:   snap.DownBreadth60s,
+		RecordedAt:       time.Now().UTC(),
+	}
+	line, err := json.Marshal(rec)
+	if err != nil {
+		return err
+	}
+	f, err := os.OpenFile(s.snapshotPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+	if _, err = f.Write(append(line, '\n')); err != nil {
+		return err
+	}
+	s.lastSnapTS = snap.Timestamp
+	return nil
 }
 
 // RecordOutcome appends one completed post-event outcome. Nil-safe.

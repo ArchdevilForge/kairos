@@ -19,7 +19,9 @@ import (
 func main() {
 	cfgPath := flag.String("config", "config.yaml", "path to config YAML file")
 	exchange := flag.String("exchange", "", "exchange override, defaults to config primary exchange")
-	minState := flag.String("min-state", envOr("KAIROS_ALERT_MIN_STATE", "prepare"), "minimum action_state")
+	// Default prepare keeps output explanatory; this CLI is optional post-MarketPulse
+	// context, not a scheduled trade-entry product.
+	minState := flag.String("min-state", envOr("KAIROS_ALERT_MIN_STATE", "prepare"), "minimum action_state (watch|prepare|trade_candidate)")
 	limit := flag.Int("limit", envIntOr("KAIROS_ALERT_LIMIT", 5), "max setups to include")
 	dryRun := flag.Bool("dry-run", false, "print the message instead of sending Telegram")
 	flag.Parse()

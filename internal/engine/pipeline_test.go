@@ -3,10 +3,14 @@ package engine
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/ArchdevilForge/kairos/internal/config"
 	"github.com/ArchdevilForge/kairos/internal/detector"
+	"github.com/ArchdevilForge/kairos/internal/storage"
 	"github.com/ArchdevilForge/kairos/internal/types"
 )
 
@@ -165,6 +169,56 @@ func TestBuildCondition_MarketImpulse(t *testing.T) {
 func TestIsMarketPulseEvent(t *testing.T) {
 	if !isMarketPulseEvent("market_impulse") || isMarketPulseEvent("price_velocity") {
 		t.Fatal("isMarketPulseEvent")
+	}
+}
+
+func TestRecordMarketPulseSnapshot(t *testing.T) {
+	dir := t.TempDir()
+	store, err := storage.NewMarketPulseStore(types.StorageConfig{
+		DatabasePath: filepath.Join(dir, "kairos.db"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := config.LoadString(`
+marketPulse:
+  enabled: true
+  shadowMode: true
+  minValidSymbols: 15
+  minFreshRatio: 0.5
+  warmupSeconds: 1
+  freshnessSeconds: 60
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := NewPipeline(cfg, nil)
+
+	// Nil detector / store: no-op.
+	p.recordMarketPulseSnapshot()
+
+	d := quietHealthyDetector(t, cfg.MarketPulse)
+	p.marketPulseDet = d
+	p.mpStore = store
+	p.recordMarketPulseSnapshot()
+
+	b, err := os.ReadFile(store.SnapshotPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := string(b)
+	if !strings.Contains(line, "QUIET") || !strings.Contains(line, "data_ok") {
+		t.Fatalf("snapshot line: %s", line)
+	}
+	// Second call within 60s of snap time is throttled → still one line.
+	p.recordMarketPulseSnapshot()
+	b2, err := os.ReadFile(store.SnapshotPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(b2), "\n") != 1 {
+		t.Fatalf("want 1 line after throttle, got %q", b2)
 	}
 }
 

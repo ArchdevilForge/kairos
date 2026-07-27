@@ -2,7 +2,9 @@
 
 > καιρός — 关键时刻，恰当时机
 
-Crypto futures anomaly alert system. 确定性的链上门槛数据监控。
+Crypto futures **market attention** alert system. 确定性的链上门槛数据监控；不自动下单。
+
+主产品：MarketPulse 判断「整个市场何时值得打开盘面」。单币检测器解释「谁在动」；scanner 仅作告警后的可选解释层，不默认定时推送入场/止损。
 
 Go 单体仓库：`cmd/` 入口 + `internal/` 实现。
 
@@ -12,10 +14,12 @@ Go 单体仓库：`cmd/` 入口 + `internal/` 实现。
 Exchange WebSocket  ──→  单币检测器（价格/成交量/OI/资金费率）
                     ──→  MarketPulse（市场广度/状态机，primary only）
                              ↓
-CoinGlass API  ──→  多空比/爆仓检测器  ──→  共振评分器  ──→  Telegram / DingTalk
+                     events + 60s snapshots JSONL  ──→  kairos-calibrate（lift_5m）
+                             ↓
+CoinGlass API  ──→  多空比/爆仓（可选）  ──→  Telegram / DingTalk
 ```
 
-单币异动 + 市场级 MarketPulse（何时值得看盘）+ 可选共振聚合。详见 `docs/GOAL_MARKET_PULSE.md`。
+详见 `docs/GOAL_MARKET_PULSE.md`。90 天主 KPI：告警后 5m 延续 vs **non-alert directional baseline** 的 `experimental_lift_5m`（小样本仅 exploratory）。
 
 ## Build & Commands
 
@@ -54,8 +58,11 @@ make check   # build + vet + golangci-lint + test -race
 # Realtime watcher
 TELEGRAM_BOT_TOKEN=xxx TELEGRAM_CHAT_ID=xxx go run ./cmd/kairosd --config config/config.yaml
 
-# One-shot scanner
+# Optional post-alert scanner summary (not a default cron product)
 go run ./cmd/kairos-alert --config config/config.yaml --dry-run
+
+# MarketPulse calibration: events + outcomes + 60s snapshots → lift_5m
+go run ./cmd/kairos-calibrate --config config/config.yaml
 
 # Backtest
 go run ./cmd/kairos-backtest --symbol BTC/USDT --start 2024-01-01 --end 2024-06-01
@@ -67,7 +74,7 @@ go run ./cmd/kairos-market-replay --input internal/detector/testdata/broad_rally
 ## Project layout
 
 ```text
-cmd/           CLI 入口（kairosd、kairos-alert、kairos-backtest、kairos-market-replay）
+cmd/           CLI 入口（kairosd、kairos-calibrate、kairos-alert、kairos-backtest、kairos-market-replay）
 internal/      业务实现（detector、scanner、engine、exchange…）
 tests/         跨包等价性测试
 config/        运行时配置示例
@@ -88,7 +95,7 @@ deploy/        部署相关
 | `resonance` | 聚合 | 信号质量分 ≥55（基于 Z-score 极端度 + 维度共振 + 方向一致性） |
 | `market_impulse` / `market_trend` / `market_stress` | 横截面 | 广度 + 中位收益 + BTC/ETH 确认 + 状态机（默认 shadow） |
 
-Scanner 输出 `watch`/`prepare`/`trade_candidate` 状态、评分、入场区间、止损、目标、风险回报比。
+**默认注意力路径**是 MarketPulse 市场事件，不是 scanner。`kairos-alert` 仍可输出 `watch`/`prepare`/`trade_candidate` 与结构位，但定位为 MarketPulse 叫醒后的**可选人工解释**，请勿当作自动入场指令，也不建议默认 cron 推送。
 
 ## Configuration
 

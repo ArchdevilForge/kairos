@@ -218,7 +218,10 @@ func NewPipeline(cfg *types.Config, tg *notify.TelegramClient) *Pipeline {
 			log.Warn("market pulse store disabled", "error", err)
 		} else {
 			p.mpStore = mpStore
-			log.Info("market pulse store ready", "path", mpStore.Path())
+			log.Info("market pulse store ready",
+				"events", mpStore.Path(),
+				"outcomes", mpStore.OutcomePath(),
+				"snapshots", mpStore.SnapshotPath())
 		}
 	}
 
@@ -403,12 +406,18 @@ func (p *Pipeline) Start(ctx context.Context) error {
 		return nil
 	})
 
-	// 5j. Market pulse snapshot loop.
+	// 5j. Market pulse evaluation loop + 60s calibration snapshot writer.
 	if p.marketPulseDet != nil {
 		g.Go(func() error {
 			p.marketPulseDet.Start(gCtx)
 			return nil
 		})
+		if p.mpStore != nil {
+			g.Go(func() error {
+				p.marketPulseSnapshotLoop(gCtx)
+				return nil
+			})
+		}
 	}
 
 	p.log.Info("pipeline started",
@@ -1473,6 +1482,32 @@ func (p *Pipeline) MarketState() types.MarketState {
 		return types.MarketStateQuiet
 	}
 	return p.marketPulseDet.State()
+}
+
+// marketPulseSnapshotLoop persists a lightweight cross-sectional sample about
+// once per minute for attention-lift baselines. The store throttles to 60s.
+func (p *Pipeline) marketPulseSnapshotLoop(ctx context.Context) {
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			p.recordMarketPulseSnapshot()
+		}
+	}
+}
+
+// recordMarketPulseSnapshot writes one LastSnapshot row when detector+store exist.
+func (p *Pipeline) recordMarketPulseSnapshot() {
+	if p.marketPulseDet == nil || p.mpStore == nil {
+		return
+	}
+	snap := p.marketPulseDet.LastSnapshot()
+	if err := p.mpStore.RecordSnapshot(snap, string(p.marketPulseDet.State())); err != nil {
+		p.log.Warn("market pulse snapshot store failed", "error", err)
+	}
 }
 
 func buildCondition(evt types.AnomalyEvent) string {
