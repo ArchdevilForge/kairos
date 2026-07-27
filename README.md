@@ -19,7 +19,7 @@ Exchange WebSocket  ──→  单币检测器（价格/成交量/OI/资金费�
 CoinGlass API  ──→  多空比/爆仓（可选）  ──→  Telegram / DingTalk
 ```
 
-详见 `docs/GOAL_MARKET_PULSE.md`。90 天主 KPI：告警后 5m 中位收益同向延续 vs 同时段随机对照的 **lift_5m**。
+详见 `docs/GOAL_MARKET_PULSE.md`。90 天主 KPI：告警后 5m 延续 vs **non-alert directional baseline** 的 `experimental_lift_5m`（小样本仅 exploratory）。
 
 ## Build & Commands
 

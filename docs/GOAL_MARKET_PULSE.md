@@ -2,7 +2,7 @@
 
 > 状态：Engineering complete (Phase 0–4 tooling); product observation ongoing  
 > 核心原则：只有市场从安静切换到整体活跃时才叫醒用户；单币异动只用于解释谁在领涨/领跌。  
-> 90 天主 KPI：`lift_5m` = 告警后 5m 中位收益同向延续率 / 同时段随机对照延续率（snapshot JSONL）。  
+> 90 天主 KPI：`experimental_lift_5m` = 告警后 5m 延续率 / **non-alert directional baseline**（snapshot JSONL；排除事件窗；alert_n&lt;30 仅 exploratory）。  
 > 实施优先级：P0 价格广度 → P1 告警门控 → P4 校准（含随机对照）→ P2/P3 仅在 lift 无辨识度后再考虑。
 
 ## 一句话目标
@@ -92,7 +92,7 @@ alertPolicy:
 ## 成功标准（摘要）
 
 - 工程：`make check`、race 测试、断流/universe 刷新不误触发；snapshot 持续写入
-- 产品（≥7 天观察）：`lift_5m` 稳定 **>1.5×**；市场告警约 1–8 条/天（注意力预算内）
+- 产品（≥7 天观察）：`experimental_lift_5m` 在 **alert_n≥100** 且状态为 watch_stability 时再谈是否稳定 **>1.5×**；市场告警约 1–8 条/天
 - scanner / 入场止损叙事：非默认推送；仅作 MarketPulse 后的可选解释
 - 失败信号：有样本后 lift≈1 → 改事件定义/阈值，不扩维、不接执行框架
 

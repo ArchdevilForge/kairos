@@ -95,9 +95,11 @@ purpose. Market-wide alerts are additionally capped by
 
 Analysis of the calibration logs is done out of band with `kairos-calibrate`,
 which joins events to outcomes and reports continuation rates bucketed by
-trigger strength, plus **lift_5m** (alert 5m continuation / random same-hour
-baseline from `market-pulse-snapshots.jsonl`). That table should drive threshold
-changes. Snapshots are written about once per 60s while MarketPulse is enabled.
+trigger strength, plus **experimental_lift_5m** (alert 5m continuation vs a
+*non-alert directional baseline* from `market-pulse-snapshots.jsonl`: alert
+windows excluded, minute-deduped, hour / hour×|med60| stratified, Wilson CI +
+evidence status). Small-n lift is exploratory only. Snapshots are written about
+once per 60s while MarketPulse is enabled.
 
 Scanner candidate states (optional explanation layer):
 
