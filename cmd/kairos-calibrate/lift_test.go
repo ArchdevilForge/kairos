@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"os"
+	"testing"
+)
 
 func TestAlertContinuation(t *testing.T) {
 	up := 0.2
@@ -61,5 +64,38 @@ func TestForwardMedian300(t *testing.T) {
 	v, ok := forwardMedian300(snaps, 0, 300, 45)
 	if !ok || v != 0.5 {
 		t.Fatalf("got %v %v want 0.5 true", v, ok)
+	}
+	if _, ok := forwardMedian300(snaps, 0, 900, 45); ok {
+		t.Fatal("expected miss far target")
+	}
+}
+
+func TestLoadSnapshotsAndHourUTC(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/snaps.jsonl"
+	body := "{\"timestamp\":100,\"data_ok\":true,\"median_return_60s\":0.2,\"median_return_300s\":0.1}\n" +
+		"{\"timestamp\":50,\"data_ok\":false,\"median_return_60s\":0.0,\"median_return_300s\":0.0}\n"
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	snaps, err := loadSnapshots(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snaps) != 2 || snaps[0].Timestamp != 50 || snaps[1].Timestamp != 100 {
+		t.Fatalf("sorted load: %+v", snaps)
+	}
+	// Unix 0 is 1970-01-01 00:00 UTC → hour 0; +3600 → hour 1.
+	if hourUTC(0) != 0 || hourUTC(3600) != 1 {
+		t.Fatalf("hourUTC 0=%d 3600=%d", hourUTC(0), hourUTC(3600))
+	}
+}
+
+func TestContinued(t *testing.T) {
+	if !continued("up", 0.1) || continued("up", -0.1) || continued("up", 0) {
+		t.Fatal("up")
+	}
+	if !continued("down", -0.1) || continued("down", 0.1) {
+		t.Fatal("down")
 	}
 }

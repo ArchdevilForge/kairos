@@ -57,6 +57,28 @@ func TestMarketPulseStore_NilSafe(t *testing.T) {
 	}
 }
 
+func TestMarketPulseStore_RecordSnapshotSkipsZeroTS(t *testing.T) {
+	dir := t.TempDir()
+	cfg := types.StorageConfig{DatabasePath: filepath.Join(dir, "kairos.db")}
+	s, err := NewMarketPulseStore(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RecordSnapshot(types.MarketSnapshot{}, "QUIET"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(s.SnapshotPath()); !os.IsNotExist(err) {
+		t.Fatalf("zero-ts snapshot must not create file, err=%v", err)
+	}
+	if s.SnapshotPath() == "" || !strings.HasSuffix(s.SnapshotPath(), "market-pulse-snapshots.jsonl") {
+		t.Fatalf("path=%q", s.SnapshotPath())
+	}
+	var nilStore *MarketPulseStore
+	if nilStore.SnapshotPath() != "" {
+		t.Fatal("nil SnapshotPath")
+	}
+}
+
 func TestMarketPulseStore_RecordSnapshotThrottle(t *testing.T) {
 	dir := t.TempDir()
 	cfg := types.StorageConfig{DatabasePath: filepath.Join(dir, "kairos.db")}

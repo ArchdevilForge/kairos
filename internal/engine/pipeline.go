@@ -1494,14 +1494,19 @@ func (p *Pipeline) marketPulseSnapshotLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if p.marketPulseDet == nil || p.mpStore == nil {
-				continue
-			}
-			snap := p.marketPulseDet.LastSnapshot()
-			if err := p.mpStore.RecordSnapshot(snap, string(p.marketPulseDet.State())); err != nil {
-				p.log.Warn("market pulse snapshot store failed", "error", err)
-			}
+			p.recordMarketPulseSnapshot()
 		}
+	}
+}
+
+// recordMarketPulseSnapshot writes one LastSnapshot row when detector+store exist.
+func (p *Pipeline) recordMarketPulseSnapshot() {
+	if p.marketPulseDet == nil || p.mpStore == nil {
+		return
+	}
+	snap := p.marketPulseDet.LastSnapshot()
+	if err := p.mpStore.RecordSnapshot(snap, string(p.marketPulseDet.State())); err != nil {
+		p.log.Warn("market pulse snapshot store failed", "error", err)
 	}
 }
 
