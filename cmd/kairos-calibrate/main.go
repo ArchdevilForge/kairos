@@ -5,6 +5,10 @@
 // how often an alert was followed by continued movement in the same direction,
 // bucketed by how strong the triggering move was. That bucket table is the one
 // that answers "where should minMedianReturnPct actually sit".
+//
+// Attention lift compares alert 5m continuation to a *non-alert directional
+// baseline* built from 60s snapshots (alert windows excluded). Small-n output
+// is labeled experimental — do not treat lift as a production gate until n is large.
 package main
 
 import (
@@ -53,13 +57,27 @@ type joined struct {
 	out outcomeRecord
 }
 
+const (
+	// Alert windows are removed from the directional baseline so the treatment
+	// group does not pollute the control group.
+	excludePreSeconds  = 300.0
+	excludePostSeconds = 900.0
+
+	forwardHorizonSeconds = 300.0
+	forwardMatchTol       = 45.0
+
+	// Evidence tiers for lift (not trading gates — observation only).
+	minAlertExploratory = 30
+	minAlertProvisional = 100
+)
+
 func main() {
 	cfgPath := flag.String("config", "config.yaml", "config file used to locate the storage directory")
 	eventsPath := flag.String("events", "", "override path to market-pulse-events.jsonl")
 	outcomesPath := flag.String("outcomes", "", "override path to market-pulse-outcomes.jsonl")
 	snapshotsPath := flag.String("snapshots", "", "override path to market-pulse-snapshots.jsonl")
-	includeShadow := flag.Bool("include-shadow", true, "include events recorded in shadow mode")
-	noisePct := flag.Float64("noise-pct", 0.08, "|median_return_60s| floor for random directional samples")
+	includeShadow := flag.Bool("include-shadow", true, "include events/outcomes recorded in shadow mode")
+	noisePct := flag.Float64("noise-pct", 0.08, "|median_return_60s| floor for directional baseline samples")
 	flag.Parse()
 
 	evPath, outPath, snapPath := *eventsPath, *outcomesPath, *snapshotsPath
@@ -99,11 +117,12 @@ func main() {
 
 	if !*includeShadow {
 		events = filterEvents(events, func(e eventRecord) bool { return !e.ShadowMode })
+		outcomes = filterOutcomes(outcomes, func(o outcomeRecord) bool { return !o.ShadowMode })
 	}
 
 	fmt.Printf("事件文件: %s (%d 条)\n", evPath, len(events))
 	fmt.Printf("结果文件: %s (%d 条)\n", outPath, len(outcomes))
-	fmt.Printf("快照文件: %s (%d 条)\n\n", snapPath, len(snaps))
+	fmt.Printf("快照文件: %s (%d 条, 按分钟去重后)\n\n", snapPath, len(snaps))
 
 	reportEvents(events)
 
@@ -119,7 +138,7 @@ func main() {
 	pairs := join(events, outcomes)
 	reportOutcomes(outcomes, pairs)
 	reportBuckets(pairs)
-	reportLift(outcomes, snaps, *noisePct)
+	reportLift(outcomes, events, snaps, *noisePct)
 }
 
 func loadEvents(path string) ([]eventRecord, error) {
@@ -183,6 +202,16 @@ func filterEvents(in []eventRecord, keep func(eventRecord) bool) []eventRecord {
 	for _, e := range in {
 		if keep(e) {
 			out = append(out, e)
+		}
+	}
+	return out
+}
+
+func filterOutcomes(in []outcomeRecord, keep func(outcomeRecord) bool) []outcomeRecord {
+	var out []outcomeRecord
+	for _, o := range in {
+		if keep(o) {
+			out = append(out, o)
 		}
 	}
 	return out
@@ -338,65 +367,278 @@ type snapshotRecord struct {
 	DataOK           bool    `json:"data_ok"`
 	MedianReturn60s  float64 `json:"median_return_60s"`
 	MedianReturn300s float64 `json:"median_return_300s"`
+	UpBreadth60s     float64 `json:"up_breadth_60s"`
+	DownBreadth60s   float64 `json:"down_breadth_60s"`
 }
 
 func loadSnapshots(path string) ([]snapshotRecord, error) {
-	var out []snapshotRecord
+	var raw []snapshotRecord
 	err := eachLine(path, func(line []byte) error {
 		var r snapshotRecord
 		if err := json.Unmarshal(line, &r); err != nil {
 			return err
 		}
-		out = append(out, r)
+		raw = append(raw, r)
 		return nil
 	})
-	sort.Slice(out, func(i, j int) bool { return out[i].Timestamp < out[j].Timestamp })
-	return out, err
+	sort.Slice(raw, func(i, j int) bool { return raw[i].Timestamp < raw[j].Timestamp })
+	return dedupeSnapshotsByMinute(raw), err
 }
 
-// reportLift prints attention lift: alert 5m continuation vs random same-hour baseline.
-// Random forward 5m uses MedianReturn300s at ~t0+300 (trailing 300s ending then ≈ [t0,t0+300]).
-func reportLift(outcomes []outcomeRecord, snaps []snapshotRecord, noisePct float64) {
-	fmt.Println("\n── 注意力 lift（主 KPI）──")
+// dedupeSnapshotsByMinute keeps the last row per floor(ts/60) so process restarts
+// that re-write the same minute do not double-weight the baseline.
+func dedupeSnapshotsByMinute(in []snapshotRecord) []snapshotRecord {
+	if len(in) == 0 {
+		return in
+	}
+	sorted := append([]snapshotRecord(nil), in...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Timestamp < sorted[j].Timestamp })
+	byMin := make(map[int64]snapshotRecord, len(sorted))
+	order := make([]int64, 0, len(sorted))
+	seen := make(map[int64]bool, len(sorted))
+	for _, s := range sorted {
+		k := int64(math.Floor(s.Timestamp / 60))
+		if !seen[k] {
+			seen[k] = true
+			order = append(order, k)
+		}
+		byMin[k] = s // later timestamp in the same minute wins
+	}
+	out := make([]snapshotRecord, 0, len(order))
+	for _, k := range order {
+		out = append(out, byMin[k])
+	}
+	return out
+}
+
+type excludeWindow struct {
+	lo, hi float64
+}
+
+func alertExcludeWindows(events []eventRecord, outcomes []outcomeRecord) []excludeWindow {
+	tsSet := map[int64]struct{}{}
+	for _, e := range events {
+		if e.Timestamp > 0 {
+			tsSet[int64(math.Round(e.Timestamp))] = struct{}{}
+		}
+	}
+	for _, o := range outcomes {
+		if o.EventTS > 0 {
+			tsSet[int64(math.Round(o.EventTS))] = struct{}{}
+		}
+	}
+	out := make([]excludeWindow, 0, len(tsSet))
+	for ts := range tsSet {
+		t := float64(ts)
+		out = append(out, excludeWindow{lo: t - excludePreSeconds, hi: t + excludePostSeconds})
+	}
+	return out
+}
+
+func inExclude(ts float64, wins []excludeWindow) bool {
+	for _, w := range wins {
+		if ts >= w.lo && ts <= w.hi {
+			return true
+		}
+	}
+	return false
+}
+
+type rateCell struct {
+	n, cont int
+}
+
+func (c rateCell) rateLaplace() float64 {
+	// Jeffreys/Laplace: avoid zero-rate cells killing stratification.
+	return float64(c.cont+1) / float64(c.n+2)
+}
+
+// baselineSample is one non-alert directional minute used as a control.
+type baselineSample struct {
+	ts     float64
+	hour   int
+	bucket int // med60 magnitude bucket
+	cont   bool
+}
+
+func collectBaseline(snaps []snapshotRecord, noisePct float64, wins []excludeWindow) []baselineSample {
+	var out []baselineSample
+	for i, s := range snaps {
+		if !s.DataOK || math.Abs(s.MedianReturn60s) < noisePct {
+			continue
+		}
+		if inExclude(s.Timestamp, wins) {
+			continue
+		}
+		fwd, ok := forwardMedian300(snaps, i, s.Timestamp+forwardHorizonSeconds, forwardMatchTol)
+		if !ok {
+			continue
+		}
+		dir := "up"
+		if s.MedianReturn60s < 0 {
+			dir = "down"
+		}
+		out = append(out, baselineSample{
+			ts:     s.Timestamp,
+			hour:   hourUTC(s.Timestamp),
+			bucket: magBucket(math.Abs(s.MedianReturn60s)),
+			cont:   continued(dir, fwd),
+		})
+	}
+	return out
+}
+
+// effectiveBaselineN counts non-overlapping 5m anchors among baseline samples
+// (raw N overstates independence because consecutive minutes share ~80% of the horizon).
+func effectiveBaselineN(samples []baselineSample) int {
+	if len(samples) == 0 {
+		return 0
+	}
+	n := 1
+	last := samples[0].ts
+	for _, s := range samples[1:] {
+		if s.ts-last >= forwardHorizonSeconds {
+			n++
+			last = s.ts
+		}
+	}
+	return n
+}
+
+func reportLift(outcomes []outcomeRecord, events []eventRecord, snaps []snapshotRecord, noisePct float64) {
+	fmt.Println("\n── 注意力 lift（experimental KPI）──")
+	fmt.Println("  对照名: non-alert directional baseline（非「真随机抽样」）")
+	fmt.Printf("  排除窗: 事件 [ts-%.0fs, ts+%.0fs] 内 snapshot 不进对照\n", excludePreSeconds, excludePostSeconds)
+
 	alertN, alertCont := alertContinuation(outcomes)
 	if alertN == 0 {
 		fmt.Println("  告警侧无 +5m 样本，无法算 lift。")
 		return
 	}
 	alertRate := float64(alertCont) / float64(alertN)
-	fmt.Printf("  告警 +5m 同向延续: %d/%d (%.1f%%)\n", alertCont, alertN, 100*alertRate)
+	alo, ahi := wilsonCI(alertCont, alertN, 0.95)
+	fmt.Printf("  告警 +5m 同向延续: %d/%d (%.1f%%)  Wilson95%% [%.1f%%, %.1f%%]\n",
+		alertCont, alertN, 100*alertRate, 100*alo, 100*ahi)
 
 	if len(snaps) < 2 {
-		fmt.Println("  snapshot 不足：需要 data_ok 的 60s 快照序列才能建随机对照。")
-		fmt.Println("  lift_5m: n/a")
+		fmt.Println("  snapshot 不足：需要 data_ok 的 60s 快照序列才能建对照。")
+		fmt.Println("  experimental_lift_5m: n/a")
 		return
 	}
 
-	randomN, randomCont := randomContinuation(snaps, noisePct)
-	if randomN == 0 {
-		fmt.Println("  随机对照无可用样本（需要 data_ok 且 |med60|≥noise，并存在 ≈+300s 快照）。")
-		fmt.Println("  lift_5m: n/a")
+	wins := alertExcludeWindows(events, outcomes)
+	base := collectBaseline(snaps, noisePct, wins)
+	if len(base) == 0 {
+		fmt.Println("  对照无可用样本（需 data_ok、|med60|≥noise、≈+300s 前瞻，且不在排除窗内）。")
+		fmt.Println("  experimental_lift_5m: n/a")
 		return
 	}
-	randomRate := float64(randomCont) / float64(randomN)
-	fmt.Printf("  随机同时段对照:   %d/%d (%.1f%%)  [noise=%.3f%%]\n",
-		randomCont, randomN, 100*randomRate, noisePct)
 
-	hourLift, hourN := sameHourLift(outcomes, snaps, noisePct)
-	if randomRate <= 0 {
-		fmt.Println("  随机延续率为 0，lift 无定义（对照过严或样本异常）。")
-		fmt.Println("  lift_5m: n/a")
+	var baseCont int
+	for _, s := range base {
+		if s.cont {
+			baseCont++
+		}
+	}
+	baseRate := float64(baseCont) / float64(len(base))
+	blo, bhi := wilsonCI(baseCont, len(base), 0.95)
+	effN := effectiveBaselineN(base)
+	fmt.Printf("  对照延续率:         %d/%d raw (%.1f%%)  Wilson95%% [%.1f%%, %.1f%%]\n",
+		baseCont, len(base), 100*baseRate, 100*blo, 100*bhi)
+	fmt.Printf("  对照有效 N (5m 锚点): %d  (raw 分钟重叠，勿当独立样本)\n", effN)
+	fmt.Printf("  noise floor:         %.3f%%\n", noisePct)
+
+	if baseRate <= 0 {
+		fmt.Println("  对照延续率为 0，lift 无定义。")
+		fmt.Println("  experimental_lift_5m: n/a")
 		return
 	}
-	lift := alertRate / randomRate
-	fmt.Printf("  lift_5m (全局):    %.2f×  (目标起步 >1.5×)\n", lift)
-	if hourN > 0 {
-		fmt.Printf("  lift_5m (同时段):  %.2f×  [按告警 UTC 小时匹配随机池, %d 个有对照的告警]\n",
-			hourLift, hourN)
+
+	globalLift := alertRate / baseRate
+	// Crude ratio bounds from Wilson endpoints (ignores dependence; exploratory only).
+	liftLo, liftHi := ratioBounds(alo, ahi, blo, bhi)
+	status := evidenceStatus(alertN)
+	printLiftLine("experimental_lift_5m (global)", globalLift, liftLo, liftHi, status, alertN)
+
+	// Hour-stratified: E[base | hour] under alert hour mix.
+	hourLift, hourUsed, hourBaseRate := stratifiedLift(outcomes, events, base, stratHourOnly)
+	if hourUsed > 0 && hourBaseRate > 0 {
+		hLo, hHi := ratioBounds(alo, ahi, hourBaseRate*0.8, math.Min(1, hourBaseRate*1.2)) // soft band only
+		_ = hLo
+		_ = hHi
+		fmt.Printf("  experimental_lift_5m (hour-stratified): %.2f×  [alerts with hour pool=%d, E[base]=%.1f%%]\n",
+			hourLift, hourUsed, 100*hourBaseRate)
 	} else {
-		fmt.Println("  lift_5m (同时段):  n/a  (告警小时在随机池中无样本)")
+		fmt.Println("  experimental_lift_5m (hour-stratified): n/a")
 	}
-	fmt.Println("  读法: lift≈1 表示提醒不比随机看盘更有信息；>1.5 且日打扰在预算内再谈扩维/执行。")
+
+	// Hour × |med60| bucket matched baseline (closer to "does the state machine add info?").
+	matchLift, matchUsed, matchBaseRate := stratifiedLift(outcomes, events, base, stratHourMag)
+	if matchUsed > 0 && matchBaseRate > 0 {
+		fmt.Printf("  experimental_lift_5m (hour×|med60| matched): %.2f×  [matched alerts=%d, E[base]=%.1f%%]\n",
+			matchLift, matchUsed, 100*matchBaseRate)
+	} else {
+		fmt.Println("  experimental_lift_5m (hour×|med60| matched): n/a  (缺事件 med60 或桶内无对照)")
+	}
+
+	fmt.Println("  状态门槛: alert_n<30 exploratory · 30–99 provisional · ≥100 watch stability")
+	fmt.Println("  注意: 相邻分钟对照高度重叠；CI 为独立假设下的探索区间，非正式显著性检验。")
+	fmt.Println("  读法: lift≈1 → 不比「有方向的非告警分钟」更有信息；勿在 exploratory 阶段调实盘。")
+}
+
+func printLiftLine(name string, lift, lo, hi float64, status string, alertN int) {
+	fmt.Printf("  %s: %.2f×  approx95%% [%.2f, %.2f]  alert_n=%d  status=%s\n",
+		name, lift, lo, hi, alertN, status)
+}
+
+func evidenceStatus(alertN int) string {
+	switch {
+	case alertN < minAlertExploratory:
+		return "insufficient_evidence"
+	case alertN < minAlertProvisional:
+		return "provisional"
+	default:
+		return "watch_stability"
+	}
+}
+
+// ratioBounds maps Wilson endpoints of two rates into a crude lift interval.
+func ratioBounds(aLo, aHi, bLo, bHi float64) (float64, float64) {
+	if bHi <= 0 {
+		return 0, math.Inf(1)
+	}
+	lo := aLo / bHi
+	hi := math.Inf(1)
+	if bLo > 0 {
+		hi = aHi / bLo
+	}
+	return lo, hi
+}
+
+// wilsonCI is a normal-approximation Wilson score interval for a binomial proportion.
+func wilsonCI(k, n int, zLevel float64) (float64, float64) {
+	if n <= 0 {
+		return 0, 1
+	}
+	// z≈1.96 for 95%.
+	z := 1.959963984540054
+	if zLevel != 0.95 {
+		z = 1.959963984540054
+	}
+	p := float64(k) / float64(n)
+	zn := z * z / float64(n)
+	den := 1 + zn
+	center := p + zn/2
+	margin := z * math.Sqrt(p*(1-p)/float64(n)+zn*zn/4)
+	lo := (center - margin) / den
+	hi := (center + margin) / den
+	if lo < 0 {
+		lo = 0
+	}
+	if hi > 1 {
+		hi = 1
+	}
+	return lo, hi
 }
 
 func alertContinuation(outcomes []outcomeRecord) (n, cont int) {
@@ -412,83 +654,91 @@ func alertContinuation(outcomes []outcomeRecord) (n, cont int) {
 	return n, cont
 }
 
-// randomContinuation scores non-alert times: direction = sign(med60 at t0),
-// forward ≈ MedianReturn300s at t0+300.
-func randomContinuation(snaps []snapshotRecord, noisePct float64) (n, cont int) {
-	const horizon = 300.0
-	const tol = 45.0
-	for i, s := range snaps {
-		if !s.DataOK || math.Abs(s.MedianReturn60s) < noisePct {
-			continue
-		}
-		fwd, ok := forwardMedian300(snaps, i, s.Timestamp+horizon, tol)
-		if !ok {
-			continue
-		}
-		dir := "up"
-		if s.MedianReturn60s < 0 {
-			dir = "down"
-		}
-		n++
-		if continued(dir, fwd) {
-			cont++
-		}
-	}
-	return n, cont
-}
+type stratMode int
 
-// sameHourLift averages (alert cont / hour random cont) over alerts that have a
-// random pool in the same UTC hour-of-day.
-func sameHourLift(outcomes []outcomeRecord, snaps []snapshotRecord, noisePct float64) (lift float64, used int) {
-	type rate struct{ n, cont int }
-	byHour := map[int]*rate{}
-	const horizon = 300.0
-	const tol = 45.0
-	for i, s := range snaps {
-		if !s.DataOK || math.Abs(s.MedianReturn60s) < noisePct {
-			continue
+const (
+	stratHourOnly stratMode = iota
+	stratHourMag
+)
+
+// stratifiedLift = alertRate / E[baseline rate | alert covariates].
+// Uses Laplace-smoothed cell rates so zero-success hours are not dropped.
+func stratifiedLift(outcomes []outcomeRecord, events []eventRecord, base []baselineSample, mode stratMode) (lift float64, used int, expectedBase float64) {
+	cells := map[string]*rateCell{}
+	for _, s := range base {
+		key := cellKey(s.hour, s.bucket, mode)
+		c := cells[key]
+		if c == nil {
+			c = &rateCell{}
+			cells[key] = c
 		}
-		fwd, ok := forwardMedian300(snaps, i, s.Timestamp+horizon, tol)
-		if !ok {
-			continue
-		}
-		dir := "up"
-		if s.MedianReturn60s < 0 {
-			dir = "down"
-		}
-		h := hourUTC(s.Timestamp)
-		r := byHour[h]
-		if r == nil {
-			r = &rate{}
-			byHour[h] = r
-		}
-		r.n++
-		if continued(dir, fwd) {
-			r.cont++
+		c.n++
+		if s.cont {
+			c.cont++
 		}
 	}
-	var sum float64
+
+	medByTS := map[int64]float64{}
+	for _, e := range events {
+		medByTS[int64(math.Round(e.Timestamp))] = e.MedianReturn60s
+	}
+
+	alertN, alertCont := 0, 0
+	var sumExpected float64
 	for _, o := range outcomes {
 		if o.MedianReturn5m == nil || o.EventTS <= 0 {
 			continue
 		}
-		r := byHour[hourUTC(o.EventTS)]
-		if r == nil || r.n == 0 || r.cont == 0 {
-			// cont==0 → hour random rate 0; skip to avoid div-by-zero inflation
+		h := hourUTC(o.EventTS)
+		b := 0
+		if mode == stratHourMag {
+			med, ok := medByTS[int64(math.Round(o.EventTS))]
+			if !ok {
+				continue
+			}
+			b = magBucket(math.Abs(med))
+		}
+		key := cellKey(h, b, mode)
+		c := cells[key]
+		if c == nil || c.n == 0 {
 			continue
 		}
-		alertCont := 0.0
+		alertN++
 		if continued(o.Direction, *o.MedianReturn5m) {
-			alertCont = 1
+			alertCont++
 		}
-		randomRate := float64(r.cont) / float64(r.n)
-		sum += alertCont / randomRate
-		used++
+		sumExpected += c.rateLaplace()
 	}
-	if used == 0 {
-		return 0, 0
+	if alertN == 0 {
+		return 0, 0, 0
 	}
-	return sum / float64(used), used
+	expectedBase = sumExpected / float64(alertN)
+	if expectedBase <= 0 {
+		return 0, alertN, expectedBase
+	}
+	alertRate := float64(alertCont) / float64(alertN)
+	return alertRate / expectedBase, alertN, expectedBase
+}
+
+func cellKey(hour, bucket int, mode stratMode) string {
+	if mode == stratHourOnly {
+		return fmt.Sprintf("h%d", hour)
+	}
+	return fmt.Sprintf("h%d_b%d", hour, bucket)
+}
+
+// magBucket bins |median_return_60s| for strength-matched baselines.
+func magBucket(absMed float64) int {
+	switch {
+	case absMed < 0.20:
+		return 0 // noise–0.20 (noise floor applied separately)
+	case absMed < 0.35:
+		return 1
+	case absMed < 0.50:
+		return 2
+	default:
+		return 3
+	}
 }
 
 func hourUTC(ts float64) int {
