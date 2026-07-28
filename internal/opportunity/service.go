@@ -137,6 +137,29 @@ func (s *Service) HandlePulseEvent(evt types.AnomalyEvent) (*types.OpportunitySe
 	if err := s.persistSession(sess); err != nil {
 		return &sess, err
 	}
+
+	// Rank board from pulse payload (tickets still need Evaluate + cycle gates).
+	if inputs := RankInputsFromPulse(evt); len(inputs) > 0 {
+		var ranked []types.DirectionalCandidate
+		switch dir {
+		case types.CycleDirectionUp:
+			ranked = ranker.RankLong(inputs, ranker.DefaultConfig())
+		case types.CycleDirectionDown:
+			ranked = ranker.RankShort(inputs, ranker.DefaultConfig())
+		default:
+			ranked = ranker.Rank(inputs, ranker.DefaultConfig())
+		}
+		if s.journal != nil {
+			_ = s.journal.SaveCandidates(storage.SessionCandidates{
+				SessionID:  sess.ID,
+				EventID:    eventID,
+				Candidates: ranked,
+			})
+		}
+		s.log.Info("opportunity session ranked",
+			"session_id", sess.ID, "candidates", len(ranked))
+	}
+
 	s.log.Info("opportunity session opened",
 		"session_id", sess.ID, "event", evt.EventType, "direction", dir,
 		"leaders", evt.Data["leaders"], "laggards", evt.Data["laggards"])

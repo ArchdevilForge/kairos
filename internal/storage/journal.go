@@ -19,6 +19,7 @@ const (
 	JournalKindTicket     = "ticket"
 	JournalKindDecision   = "decision"
 	JournalKindOutcome    = "outcome"
+	JournalKindCandidates = "candidates"
 	JournalKindAnnotation = "annotation"
 )
 
@@ -132,6 +133,68 @@ func (j *Journal) SaveOutcome(o CounterfactualOutcome) error {
 		o.SchemaVersion = CounterfactualSchemaVersion
 	}
 	return j.append(JournalKindOutcome, o.TicketID, o)
+}
+
+// SessionCandidates is the ranked board attached to a session (may have 0 tickets).
+type SessionCandidates struct {
+	SessionID  string                       `json:"session_id"`
+	EventID    string                       `json:"event_id"`
+	Candidates []types.DirectionalCandidate `json:"candidates"`
+}
+
+// SaveCandidates stores the dual-sided rank board for a session.
+func (j *Journal) SaveCandidates(c SessionCandidates) error {
+	return j.append(JournalKindCandidates, c.SessionID, c)
+}
+
+// GetCandidates returns the latest candidate board for a session.
+func (j *Journal) GetCandidates(sessionID string) (SessionCandidates, bool, error) {
+	lines, err := j.readAll()
+	if err != nil {
+		return SessionCandidates{}, false, err
+	}
+	var found SessionCandidates
+	ok := false
+	for _, ln := range lines {
+		if ln.Kind != JournalKindCandidates {
+			continue
+		}
+		var c SessionCandidates
+		if err := json.Unmarshal(ln.Payload, &c); err != nil {
+			continue
+		}
+		if c.SessionID != sessionID && ln.ID != sessionID {
+			continue
+		}
+		found = c
+		ok = true
+	}
+	return found, ok, nil
+}
+
+// GetOutcome returns the latest counterfactual row for a ticket.
+func (j *Journal) GetOutcome(ticketID string) (CounterfactualOutcome, bool, error) {
+	lines, err := j.readAll()
+	if err != nil {
+		return CounterfactualOutcome{}, false, err
+	}
+	var found CounterfactualOutcome
+	ok := false
+	for _, ln := range lines {
+		if ln.Kind != JournalKindOutcome {
+			continue
+		}
+		var o CounterfactualOutcome
+		if err := json.Unmarshal(ln.Payload, &o); err != nil {
+			continue
+		}
+		if o.TicketID != ticketID {
+			continue
+		}
+		found = o
+		ok = true
+	}
+	return found, ok, nil
 }
 
 func (j *Journal) readAll() ([]journalLine, error) {

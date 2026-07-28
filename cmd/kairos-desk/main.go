@@ -43,7 +43,7 @@ func run(args []string) error {
 	}
 	rest := fs.Args()
 	if len(rest) < 1 {
-		return fmt.Errorf("usage: kairos-desk [-config] <sessions|tickets|show|accept|wait|reject|missed|close> ...")
+		return fmt.Errorf("usage: kairos-desk [-config] <sessions|tickets|candidates|show|accept|wait|reject|missed|close> ...")
 	}
 	cmd := rest[0]
 
@@ -85,6 +85,31 @@ func run(args []string) error {
 		}
 		if len(list) == 0 {
 			fmt.Println("(no tickets)")
+		}
+		return nil
+
+	case "candidates":
+		sid := *sessionFilter
+		if sid == "" && len(rest) > 1 {
+			sid = rest[1]
+		}
+		if sid == "" {
+			return fmt.Errorf("usage: kairos-desk candidates --session <id> | candidates <session-id>")
+		}
+		c, ok, err := journal.GetCandidates(sid)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			fmt.Println("(no candidates)")
+			return nil
+		}
+		if *asJSON {
+			return encode(c)
+		}
+		for i, cand := range c.Candidates {
+			fmt.Printf("%d  %s  long=%.2f short=%.2f RS=%.2f RW=%.2f\n",
+				i+1, cand.Symbol, cand.LongScore, cand.ShortScore, cand.RelativeStrength, cand.RelativeWeakness)
 		}
 		return nil
 
