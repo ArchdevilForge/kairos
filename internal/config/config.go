@@ -267,6 +267,14 @@ func setDefaults(v *viper.Viper) {
 		"multiTimeframeScoreThreshold": 8.0,
 	})
 
+	v.SetDefault("opportunity", map[string]any{
+		"enabled":              false,
+		"shadowMode":           true,
+		"maxTicketsPerSession": 3,
+		"assumeSpreadOK":       false,
+		"outcomeMaxAgeHours":   6,
+	})
+
 	// MarketPulse defaults: disabled unless explicitly enabled. Shadow mode is
 	// the safe first-run profile (compute + log, no Telegram policy change).
 	v.SetDefault("marketPulse", map[string]any{

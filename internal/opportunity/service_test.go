@@ -9,6 +9,18 @@ import (
 	"github.com/ArchdevilForge/kairos/internal/types"
 )
 
+func measuredInput(sym string, change, market float64) ranker.Input {
+	return ranker.Input{
+		Symbol: sym, ChangePct: change, MarketMedianChange: market,
+		BTCChangeSet: true, BTCChange: 0.5, QuoteVolume: 5e6,
+		PullbackDepthPct: 1, PullbackMeasured: true,
+		ReboundPct: 2, ReboundMeasured: true,
+		RoomUpPct: 10, RoomDownPct: 3, RoomMeasured: true,
+		LiquidityOK: true, LiquidityMeasured: true,
+		SpreadOK: true, SpreadMeasured: true, DataOK: true,
+	}
+}
+
 func testJournal(t *testing.T) *storage.Journal {
 	t.Helper()
 	j, err := storage.NewJournal(types.StorageConfig{
@@ -72,12 +84,7 @@ func TestEvaluate_MaxThreeTickets(t *testing.T) {
 	var inputs []ranker.Input
 	syms := []string{"A/USDT:USDT", "B/USDT:USDT", "C/USDT:USDT", "D/USDT:USDT"}
 	for i, sym := range syms {
-		inputs = append(inputs, ranker.Input{
-			Symbol: sym, ChangePct: 8 - float64(i), MarketMedianChange: 1,
-			BTCChangeSet: true, BTCChange: 0.5,
-			QuoteVolume: 5e6, PullbackDepthPct: 1, ReboundPct: 5,
-			RoomUpPct: 10, RoomDownPct: 3, LiquidityOK: true, SpreadOK: true, DataOK: true,
-		})
+		inputs = append(inputs, measuredInput(sym, 8-float64(i), 1))
 	}
 	inv := map[string][]string{}
 	structOK := map[string]bool{}
@@ -123,11 +130,7 @@ func TestApplyHumanDecision_Reject(t *testing.T) {
 		PulseDirection: types.CycleDirectionUp,
 		MarketCycle:    mkt,
 		SymbolCycles:   map[string]types.CycleMap{"SOL/USDT:USDT": mkt},
-		RankInputs: []ranker.Input{{
-			Symbol: "SOL/USDT:USDT", ChangePct: 6, MarketMedianChange: 1,
-			BTCChangeSet: true, QuoteVolume: 5e6, PullbackDepthPct: 1,
-			RoomUpPct: 8, LiquidityOK: true, SpreadOK: true, DataOK: true,
-		}},
+		RankInputs:     []ranker.Input{measuredInput("SOL/USDT:USDT", 6, 1)},
 		Invalidations:  map[string][]string{"SOL/USDT:USDT": {"x"}},
 		StructureValid: map[string]bool{"SOL/USDT:USDT": true},
 		EntryPrice:     map[string]float64{"SOL/USDT:USDT": 100},
@@ -169,10 +172,7 @@ func TestEvaluate_WinterNoTickets(t *testing.T) {
 		PulseDirection: types.CycleDirectionUp,
 		PulseState:     types.MarketStateImpulseUp,
 		MarketCycle:    mkt,
-		RankInputs: []ranker.Input{{
-			Symbol: "X/USDT:USDT", ChangePct: 5, MarketMedianChange: 1,
-			QuoteVolume: 5e6, LiquidityOK: true, SpreadOK: true, DataOK: true, PullbackDepthPct: 1, RoomUpPct: 5,
-		}},
+		RankInputs:     []ranker.Input{measuredInput("X/USDT:USDT", 5, 1)},
 		Invalidations:  map[string][]string{"X/USDT:USDT": {"x"}},
 		StructureValid: map[string]bool{"X/USDT:USDT": true},
 	})

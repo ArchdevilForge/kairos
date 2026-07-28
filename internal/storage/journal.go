@@ -114,14 +114,25 @@ type CounterfactualOutcome struct {
 	Return1h  *float64 `json:"return_1h,omitempty"`
 	Return4h  *float64 `json:"return_4h,omitempty"`
 
+	// Path diagnostics (high/low based) — not tradable EV.
 	MFE float64 `json:"mfe"`
 	MAE float64 `json:"mae"`
 
-	StopHitFirst   bool    `json:"stop_hit_first"`
-	TargetHitFirst bool    `json:"target_hit_first"`
-	MaxRealizableR float64 `json:"max_realizable_r"`
+	StopHitFirst   bool `json:"stop_hit_first"`
+	TargetHitFirst bool `json:"target_hit_first"`
 
-	AsOfUnix int64 `json:"as_of_unix"`
+	// MaxRealizableR = best MFE in R units (path diagnosis only).
+	MaxRealizableR float64 `json:"max_realizable_r"`
+	// MechanicalR = result under stop/target/time-exit rules (realized path).
+	MechanicalR float64 `json:"mechanical_r"`
+	// NetR = MechanicalR after estimated costs (fees+slippage in R).
+	NetR float64 `json:"net_r"`
+	// Complete is true when forward path covers at least the 5m horizon.
+	Complete bool `json:"complete"`
+
+	PathStartUnix int64 `json:"path_start_unix,omitempty"`
+	PathEndUnix   int64 `json:"path_end_unix,omitempty"`
+	AsOfUnix      int64 `json:"as_of_unix"`
 }
 
 // CounterfactualSchemaVersion is the outcome contract version.

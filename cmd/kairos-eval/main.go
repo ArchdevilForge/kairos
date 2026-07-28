@@ -61,11 +61,11 @@ func run(args []string) error {
 		if *asJSON {
 			return encode(rep)
 		}
-		fmt.Printf("tickets=%d with_outcome=%d\n", rep.TicketsTotal, rep.WithOutcome)
-		fmt.Printf("accepted:   n=%d mean_r=%.4f win=%.2f\n", rep.Accepted.N, rep.Accepted.MeanR, rep.Accepted.WinRate)
-		fmt.Printf("rejected:   n=%d mean_r=%.4f win=%.2f\n", rep.Rejected.N, rep.Rejected.MeanR, rep.Rejected.WinRate)
-		fmt.Printf("all:        n=%d mean_r=%.4f\n", rep.AllQualified.N, rep.AllQualified.MeanR)
-		fmt.Printf("selection_alpha=%.4f  rejection_mean_r=%.4f\n", rep.SelectionAlpha, rep.RejectionMeanR)
+		fmt.Printf("tickets=%d with_outcome=%d complete=%d\n", rep.TicketsTotal, rep.WithOutcome, rep.Complete)
+		fmt.Printf("accepted:   n=%d complete=%d mean_net_r=%.4f win=%.2f\n", rep.Accepted.N, rep.Accepted.NComplete, rep.Accepted.MeanNetR, rep.Accepted.WinRate)
+		fmt.Printf("rejected:   n=%d complete=%d mean_net_r=%.4f win=%.2f\n", rep.Rejected.N, rep.Rejected.NComplete, rep.Rejected.MeanNetR, rep.Rejected.WinRate)
+		fmt.Printf("all:        n=%d complete=%d mean_net_r=%.4f\n", rep.AllQualified.N, rep.AllQualified.NComplete, rep.AllQualified.MeanNetR)
+		fmt.Printf("selection_alpha(net_r)=%.4f  rejection_mean_net_r=%.4f\n", rep.SelectionAlpha, rep.RejectionMeanR)
 		return nil
 
 	case "decisions":
@@ -73,12 +73,12 @@ func run(args []string) error {
 			return encode(rows)
 		}
 		for _, r := range rows {
-			rMult := 0.0
+			netR := 0.0
 			if r.HasOut {
-				rMult = r.Outcome.MaxRealizableR
+				netR = r.Outcome.NetR
 			}
-			fmt.Printf("%s  %s  dec=%s  grade=%s  class=%s  R=%.2f  has_out=%v\n",
-				r.Ticket.ID, r.Ticket.Symbol, r.Decision, r.Ticket.Grade, r.Ticket.TradeClass, rMult, r.HasOut)
+			fmt.Printf("%s  %s  dec=%s  grade=%s  class=%s  netR=%.2f  complete=%v\n",
+				r.Ticket.ID, r.Ticket.Symbol, r.Decision, r.Ticket.Grade, r.Ticket.TradeClass, netR, r.HasOut && r.Outcome.Complete)
 		}
 		return nil
 
@@ -91,7 +91,7 @@ func run(args []string) error {
 		if *asJSON {
 			return encode(map[string]any{"playbook": id, "stats": g})
 		}
-		fmt.Printf("playbook %s  n=%d mean_r=%.4f win=%.2f\n", id, g.N, g.MeanR, g.WinRate)
+		fmt.Printf("playbook %s  n=%d complete=%d mean_net_r=%.4f win=%.2f\n", id, g.N, g.NComplete, g.MeanNetR, g.WinRate)
 		return nil
 
 	case "outcomes":
@@ -107,8 +107,8 @@ func run(args []string) error {
 			if o.Return5m != nil {
 				r5 = *o.Return5m
 			}
-			fmt.Printf("%s  %s  dec=%s  MFE=%.3f MAE=%.3f R=%.2f 5m=%.3f stop_first=%v\n",
-				o.TicketID, o.Symbol, o.Decision, o.MFE, o.MAE, o.MaxRealizableR, r5, o.StopHitFirst)
+			fmt.Printf("%s  %s  dec=%s  MFE=%.3f MAE=%.3f maxR=%.2f mechR=%.2f netR=%.2f complete=%v 5m=%.3f stop_first=%v\n",
+				o.TicketID, o.Symbol, o.Decision, o.MFE, o.MAE, o.MaxRealizableR, o.MechanicalR, o.NetR, o.Complete, r5, o.StopHitFirst)
 		}
 		if len(outs) == 0 {
 			fmt.Println("(no outcomes)")
@@ -138,7 +138,7 @@ func run(args []string) error {
 		if *asJSON {
 			return encode(sub)
 		}
-		fmt.Printf("%s  n=%d mean_r=%.4f selection_alpha=%.4f\n", cmd, sub.TicketsTotal, sub.AllQualified.MeanR, sub.SelectionAlpha)
+		fmt.Printf("%s  n=%d mean_net_r=%.4f selection_alpha=%.4f\n", cmd, sub.TicketsTotal, sub.AllQualified.MeanNetR, sub.SelectionAlpha)
 		return nil
 
 	default:

@@ -32,10 +32,11 @@ func DefaultConfig() Config {
 	}
 }
 
-// EvaluateRequest is a full offline/analysis path (tests + future enricher).
+// EvaluateRequest is a full offline/analysis path (tests + enricher).
 type EvaluateRequest struct {
 	EventID   string
 	CreatedAt int64
+	SignalAt  int64
 
 	PulseState     types.MarketState
 	PulseDirection types.CycleDirection
@@ -50,8 +51,9 @@ type EvaluateRequest struct {
 	StructureValid map[string]bool
 	MidBox         map[string]bool
 
-	EntryPrice map[string]float64
-	StopPrice  map[string]float64
+	EntryPrice  map[string]float64
+	StopPrice   map[string]float64
+	TriggeredAt map[string]int64
 }
 
 // EvaluateResult is what one session produced.
@@ -138,16 +140,16 @@ func (s *Service) HandlePulseEvent(evt types.AnomalyEvent) (*types.OpportunitySe
 		return &sess, err
 	}
 
-	// Rank board from pulse payload (tickets still need Evaluate + cycle gates).
+	// Soft rank board from pulse returns only (unmeasured liq/spread/pullback).
 	if inputs := RankInputsFromPulse(evt); len(inputs) > 0 {
 		var ranked []types.DirectionalCandidate
 		switch dir {
 		case types.CycleDirectionUp:
-			ranked = ranker.RankLong(inputs, ranker.DefaultConfig())
+			ranked = ranker.RankLong(inputs, ranker.SoftConfig())
 		case types.CycleDirectionDown:
-			ranked = ranker.RankShort(inputs, ranker.DefaultConfig())
+			ranked = ranker.RankShort(inputs, ranker.SoftConfig())
 		default:
-			ranked = ranker.Rank(inputs, ranker.DefaultConfig())
+			ranked = ranker.Rank(inputs, ranker.SoftConfig())
 		}
 		if s.journal != nil {
 			_ = s.journal.SaveCandidates(storage.SessionCandidates{
@@ -284,15 +286,22 @@ func (s *Service) evaluate(req EvaluateRequest, attachExisting bool) (EvaluateRe
 		if !m.Matched {
 			continue
 		}
+		signalAt := req.SignalAt
+		if signalAt == 0 {
+			signalAt = now
+		}
 		t := decision.BuildTicket(decision.BuildInput{
-			TicketID:      fmt.Sprintf("tkt-%s-%d", sess.ID, len(tickets)+1),
-			Match:         m,
-			Context:       in.PlaybookContext,
-			Invalidations: in.Invalidations,
-			EntryPrice:    req.EntryPrice[cand.Symbol],
-			StopPrice:     req.StopPrice[cand.Symbol],
-			Equity:        s.cfg.Equity,
-			Trigger:       "leader_pullback restart",
+			TicketID:         fmt.Sprintf("tkt-%s-%d", sess.ID, len(tickets)+1),
+			Match:            m,
+			Context:          in.PlaybookContext,
+			Invalidations:    in.Invalidations,
+			EntryPrice:       req.EntryPrice[cand.Symbol],
+			StopPrice:        req.StopPrice[cand.Symbol],
+			Equity:           s.cfg.Equity,
+			Trigger:          "leader_pullback restart",
+			CreatedAt:        now,
+			SignalAt:         signalAt,
+			EntryTriggeredAt: req.TriggeredAt[cand.Symbol],
 		})
 		if err := s.persistTicket(t); err != nil {
 			return res, err

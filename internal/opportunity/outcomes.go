@@ -11,13 +11,13 @@ import (
 
 // OutcomeTrackConfig controls forward-path refresh.
 type OutcomeTrackConfig struct {
-	// Interval between full sweeps (pipeline loop).
 	Interval time.Duration
-	// MaxAge how long after ticket creation we keep refreshing.
-	MaxAge time.Duration
-	// BarLimit 5m bars to pull for the path.
+	// MaxAge: skip tickets older than this since CreatedAt/SignalAt.
+	MaxAge   time.Duration
 	BarLimit int
 	Timeout  time.Duration
+	// CostR estimated round-trip cost in R (fees+slippage). Default 0.05.
+	CostR float64
 }
 
 // DefaultOutcomeTrackConfig returns stage-1 defaults.
@@ -25,19 +25,19 @@ func DefaultOutcomeTrackConfig() OutcomeTrackConfig {
 	return OutcomeTrackConfig{
 		Interval: 2 * time.Minute,
 		MaxAge:   6 * time.Hour,
-		BarLimit: 60, // ~5h of 5m bars
+		BarLimit: 120,
 		Timeout:  20 * time.Second,
+		CostR:    0.05,
 	}
 }
 
-// TrackOutcomes refreshes counterfactual rows for open/decided tickets still in MaxAge.
-// Uses 5m OHLCV; entry = ticket RiskPlan.EntryPrice (or first close ≥ created).
+// TrackOutcomes refreshes counterfactual rows using bars at/after ticket signal time.
 func (s *Service) TrackOutcomes(ctx context.Context, fetch OHLCVFetcher, cfg OutcomeTrackConfig) (updated int, err error) {
 	if s == nil || s.journal == nil || fetch == nil {
 		return 0, nil
 	}
 	if cfg.BarLimit <= 0 {
-		cfg.BarLimit = 60
+		cfg.BarLimit = 120
 	}
 	if cfg.MaxAge <= 0 {
 		cfg.MaxAge = 6 * time.Hour
@@ -50,17 +50,64 @@ func (s *Service) TrackOutcomes(ctx context.Context, fetch OHLCVFetcher, cfg Out
 	if err != nil {
 		return 0, err
 	}
-	now := time.Now().Unix()
+	now := time.Now()
+	nowUnix := now.Unix()
 	hz := evaluation.DefaultHorizons()
-
-	fetchCtx, cancel := context.WithTimeout(ctx, cfg.Timeout)
-	defer cancel()
 
 	for _, t := range tickets {
 		if t.ID == "" || t.Symbol == "" {
 			continue
 		}
-		// skip closed long ago if we can parse — tickets lack CreatedAt; use outcome AsOf or always try within symbol fetch
+		startUnix := t.EntryTriggeredAt
+		if startUnix <= 0 {
+			startUnix = t.SignalAt
+		}
+		if startUnix <= 0 {
+			startUnix = t.CreatedAt
+		}
+		if startUnix <= 0 {
+			s.log.Debug("outcome skip: no ticket timestamp", "ticket", t.ID)
+			continue
+		}
+		age := now.Sub(time.Unix(startUnix, 0))
+		if age < 0 {
+			age = 0
+		}
+		if age > cfg.MaxAge {
+			continue // MaxAge enforced
+		}
+
+		// per-ticket timeout slice of parent ctx
+		fetchCtx, cancel := context.WithTimeout(ctx, cfg.Timeout)
+		candles, err := fetch.FetchOHLCV(fetchCtx, t.Symbol, "5m", cfg.BarLimit, 0)
+		cancel()
+		if err != nil || len(candles) < 2 {
+			continue
+		}
+		// closed only
+		if len(candles) > 2 {
+			candles = candles[:len(candles)-1]
+		}
+
+		// keep bars with timestamp >= startUnix (forward path from signal)
+		var bars []evaluation.Bar
+		for _, c := range candles {
+			ts := c.Timestamp
+			// exchange may use seconds already
+			if ts > 1_000_000_000_000 { // ms
+				ts = ts / 1000
+			}
+			if ts >= startUnix {
+				bars = append(bars, evaluation.Bar{
+					TS: ts, Open: c.Open, High: c.High, Low: c.Low, Close: c.Close,
+				})
+			}
+		}
+		if len(bars) == 0 {
+			// no forward bars yet
+			continue
+		}
+
 		dec := types.HumanDecision("")
 		if d, ok, _ := s.journal.GetDecision(t.ID); ok {
 			dec = d.Decision
@@ -77,39 +124,11 @@ func (s *Service) TrackOutcomes(ctx context.Context, fetch OHLCVFetcher, cfg Out
 			}
 		}
 
-		candles, err := fetch.FetchOHLCV(fetchCtx, t.Symbol, "5m", cfg.BarLimit, 0)
-		if err != nil || len(candles) < 3 {
-			s.log.Debug("outcome fetch skip", "ticket", t.ID, "error", err)
-			continue
-		}
-		// closed bars only
-		if len(candles) > 3 {
-			candles = candles[:len(candles)-1]
-		}
-
 		entry := t.RiskPlan.EntryPrice
 		stop := t.RiskPlan.StopPrice
 		if entry <= 0 {
-			entry = candles[0].Close
+			entry = bars[0].Close
 		}
-		// build forward path from first bar at/after entry price touch, else full series from start
-		startIdx := 0
-		for i, c := range candles {
-			// prefer bar whose close is near entry (±0.5%)
-			if entry > 0 && absRatio(c.Close, entry) <= 0.005 {
-				startIdx = i
-				break
-			}
-		}
-		closes := make([]float64, 0, len(candles)-startIdx)
-		for i := startIdx; i < len(candles); i++ {
-			closes = append(closes, candles[i].Close)
-		}
-		if len(closes) == 0 {
-			continue
-		}
-
-		// target: first risk target unused — use 2R mechanical
 		target := 0.0
 		if stop > 0 && entry > 0 {
 			risk := abs(entry - stop)
@@ -126,17 +145,17 @@ func (s *Service) TrackOutcomes(ctx context.Context, fetch OHLCVFetcher, cfg Out
 			Symbol:    t.Symbol,
 			Direction: t.Direction,
 			Decision:  dec,
-			Closes:    closes,
+			Bars:      bars,
 			Entry:     entry,
 			Stop:      stop,
 			Target:    target,
+			CostR:     cfg.CostR,
 		}, hz)
-		o.AsOfUnix = now
+		o.AsOfUnix = nowUnix
 
-		// skip write if unchanged vs last (cheap compare on MFE/MAE/R)
 		if prev, ok, _ := s.journal.GetOutcome(t.ID); ok {
-			if prev.MFE == o.MFE && prev.MAE == o.MAE && prev.MaxRealizableR == o.MaxRealizableR &&
-				ptrEq(prev.Return5m, o.Return5m) && ptrEq(prev.Return1h, o.Return1h) {
+			if prev.MFE == o.MFE && prev.MAE == o.MAE && prev.MechanicalR == o.MechanicalR &&
+				prev.NetR == o.NetR && prev.Complete == o.Complete {
 				continue
 			}
 		}
@@ -148,7 +167,7 @@ func (s *Service) TrackOutcomes(ctx context.Context, fetch OHLCVFetcher, cfg Out
 	return updated, nil
 }
 
-// RunOutcomeLoop blocks until ctx done, sweeping outcomes on Interval.
+// RunOutcomeLoop blocks until ctx done.
 func (s *Service) RunOutcomeLoop(ctx context.Context, fetch OHLCVFetcher, cfg OutcomeTrackConfig) {
 	if s == nil || fetch == nil {
 		return
@@ -158,7 +177,6 @@ func (s *Service) RunOutcomeLoop(ctx context.Context, fetch OHLCVFetcher, cfg Ou
 	}
 	t := time.NewTicker(cfg.Interval)
 	defer t.Stop()
-	// initial pass
 	if n, err := s.TrackOutcomes(ctx, fetch, cfg); err != nil {
 		s.log.Warn("outcome track failed", "error", err)
 	} else if n > 0 {
@@ -185,22 +203,4 @@ func abs(v float64) float64 {
 	return v
 }
 
-func absRatio(a, b float64) float64 {
-	if b == 0 {
-		return 1
-	}
-	return abs(a-b) / abs(b)
-}
-
-func ptrEq(a, b *float64) bool {
-	if a == nil && b == nil {
-		return true
-	}
-	if a == nil || b == nil {
-		return false
-	}
-	return *a == *b
-}
-
-// Ensure CounterfactualOutcome import used when only tracking
 var _ = storage.CounterfactualSchemaVersion

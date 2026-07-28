@@ -25,9 +25,12 @@ func TestRankInputsFromPulse_Detail(t *testing.T) {
 	if len(in) != 3 {
 		t.Fatalf("inputs=%d", len(in))
 	}
-	longs := ranker.RankLong(in, ranker.DefaultConfig())
-	if longs[0].Symbol != "SOL/USDT:USDT" {
-		t.Fatalf("leader=%s", longs[0].Symbol)
+	longs := ranker.RankLong(in, ranker.SoftConfig())
+	if len(longs) == 0 || longs[0].Symbol != "SOL/USDT:USDT" {
+		t.Fatalf("leader=%v", longs)
+	}
+	if longs[0].LiquidityOK {
+		t.Fatal("pulse soft rank must not claim liquidity ok")
 	}
 }
 

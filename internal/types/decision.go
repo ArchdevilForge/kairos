@@ -107,6 +107,11 @@ type DecisionTicket struct {
 	Invalidations []string `json:"invalidations" yaml:"invalidations"`
 
 	Status TicketStatus `json:"status" yaml:"status"`
+
+	// Timestamps (unix seconds) — required for honest forward outcome paths.
+	CreatedAt        int64 `json:"created_at" yaml:"created_at"`
+	SignalAt         int64 `json:"signal_at" yaml:"signal_at"`                                       // pulse/session clock
+	EntryTriggeredAt int64 `json:"entry_triggered_at,omitempty" yaml:"entry_triggered_at,omitempty"` // mechanical trigger bar
 }
 
 // DecisionRecord is the persisted human decision on a ticket.

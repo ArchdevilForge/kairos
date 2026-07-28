@@ -48,4 +48,10 @@ func TestOpenJournalAndRejectFlow(t *testing.T) {
 	if err != nil || len(sessions) < 1 {
 		t.Fatalf("sessions via openJournal: %d err=%v", len(sessions), err)
 	}
+
+	// CLI: flags before ticket id (Go FlagSet stops at first positional)
+	_ = j.SaveTicket(types.DecisionTicket{ID: "t-desk-2", SessionID: "s", Status: types.TicketStatusOpen, SchemaVersion: types.DecisionTicketSchemaVersion})
+	if err := run([]string{"-journal", dir, "reject", "--reason", "too_extended", "t-desk-2"}); err != nil {
+		t.Fatalf("cli reject: %v", err)
+	}
 }

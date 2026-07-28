@@ -22,7 +22,7 @@ func TestJournal_SessionTicketDecisionRoundTrip(t *testing.T) {
 	}
 	tkt := types.DecisionTicket{
 		SchemaVersion: types.DecisionTicketSchemaVersion,
-		ID: "t1", SessionID: "sess-1", Symbol: "BTC/USDT:USDT",
+		ID:            "t1", SessionID: "sess-1", Symbol: "BTC/USDT:USDT",
 		Status: types.TicketStatusOpen, Grade: types.TicketGradeA,
 	}
 	if err := j.SaveTicket(tkt); err != nil {
@@ -38,7 +38,7 @@ func TestJournal_SessionTicketDecisionRoundTrip(t *testing.T) {
 	}
 	if err := j.SaveDecision(types.DecisionRecord{
 		SchemaVersion: types.DecisionRecordSchemaVersion,
-		TicketID: "t1", Decision: types.DecisionAccepted,
+		TicketID:      "t1", Decision: types.DecisionAccepted,
 		ReasonCodes: []string{types.ReasonStructureGood}, DecidedAt: 1,
 	}); err != nil {
 		t.Fatal(err)

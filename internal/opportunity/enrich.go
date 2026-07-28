@@ -22,16 +22,22 @@ type EnrichConfig struct {
 	MaxSymbols   int
 	MarketSymbol string
 	Timeout      time.Duration
+	MinQuoteVol  float64
+	// AssumeSpreadOK is test/shadow-only when no L2 feed exists.
+	// Production must leave false (fail closed on unmeasured spread).
+	AssumeSpreadOK bool
 }
 
-// DefaultEnrichConfig returns stage-1 multi-TF defaults.
+// DefaultEnrichConfig returns production fail-closed defaults.
 func DefaultEnrichConfig() EnrichConfig {
 	return EnrichConfig{
-		Timeframes:   []string{"1d", "4h", "15m", "5m"},
-		BarLimit:     90,
-		MaxSymbols:   3,
-		MarketSymbol: "BTC/USDT:USDT",
-		Timeout:      20 * time.Second,
+		Timeframes:     []string{"1d", "4h", "15m", "5m"},
+		BarLimit:       90,
+		MaxSymbols:     3,
+		MarketSymbol:   "BTC/USDT:USDT",
+		Timeout:        20 * time.Second,
+		MinQuoteVol:    1_000_000,
+		AssumeSpreadOK: false,
 	}
 }
 
@@ -43,8 +49,7 @@ type EnrichRequest struct {
 	Equity  float64
 }
 
-// EnrichAndEvaluate fetches OHLCV, builds CycleMaps, attaches tickets to the pulse session.
-// Fail closed per symbol on fetch errors; market cycle failure → error, no tickets.
+// EnrichAndEvaluate fetches OHLCV, measures features, detects pullback trigger, attaches tickets.
 func (s *Service) EnrichAndEvaluate(ctx context.Context, req EnrichRequest) (EvaluateResult, error) {
 	var empty EvaluateResult
 	if s == nil || !s.cfg.Enabled || req.Fetcher == nil {
@@ -52,7 +57,7 @@ func (s *Service) EnrichAndEvaluate(ctx context.Context, req EnrichRequest) (Eva
 	}
 	cfg := req.Config
 	if len(cfg.Timeframes) == 0 {
-		cfg = DefaultEnrichConfig()
+		cfg.Timeframes = DefaultEnrichConfig().Timeframes
 	}
 	if cfg.BarLimit <= 0 {
 		cfg.BarLimit = 90
@@ -66,6 +71,9 @@ func (s *Service) EnrichAndEvaluate(ctx context.Context, req EnrichRequest) (Eva
 	if cfg.Timeout <= 0 {
 		cfg.Timeout = 20 * time.Second
 	}
+	if cfg.MinQuoteVol <= 0 {
+		cfg.MinQuoteVol = 1_000_000
+	}
 	if req.Equity > 0 {
 		s.cfg.Equity = req.Equity
 	}
@@ -77,33 +85,41 @@ func (s *Service) EnrichAndEvaluate(ctx context.Context, req EnrichRequest) (Eva
 		eventID = fmt.Sprintf("%s-%.0f", req.Event.EventType, req.Event.Timestamp)
 	}
 
-	inputs := RankInputsFromPulse(req.Event)
-	if len(inputs) == 0 {
+	// soft list from pulse for symbol order only
+	softInputs := RankInputsFromPulse(req.Event)
+	if len(softInputs) == 0 {
 		return empty, nil
 	}
-
 	var orderedSyms []string
+	for _, c := range ranker.Rank(softInputs, ranker.SoftConfig()) {
+		orderedSyms = append(orderedSyms, c.Symbol)
+		if len(orderedSyms) >= cfg.MaxSymbols {
+			break
+		}
+	}
+	// prefer side order
 	switch dir {
 	case types.CycleDirectionUp:
-		for _, c := range ranker.RankLong(inputs, ranker.DefaultConfig()) {
+		orderedSyms = nil
+		for _, c := range ranker.RankLong(softInputs, ranker.SoftConfig()) {
 			orderedSyms = append(orderedSyms, c.Symbol)
+			if len(orderedSyms) >= cfg.MaxSymbols {
+				break
+			}
 		}
 	case types.CycleDirectionDown:
-		for _, c := range ranker.RankShort(inputs, ranker.DefaultConfig()) {
+		orderedSyms = nil
+		for _, c := range ranker.RankShort(softInputs, ranker.SoftConfig()) {
 			orderedSyms = append(orderedSyms, c.Symbol)
+			if len(orderedSyms) >= cfg.MaxSymbols {
+				break
+			}
 		}
-	default:
-		for _, in := range inputs {
-			orderedSyms = append(orderedSyms, in.Symbol)
-		}
-	}
-	if len(orderedSyms) > cfg.MaxSymbols {
-		orderedSyms = orderedSyms[:cfg.MaxSymbols]
 	}
 
-	bySym := map[string]ranker.Input{}
-	for _, in := range inputs {
-		bySym[in.Symbol] = in
+	bySoft := map[string]ranker.Input{}
+	for _, in := range softInputs {
+		bySoft[in.Symbol] = in
 	}
 
 	fetchCtx, cancel := context.WithTimeout(ctx, cfg.Timeout)
@@ -120,13 +136,15 @@ func (s *Service) EnrichAndEvaluate(ctx context.Context, req EnrichRequest) (Eva
 	structureOK := map[string]bool{}
 	entryPx := map[string]float64{}
 	stopPx := map[string]float64{}
+	triggeredAt := map[string]int64{}
 	rankInputs := make([]ranker.Input, 0, len(orderedSyms))
+	median := 0.0
+	if len(softInputs) > 0 {
+		median = softInputs[0].MarketMedianChange
+	}
 
 	for _, sym := range orderedSyms {
-		in, ok := bySym[sym]
-		if !ok {
-			continue
-		}
+		base := bySoft[sym]
 		symCycle, err := buildSymbolCycle(fetchCtx, req.Fetcher, sym, cfg)
 		if err != nil {
 			s.log.Warn("symbol cycle fetch failed", "symbol", sym, "error", err)
@@ -135,25 +153,62 @@ func (s *Service) EnrichAndEvaluate(ctx context.Context, req EnrichRequest) (Eva
 		symbolCycles[sym] = symCycle
 
 		candles5m, err := req.Fetcher.FetchOHLCV(fetchCtx, sym, "5m", cfg.BarLimit, 0)
-		if err != nil || len(candles5m) < 10 {
+		if err != nil || len(candles5m) < 30 {
 			s.log.Warn("trigger bars missing", "symbol", sym, "error", err)
 			continue
 		}
-		if len(candles5m) > 10 {
-			candles5m = candles5m[:len(candles5m)-1] // closed bar
-		}
-		entry, stop, inv, ok := triggerPlan(dir, candles5m)
-		if !ok {
+		// closed bars only
+		candles5m = candles5m[:len(candles5m)-1]
+
+		trig := DetectPullbackTrigger(dir, candles5m)
+		if !trig.OK {
+			s.log.Info("pullback trigger not matched", "symbol", sym, "failures", trig.Failures)
 			continue
 		}
-		entryPx[sym] = entry
-		stopPx[sym] = stop
-		invalidations[sym] = inv
-		structureOK[sym] = true
+
+		// measure quote volume proxy from recent 5m notional
+		qVol := measureQuoteVolume(candles5m)
+		liqOK := qVol >= cfg.MinQuoteVol
+
+		in := ranker.Input{
+			Symbol:             sym,
+			ChangePct:          base.ChangePct,
+			MarketMedianChange: median,
+			BTCChange:          base.BTCChange,
+			BTCChangeSet:       base.BTCChangeSet,
+			QuoteVolume:        qVol,
+			MinLiquidity:       cfg.MinQuoteVol,
+			DataOK:             true,
+			LiquidityMeasured:  true,
+			LiquidityOK:        liqOK,
+			SpreadMeasured:     cfg.AssumeSpreadOK,
+			SpreadOK:           cfg.AssumeSpreadOK,
+			PullbackMeasured:   dir != types.CycleDirectionDown,
+			PullbackDepthPct:   trig.PullbackDepthPct,
+			ReboundMeasured:    dir == types.CycleDirectionDown,
+			ReboundPct:         trig.ReboundPct,
+			RoomMeasured:       true,
+			RoomUpPct:          0,
+			RoomDownPct:        0,
+		}
 		if n, ok := symCycle.Nodes["1d"]; ok {
 			in.RoomUpPct = n.RoomUpPct
 			in.RoomDownPct = n.RoomDownPct
 		}
+		if !liqOK {
+			s.log.Info("liquidity fail closed", "symbol", sym, "quote_vol", qVol)
+			continue
+		}
+		if !in.SpreadMeasured {
+			s.log.Info("spread unmeasured fail closed", "symbol", sym)
+			continue
+		}
+
+		entryPx[sym] = trig.Entry
+		stopPx[sym] = trig.Stop
+		invalidations[sym] = trig.Invalidations
+		structureOK[sym] = true
+		triggeredAt[sym] = trig.EntryTriggeredAt
 		rankInputs = append(rankInputs, in)
 	}
 
@@ -165,9 +220,10 @@ func (s *Service) EnrichAndEvaluate(ctx context.Context, req EnrichRequest) (Eva
 	if created <= 0 {
 		created = time.Now().Unix()
 	}
-	return s.EvaluateOrAttach(EvaluateRequest{
+	res, err := s.EvaluateOrAttach(EvaluateRequest{
 		EventID:        eventID,
 		CreatedAt:      created,
+		SignalAt:       created,
 		PulseState:     state,
 		PulseDirection: dir,
 		MarketCycle:    marketCycle,
@@ -177,7 +233,26 @@ func (s *Service) EnrichAndEvaluate(ctx context.Context, req EnrichRequest) (Eva
 		StructureValid: structureOK,
 		EntryPrice:     entryPx,
 		StopPrice:      stopPx,
+		TriggeredAt:    triggeredAt,
 	})
+	return res, err
+}
+
+func measureQuoteVolume(candles []types.Candle) float64 {
+	if len(candles) == 0 {
+		return 0
+	}
+	// last 24 bars of 5m ≈ 2h notional proxy; scale toward 24h-ish *12 for gate ballpark
+	n := 24
+	if len(candles) < n {
+		n = len(candles)
+	}
+	var sum float64
+	for i := len(candles) - n; i < len(candles); i++ {
+		sum += candles[i].Close * candles[i].Volume
+	}
+	// crude 24h extrapolation from 2h window
+	return sum * (24.0 / (float64(n) * 5.0 / 60.0))
 }
 
 func buildSymbolCycle(ctx context.Context, fetch OHLCVFetcher, symbol string, cfg EnrichConfig) (types.CycleMap, error) {
@@ -190,7 +265,6 @@ func buildSymbolCycle(ctx context.Context, fetch OHLCVFetcher, symbol string, cf
 		if len(candles) < 41 {
 			return types.CycleMap{}, fmt.Errorf("%s %s: need >=41 bars got %d", symbol, tf, len(candles))
 		}
-		// drop last as potentially forming
 		candles = candles[:len(candles)-1]
 		closes := make([]float64, len(candles))
 		highs := make([]float64, len(candles))
@@ -221,47 +295,5 @@ func roleForTimeframe(tf string) types.TimeframeRole {
 		return types.TimeframeRoleTrigger
 	default:
 		return types.TimeframeRoleSetup
-	}
-}
-
-// triggerPlan derives entry/stop/invalidation from 5m closed bars.
-func triggerPlan(dir types.CycleDirection, candles []types.Candle) (entry, stop float64, inv []string, ok bool) {
-	if len(candles) < 8 {
-		return 0, 0, nil, false
-	}
-	last := candles[len(candles)-1]
-	entry = last.Close
-	window := candles[len(candles)-6 : len(candles)-1]
-	switch dir {
-	case types.CycleDirectionDown:
-		stop = window[0].High
-		for _, c := range window {
-			if c.High > stop {
-				stop = c.High
-			}
-		}
-		if stop <= entry {
-			stop = entry * 1.015
-		}
-		inv = []string{
-			fmt.Sprintf("5m swing high %.6g breaks", stop),
-			"15m flips UP with structure break",
-		}
-		return entry, stop, inv, true
-	default: // up or neutral → long plan
-		stop = window[0].Low
-		for _, c := range window {
-			if c.Low < stop {
-				stop = c.Low
-			}
-		}
-		if stop >= entry || stop <= 0 {
-			stop = entry * 0.985
-		}
-		inv = []string{
-			fmt.Sprintf("5m swing low %.6g breaks", stop),
-			"15m flips DOWN with structure break",
-		}
-		return entry, stop, inv, true
 	}
 }

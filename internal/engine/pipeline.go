@@ -229,13 +229,21 @@ func NewPipeline(cfg *types.Config, tg *notify.TelegramClient) *Pipeline {
 		}
 	}
 
-	// Decision desk journal: always try to open (even if MarketPulse off) so
-	// kairos-desk can record manual sessions later. Failure is non-fatal.
-	if journal, err := storage.NewJournal(cfg.Storage); err != nil {
-		log.Warn("trading journal disabled", "error", err)
-	} else {
-		p.opportunity = opportunity.NewService(journal, opportunity.DefaultConfig())
-		log.Info("trading journal ready", "path", journal.Path())
+	// Decision desk journal — only when opportunity.enabled (default false in config).
+	if cfg.Opportunity.Enabled {
+		if journal, err := storage.NewJournal(cfg.Storage); err != nil {
+			log.Warn("trading journal disabled", "error", err)
+		} else {
+			ocfg := opportunity.DefaultConfig()
+			if cfg.Opportunity.MaxTicketsPerSession > 0 {
+				ocfg.MaxTicketsPerSession = cfg.Opportunity.MaxTicketsPerSession
+			}
+			p.opportunity = opportunity.NewService(journal, ocfg)
+			log.Info("trading journal ready",
+				"path", journal.Path(),
+				"shadow", cfg.Opportunity.ShadowMode,
+				"assume_spread_ok", cfg.Opportunity.AssumeSpreadOK)
+		}
 	}
 
 	return p
@@ -433,7 +441,11 @@ func (p *Pipeline) Start(ctx context.Context) error {
 			if ex == nil {
 				return nil
 			}
-			p.opportunity.RunOutcomeLoop(gCtx, ex, opportunity.DefaultOutcomeTrackConfig())
+			ocfg := opportunity.DefaultOutcomeTrackConfig()
+			if p.cfg.Opportunity.OutcomeMaxAgeHours > 0 {
+				ocfg.MaxAge = time.Duration(p.cfg.Opportunity.OutcomeMaxAgeHours * float64(time.Hour))
+			}
+			p.opportunity.RunOutcomeLoop(gCtx, ex, ocfg)
 			return nil
 		})
 	}
@@ -529,10 +541,16 @@ func (p *Pipeline) enrichOpportunityAsync(evt types.AnomalyEvent) {
 	go func(evt types.AnomalyEvent, fetch opportunity.OHLCVFetcher) {
 		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 		defer cancel()
+		ecfg := opportunity.DefaultEnrichConfig()
+		ecfg.AssumeSpreadOK = p.cfg.Opportunity.AssumeSpreadOK
+		ocfg := opportunity.DefaultOutcomeTrackConfig()
+		if p.cfg.Opportunity.OutcomeMaxAgeHours > 0 {
+			ocfg.MaxAge = time.Duration(p.cfg.Opportunity.OutcomeMaxAgeHours * float64(time.Hour))
+		}
 		res, err := p.opportunity.EnrichAndEvaluate(ctx, opportunity.EnrichRequest{
 			Event:   evt,
 			Fetcher: fetch,
-			Config:  opportunity.DefaultEnrichConfig(),
+			Config:  ecfg,
 		})
 		if err != nil {
 			p.log.Warn("opportunity enrich failed", "error", err, "event", evt.EventType)
@@ -540,9 +558,9 @@ func (p *Pipeline) enrichOpportunityAsync(evt types.AnomalyEvent) {
 		}
 		if len(res.Tickets) > 0 {
 			p.log.Info("opportunity tickets ready",
-				"session", res.Session.ID, "tickets", len(res.Tickets))
-			// seed counterfactual path ASAP (loop will refresh later)
-			if n, err := p.opportunity.TrackOutcomes(ctx, fetch, opportunity.DefaultOutcomeTrackConfig()); err != nil {
+				"session", res.Session.ID, "tickets", len(res.Tickets),
+				"shadow", p.cfg.Opportunity.ShadowMode)
+			if n, err := p.opportunity.TrackOutcomes(ctx, fetch, ocfg); err != nil {
 				p.log.Warn("outcome seed failed", "error", err)
 			} else if n > 0 {
 				p.log.Info("outcomes seeded", "count", n)

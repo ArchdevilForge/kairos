@@ -8,27 +8,32 @@ import (
 	"github.com/ArchdevilForge/kairos/internal/types"
 )
 
-// GroupStats is mean R / n for a decision bucket.
+// GroupStats is mean NetR / n for a decision bucket (complete outcomes only).
 type GroupStats struct {
-	N       int     `json:"n"`
-	MeanR   float64 `json:"mean_r"`
-	Mean5m  float64 `json:"mean_5m,omitempty"`
-	WinRate float64 `json:"win_rate"` // fraction MaxRealizableR > 0 or return5m > 0
+	N         int     `json:"n"`
+	NComplete int     `json:"n_complete"`
+	MeanNetR  float64 `json:"mean_net_r"`
+	MeanMechR float64 `json:"mean_mechanical_r"`
+	MeanMaxR  float64 `json:"mean_max_r"` // diagnosis only
+	Mean5m    float64 `json:"mean_5m,omitempty"`
+	WinRate   float64 `json:"win_rate"` // NetR > 0 among complete
 }
 
 // SummaryReport is the stage-1 EV desk view.
 type SummaryReport struct {
-	TicketsTotal int        `json:"tickets_total"`
-	WithOutcome  int        `json:"with_outcome"`
+	TicketsTotal int `json:"tickets_total"`
+	WithOutcome  int `json:"with_outcome"`
+	Complete     int `json:"complete_outcomes"`
+
 	Accepted     GroupStats `json:"accepted"`
 	Rejected     GroupStats `json:"rejected"`
 	Waiting      GroupStats `json:"waiting"`
 	Missed       GroupStats `json:"missed"`
 	AllQualified GroupStats `json:"all_qualified"`
-	// SelectionAlpha = accepted.MeanR - all_qualified.MeanR
+
+	// SelectionAlpha = accepted.MeanNetR - all_qualified.MeanNetR (complete only)
 	SelectionAlpha float64 `json:"selection_alpha"`
-	// RejectionQuality: ideal rejected mean R <= 0
-	RejectionMeanR float64 `json:"rejection_mean_r"`
+	RejectionMeanR float64 `json:"rejection_mean_net_r"`
 
 	ByTradeClass map[string]GroupStats `json:"by_trade_class,omitempty"`
 	ByGrade      map[string]GroupStats `json:"by_grade,omitempty"`
@@ -59,7 +64,6 @@ func BuildRows(j *storage.Journal) ([]TicketRow, error) {
 		if d, ok, _ := j.GetDecision(t.ID); ok {
 			row.Decision = d.Decision
 		} else {
-			// fall back to ticket status
 			switch t.Status {
 			case types.TicketStatusAccepted:
 				row.Decision = types.DecisionAccepted
@@ -80,7 +84,7 @@ func BuildRows(j *storage.Journal) ([]TicketRow, error) {
 	return out, nil
 }
 
-// Summarize computes selection/rejection style stats.
+// Summarize computes selection/rejection stats on complete outcomes only.
 func Summarize(rows []TicketRow) SummaryReport {
 	rep := SummaryReport{
 		TicketsTotal: len(rows),
@@ -93,6 +97,9 @@ func Summarize(rows []TicketRow) SummaryReport {
 	for _, r := range rows {
 		if r.HasOut {
 			rep.WithOutcome++
+			if r.Outcome.Complete {
+				rep.Complete++
+			}
 		}
 		all = append(all, r)
 		switch r.Decision {
@@ -110,7 +117,6 @@ func Summarize(rows []TicketRow) SummaryReport {
 		rep.ByPlaybook[r.Ticket.PlaybookID] = fold(rep.ByPlaybook[r.Ticket.PlaybookID], r)
 		rep.ByDirection[string(r.Ticket.Direction)] = fold(rep.ByDirection[string(r.Ticket.Direction)], r)
 	}
-	// finalize maps
 	for k, g := range rep.ByTradeClass {
 		rep.ByTradeClass[k] = finalize(g)
 	}
@@ -129,8 +135,8 @@ func Summarize(rows []TicketRow) SummaryReport {
 	rep.Rejected = statsOf(rej)
 	rep.Waiting = statsOf(wait)
 	rep.Missed = statsOf(miss)
-	rep.SelectionAlpha = round4(rep.Accepted.MeanR - rep.AllQualified.MeanR)
-	rep.RejectionMeanR = rep.Rejected.MeanR
+	rep.SelectionAlpha = round4(rep.Accepted.MeanNetR - rep.AllQualified.MeanNetR)
+	rep.RejectionMeanR = rep.Rejected.MeanNetR
 	return rep
 }
 
@@ -144,28 +150,32 @@ func statsOf(rows []TicketRow) GroupStats {
 
 func fold(g GroupStats, r TicketRow) GroupStats {
 	g.N++
-	if !r.HasOut {
+	if !r.HasOut || !r.Outcome.Complete {
 		return g
 	}
-	g.MeanR += r.Outcome.MaxRealizableR
+	g.NComplete++
+	g.MeanNetR += r.Outcome.NetR
+	g.MeanMechR += r.Outcome.MechanicalR
+	g.MeanMaxR += r.Outcome.MaxRealizableR
 	if r.Outcome.Return5m != nil {
 		g.Mean5m += *r.Outcome.Return5m
 	}
-	if r.Outcome.MaxRealizableR > 0 || (r.Outcome.Return5m != nil && *r.Outcome.Return5m > 0) {
-		g.WinRate++ // count wins; finalize divides
+	if r.Outcome.NetR > 0 {
+		g.WinRate++
 	}
 	return g
 }
 
 func finalize(g GroupStats) GroupStats {
-	if g.N == 0 {
+	if g.NComplete == 0 {
+		g.MeanNetR, g.MeanMechR, g.MeanMaxR, g.Mean5m, g.WinRate = 0, 0, 0, 0, 0
 		return g
 	}
-	// MeanR/Mean5m accumulated only over HasOut — approximate using N as denom for stage-1
-	// Better: track nOut. ponytail: use N; zeros for missing outcomes dilute.
-	n := float64(g.N)
+	n := float64(g.NComplete)
 	wins := g.WinRate
-	g.MeanR = round4(g.MeanR / n)
+	g.MeanNetR = round4(g.MeanNetR / n)
+	g.MeanMechR = round4(g.MeanMechR / n)
+	g.MeanMaxR = round4(g.MeanMaxR / n)
 	g.Mean5m = round4(g.Mean5m / n)
 	g.WinRate = round4(wins / n)
 	return g

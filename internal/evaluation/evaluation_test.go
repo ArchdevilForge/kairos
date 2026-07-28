@@ -9,63 +9,70 @@ import (
 )
 
 func TestComputeOutcome_LongStopFirst(t *testing.T) {
-	// entry 100, stop 97, path dips to 96 then rallies — stop first
 	o := ComputeOutcome(PathInput{
 		TicketID: "t1", Direction: types.CycleDirectionUp,
-		Closes: []float64{100, 98, 96, 99, 105},
-		Entry:  100, Stop: 97, Target: 110,
+		Bars: []Bar{
+			{TS: 1, Open: 100, High: 100.5, Low: 99, Close: 99.5},
+			{TS: 2, Open: 99, High: 99.5, Low: 96, Close: 96.5}, // stop 97
+			{TS: 3, Open: 96, High: 105, Low: 96, Close: 104},
+		},
+		Entry: 100, Stop: 97, Target: 110,
 	}, DefaultHorizons())
 	if !o.StopHitFirst {
 		t.Fatalf("want stop first: %+v", o)
 	}
-	if o.MFE < 4 {
+	if o.MechanicalR != -1 {
+		t.Fatalf("mech R=%v", o.MechanicalR)
+	}
+	if o.MFE < 4 { // high 105
 		t.Fatalf("mfe=%v", o.MFE)
 	}
-	if o.Return5m == nil {
-		t.Fatal("missing 5m")
-	}
 }
 
-func TestComputeOutcome_ShortMirror(t *testing.T) {
+func TestComputeOutcome_NetRUsesCost(t *testing.T) {
 	o := ComputeOutcome(PathInput{
-		Direction: types.CycleDirectionDown,
-		Closes:    []float64{100, 99, 95, 94},
-		Entry:     100, Stop: 103, Target: 90,
+		Direction: types.CycleDirectionUp,
+		Bars: []Bar{
+			{TS: 1, High: 102, Low: 99.5, Close: 101, Open: 100},
+			{TS: 2, High: 103, Low: 100, Close: 102, Open: 101},
+		},
+		Entry: 100, Stop: 97, Target: 0, CostR: 0.1,
 	}, DefaultHorizons())
-	if o.MFE <= 0 {
-		t.Fatalf("short mfe should be positive pct in favor: %+v", o)
-	}
-	if o.MaxRealizableR <= 0 {
-		t.Fatalf("max R=%v", o.MaxRealizableR)
+	if o.NetR >= o.MechanicalR {
+		t.Fatalf("net should be mech-cost: net=%v mech=%v", o.NetR, o.MechanicalR)
 	}
 }
 
-func TestSummarize_SelectionAlpha(t *testing.T) {
+func TestSummarize_SelectionAlphaOnNetR(t *testing.T) {
 	j, err := storage.NewJournal(types.StorageConfig{DatabasePath: filepath.Join(t.TempDir(), "k.db")})
 	if err != nil {
 		t.Fatal(err)
 	}
-	// two tickets: accept good R, reject bad R
 	_ = j.SaveTicket(types.DecisionTicket{ID: "a", Status: types.TicketStatusAccepted, TradeClass: types.TradeClassAlignedLong, Grade: types.TicketGradeA, PlaybookID: "leader_pullback_v1", Direction: types.CycleDirectionUp})
 	_ = j.SaveTicket(types.DecisionTicket{ID: "b", Status: types.TicketStatusRejected, TradeClass: types.TradeClassAlignedLong, Grade: types.TicketGradeB, PlaybookID: "leader_pullback_v1", Direction: types.CycleDirectionUp})
 	_ = j.SaveDecision(types.DecisionRecord{TicketID: "a", Decision: types.DecisionAccepted})
 	_ = j.SaveDecision(types.DecisionRecord{TicketID: "b", Decision: types.DecisionRejected})
-	_ = j.SaveOutcome(storage.CounterfactualOutcome{TicketID: "a", MaxRealizableR: 2.0, Return5m: fp(1.5)})
-	_ = j.SaveOutcome(storage.CounterfactualOutcome{TicketID: "b", MaxRealizableR: -1.0, Return5m: fp(-0.8)})
+	_ = j.SaveOutcome(storage.CounterfactualOutcome{TicketID: "a", Complete: true, NetR: 1.5, MechanicalR: 1.6, MaxRealizableR: 2.0, Return5m: fp(1.2)})
+	_ = j.SaveOutcome(storage.CounterfactualOutcome{TicketID: "b", Complete: true, NetR: -1.0, MechanicalR: -1.0, MaxRealizableR: 0.5, Return5m: fp(-0.8)})
 
 	rows, err := BuildRows(j)
-	if err != nil || len(rows) != 2 {
-		t.Fatalf("rows=%d err=%v", len(rows), err)
+	if err != nil {
+		t.Fatal(err)
 	}
 	rep := Summarize(rows)
-	if rep.Accepted.N != 1 || rep.Rejected.N != 1 {
-		t.Fatalf("rep=%+v", rep)
-	}
 	if rep.SelectionAlpha <= 0 {
-		t.Fatalf("selection alpha should be >0, got %v (acc=%v all=%v)", rep.SelectionAlpha, rep.Accepted.MeanR, rep.AllQualified.MeanR)
+		t.Fatalf("alpha=%v acc=%v all=%v", rep.SelectionAlpha, rep.Accepted.MeanNetR, rep.AllQualified.MeanNetR)
 	}
 	if rep.RejectionMeanR >= 0 {
-		t.Fatalf("rejected should be poor, meanR=%v", rep.RejectionMeanR)
+		t.Fatalf("rej=%v", rep.RejectionMeanR)
+	}
+	// incomplete should not dilute
+	_ = j.SaveTicket(types.DecisionTicket{ID: "c", Status: types.TicketStatusOpen})
+	_ = j.SaveOutcome(storage.CounterfactualOutcome{TicketID: "c", Complete: false, NetR: 99})
+	rows, _ = BuildRows(j)
+	rep2 := Summarize(rows)
+	if rep2.AllQualified.NComplete != 2 {
+		t.Fatalf("complete n=%d", rep2.AllQualified.NComplete)
 	}
 }
 

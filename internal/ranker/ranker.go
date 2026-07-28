@@ -1,5 +1,5 @@
 // Package ranker scores dual-sided directional candidates.
-// Long and short are mirrors; positive change alone is not enough to win rank.
+// Unknown features fail closed — never invent liquidity/spread/pullback.
 package ranker
 
 import (
@@ -11,35 +11,36 @@ import (
 )
 
 // Input is one symbol's cross-section features for ranking.
+// Measurement flags must be set when the corresponding field is real.
 type Input struct {
 	Symbol string
 
-	// ChangePct is the symbol return over the ranking window (e.g. impulse 60s or 24h).
-	ChangePct float64
-	// MarketMedianChange is the universe median return over the same window.
+	ChangePct          float64
 	MarketMedianChange float64
-	// BTCChange is BTC return over the same window (optional; 0 + BTCChangeSet=false to skip).
-	BTCChange    float64
-	BTCChangeSet bool
+	BTCChange          float64
+	BTCChangeSet       bool
 
 	QuoteVolume  float64
 	MinLiquidity float64
 
-	// PullbackDepthPct: giveback from local high (positive number). Smaller → better long.
+	// PullbackDepthPct / ReboundPct only used when *Measured is true.
 	PullbackDepthPct float64
-	// ReboundPct: bounce from local low (positive number). Smaller → better short.
-	ReboundPct float64
+	PullbackMeasured bool
+	ReboundPct       float64
+	ReboundMeasured  bool
 
-	// Room in trade direction as percent (0 if unknown — fails hard filter when required).
-	RoomUpPct   float64
-	RoomDownPct float64
-	RequireRoom bool
-	MinRoomPct  float64
+	RoomUpPct    float64
+	RoomDownPct  float64
+	RoomMeasured bool
+	RequireRoom  bool
+	MinRoomPct   float64
 
-	LiquidityOK bool
-	SpreadOK    bool
-	// DataOK false → hard-filtered out.
-	DataOK bool
+	// Hard gates — must be explicitly true after real checks.
+	LiquidityOK       bool
+	LiquidityMeasured bool
+	SpreadOK          bool
+	SpreadMeasured    bool
+	DataOK            bool
 }
 
 // Config tunes ranker behaviour.
@@ -47,18 +48,28 @@ type Config struct {
 	MinLiquidity float64
 	MinRoomPct   float64
 	RequireRoom  bool
-	// MaxResults caps output after sort (0 = all that pass filters).
-	MaxResults int
+	MaxResults   int
+	// SoftRank allows return-only ranking for watch boards without hard gates.
+	// Playbook path must use SoftRank=false (default).
+	SoftRank bool
 }
 
-// DefaultConfig returns sane defaults.
+// DefaultConfig returns hard-gate defaults for ticket generation.
 func DefaultConfig() Config {
 	return Config{
 		MinLiquidity: 1_000_000,
 		MinRoomPct:   1.0,
 		RequireRoom:  false,
 		MaxResults:   0,
+		SoftRank:     false,
 	}
+}
+
+// SoftConfig is for pulse watch boards (display only, not playbook authority).
+func SoftConfig() Config {
+	c := DefaultConfig()
+	c.SoftRank = true
+	return c
 }
 
 // Rank applies hard filters then scores long/short symmetrically.
@@ -70,7 +81,6 @@ func Rank(inputs []Input, cfg Config) []types.DirectionalCandidate {
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool {
-		// primary: best one-sided edge (max of long/short)
 		ei := math.Max(out[i].LongScore, out[i].ShortScore)
 		ej := math.Max(out[j].LongScore, out[j].ShortScore)
 		if ei != ej {
@@ -84,7 +94,7 @@ func Rank(inputs []Input, cfg Config) []types.DirectionalCandidate {
 	return out
 }
 
-// RankLong orders by LongScore desc (among filter passers).
+// RankLong orders by LongScore desc.
 func RankLong(inputs []Input, cfg Config) []types.DirectionalCandidate {
 	all := Rank(inputs, cfg)
 	sort.SliceStable(all, func(i, j int) bool {
@@ -112,67 +122,78 @@ func scoreOne(in Input, cfg Config) (types.DirectionalCandidate, bool) {
 	c := types.DirectionalCandidate{
 		SchemaVersion: types.DirectionalCandidateSchemaVersion,
 		Symbol:        in.Symbol,
-		Reasons:       nil,
-		Warnings:      nil,
+	}
+
+	if !in.DataOK {
+		c.Warnings = append(c.Warnings, "data_incomplete")
+		if !cfg.SoftRank {
+			return c, false
+		}
 	}
 
 	minLiq := cfg.MinLiquidity
 	if in.MinLiquidity > 0 {
 		minLiq = in.MinLiquidity
 	}
-	minRoom := cfg.MinRoomPct
-	if in.MinRoomPct > 0 {
-		minRoom = in.MinRoomPct
-	}
-	requireRoom := cfg.RequireRoom || in.RequireRoom
 
-	liqOK := in.LiquidityOK
-	if in.QuoteVolume > 0 && minLiq > 0 {
-		liqOK = in.QuoteVolume >= minLiq
-	}
-	// if caller set LiquidityOK explicitly false with volume, honor false
-	if in.QuoteVolume == 0 && !in.LiquidityOK && !in.DataOK {
-		liqOK = false
-	}
-	spreadOK := in.SpreadOK
-	// default spread ok when not specified as failed — callers should set SpreadOK
-	if !in.DataOK {
-		c.Warnings = append(c.Warnings, "data incomplete")
-		return c, false
-	}
-	if !liqOK {
-		c.Warnings = append(c.Warnings, "liquidity below minimum")
-		return c, false
-	}
-	if !spreadOK {
-		// treat unset SpreadOK as true only when DataOK; require explicit false to fail
-		// Convention: SpreadOK must be true to pass (callers set true by default).
-		c.Warnings = append(c.Warnings, "spread not ok")
-		return c, false
-	}
-	if requireRoom && in.RoomUpPct < minRoom && in.RoomDownPct < minRoom {
-		c.Warnings = append(c.Warnings, "insufficient room both sides")
-		return c, false
+	if !cfg.SoftRank {
+		if !in.LiquidityMeasured || !in.LiquidityOK {
+			c.Warnings = append(c.Warnings, "liquidity_unmeasured_or_fail")
+			return c, false
+		}
+		if minLiq > 0 && in.QuoteVolume < minLiq {
+			c.Warnings = append(c.Warnings, "liquidity_below_minimum")
+			return c, false
+		}
+		if !in.SpreadMeasured || !in.SpreadOK {
+			c.Warnings = append(c.Warnings, "spread_unmeasured_or_fail")
+			return c, false
+		}
+		minRoom := cfg.MinRoomPct
+		if in.MinRoomPct > 0 {
+			minRoom = in.MinRoomPct
+		}
+		requireRoom := cfg.RequireRoom || in.RequireRoom
+		if requireRoom {
+			if !in.RoomMeasured {
+				c.Warnings = append(c.Warnings, "room_unmeasured")
+				return c, false
+			}
+			if in.RoomUpPct < minRoom && in.RoomDownPct < minRoom {
+				c.Warnings = append(c.Warnings, "insufficient_room")
+				return c, false
+			}
+		}
+	} else {
+		// soft: surface warnings, still emit for watch board
+		if !in.LiquidityMeasured {
+			c.Warnings = append(c.Warnings, "liquidity_unmeasured")
+		}
+		if !in.SpreadMeasured {
+			c.Warnings = append(c.Warnings, "spread_unmeasured")
+		}
 	}
 
-	c.LiquidityOK = true
-	c.SpreadOK = true
+	c.LiquidityOK = in.LiquidityMeasured && in.LiquidityOK
+	c.SpreadOK = in.SpreadMeasured && in.SpreadOK
 
 	rel := in.ChangePct - in.MarketMedianChange
-	// Relative strength: how much it beats the market (can be negative).
 	c.RelativeStrength = round2(rel)
-	// Relative weakness: how much it lags the market (positive when weaker).
 	c.RelativeWeakness = round2(-rel)
 
-	// Pullback quality for longs: shallower pullback → higher strength (0..1-ish scale pts).
-	c.PullbackStrength = round2(pullbackScore(in.PullbackDepthPct))
-	// Rebound weakness for shorts: shallower bounce → higher score.
-	c.ReboundWeakness = round2(pullbackScore(in.ReboundPct))
+	if in.PullbackMeasured {
+		c.PullbackStrength = round2(pullbackScore(in.PullbackDepthPct))
+	} else {
+		c.Warnings = append(c.Warnings, "pullback_unmeasured")
+	}
+	if in.ReboundMeasured {
+		c.ReboundWeakness = round2(pullbackScore(in.ReboundPct))
+	} else {
+		c.Warnings = append(c.Warnings, "rebound_unmeasured")
+	}
 
-	longScore := 0.0
-	shortScore := 0.0
+	longScore, shortScore := 0.0, 0.0
 
-	// Relative vs market (symmetric)
 	if rel > 0 {
 		comp := math.Min(3.0, rel/2.0)
 		longScore += comp
@@ -183,53 +204,50 @@ func scoreOne(in Input, cfg Config) (types.DirectionalCandidate, bool) {
 		c.Reasons = append(c.Reasons, fmt.Sprintf("lags market by %.2f%%", -rel))
 	}
 
-	// Absolute direction component (symmetric) — |change| contributes to the side it favors
 	if in.ChangePct > 0 {
-		comp := math.Min(2.0, in.ChangePct/4.0)
-		longScore += comp
+		longScore += math.Min(2.0, in.ChangePct/4.0)
 	} else if in.ChangePct < 0 {
-		comp := math.Min(2.0, -in.ChangePct/4.0)
-		shortScore += comp
+		shortScore += math.Min(2.0, -in.ChangePct/4.0)
 	}
 
-	// BTC relative (symmetric)
 	if in.BTCChangeSet {
 		vsBTC := in.ChangePct - in.BTCChange
 		if vsBTC > 0 {
-			comp := math.Min(1.5, vsBTC/4.0)
-			longScore += comp
+			longScore += math.Min(1.5, vsBTC/4.0)
 			c.Reasons = append(c.Reasons, fmt.Sprintf("beats BTC by %.2f%%", vsBTC))
 		} else if vsBTC < 0 {
-			comp := math.Min(1.5, -vsBTC/4.0)
-			shortScore += comp
+			shortScore += math.Min(1.5, -vsBTC/4.0)
 			c.Reasons = append(c.Reasons, fmt.Sprintf("underperforms BTC by %.2f%%", -vsBTC))
 		}
 	}
 
-	// Pullback / rebound quality
-	longScore += c.PullbackStrength
-	shortScore += c.ReboundWeakness
-	if c.PullbackStrength >= 1.0 {
-		c.Reasons = append(c.Reasons, "shallow pullback")
+	if in.PullbackMeasured {
+		longScore += c.PullbackStrength
+		if c.PullbackStrength >= 1 {
+			c.Reasons = append(c.Reasons, "shallow pullback measured")
+		}
 	}
-	if c.ReboundWeakness >= 1.0 {
-		c.Reasons = append(c.Reasons, "weak rebound")
-	}
-
-	// Room bonus (non-compensating for hard filter; soft rank only)
-	if in.RoomUpPct >= minRoom {
-		longScore += math.Min(1.0, in.RoomUpPct/10.0)
-	} else if requireRoom {
-		c.Warnings = append(c.Warnings, "limited room up")
-	}
-	if in.RoomDownPct >= minRoom {
-		shortScore += math.Min(1.0, in.RoomDownPct/10.0)
-	} else if requireRoom {
-		c.Warnings = append(c.Warnings, "limited room down")
+	if in.ReboundMeasured {
+		shortScore += c.ReboundWeakness
+		if c.ReboundWeakness >= 1 {
+			c.Reasons = append(c.Reasons, "weak rebound measured")
+		}
 	}
 
-	// Liquidity soft boost
-	if minLiq > 0 && in.QuoteVolume >= minLiq {
+	if in.RoomMeasured {
+		minRoom := cfg.MinRoomPct
+		if in.MinRoomPct > 0 {
+			minRoom = in.MinRoomPct
+		}
+		if in.RoomUpPct >= minRoom {
+			longScore += math.Min(1.0, in.RoomUpPct/10.0)
+		}
+		if in.RoomDownPct >= minRoom {
+			shortScore += math.Min(1.0, in.RoomDownPct/10.0)
+		}
+	}
+
+	if in.LiquidityMeasured && minLiq > 0 && in.QuoteVolume >= minLiq {
 		boost := math.Min(1.0, in.QuoteVolume/minLiq/4.0)
 		longScore += boost
 		shortScore += boost
@@ -240,7 +258,6 @@ func scoreOne(in Input, cfg Config) (types.DirectionalCandidate, bool) {
 	return c, true
 }
 
-// pullbackScore maps depth% to 0..2 (0% depth → 2, 10%+ → ~0).
 func pullbackScore(depthPct float64) float64 {
 	if depthPct < 0 {
 		depthPct = 0

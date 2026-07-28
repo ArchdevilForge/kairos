@@ -274,3 +274,13 @@ charts:
   defaultChartCount: 1
   outputPath: "~/.local/share/kairos/charts"
   multiTimeframeScoreThreshold: 8.0
+
+# Decision desk / OpportunitySession (off by default — fail closed).
+# Shadow: sessions+rank board+journal; tickets only when enrich passes real gates.
+# assumeSpreadOK: only for shadow without L2; production must leave false.
+opportunity:
+  enabled: false
+  shadowMode: true
+  maxTicketsPerSession: 3
+  assumeSpreadOK: false
+  outcomeMaxAgeHours: 6

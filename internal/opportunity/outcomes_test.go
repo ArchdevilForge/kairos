@@ -8,22 +8,33 @@ import (
 	"github.com/ArchdevilForge/kairos/internal/types"
 )
 
-func TestTrackOutcomes_FillsMFE(t *testing.T) {
+type ohlcvFunc func(ctx context.Context, symbol, timeframe string, limit int, beforeMs int64) ([]types.Candle, error)
+
+func (f ohlcvFunc) FetchOHLCV(ctx context.Context, symbol, timeframe string, limit int, beforeMs int64) ([]types.Candle, error) {
+	return f(ctx, symbol, timeframe, limit, beforeMs)
+}
+
+func TestTrackOutcomes_UsesSignalTimeAndHighLow(t *testing.T) {
 	j := testJournal(t)
 	s := NewService(j, DefaultConfig())
+	signal := time.Now().Add(-30 * time.Minute).Unix()
 	_ = j.SaveTicket(types.DecisionTicket{
 		ID: "t-out-1", SessionID: "s1", Symbol: "SOL/USDT:USDT",
 		Direction: types.CycleDirectionUp, Status: types.TicketStatusAccepted,
-		RiskPlan: types.RiskPlan{EntryPrice: 100, StopPrice: 97},
+		RiskPlan:  types.RiskPlan{EntryPrice: 100, StopPrice: 97},
+		CreatedAt: signal, SignalAt: signal, EntryTriggeredAt: signal,
 	})
 	_ = j.SaveDecision(types.DecisionRecord{TicketID: "t-out-1", Decision: types.DecisionAccepted})
 
-	// path: dip then rally
 	fetch := ohlcvFunc(func(ctx context.Context, symbol, timeframe string, limit int, beforeMs int64) ([]types.Candle, error) {
-		px := []float64{100, 99, 98, 101, 104, 106, 105}
-		out := make([]types.Candle, len(px))
-		for i, p := range px {
-			out[i] = types.Candle{Close: p, High: p * 1.001, Low: p * 0.999, Open: p, Volume: 1}
+		// include bars before signal (should be filtered) and after
+		var out []types.Candle
+		for i := 0; i < 10; i++ {
+			ts := signal - 600 + int64(i*300) // some before
+			px := 100.0 + float64(i)*0.5
+			out = append(out, types.Candle{
+				Timestamp: ts, Open: px, Close: px, High: px + 1, Low: px - 1, Volume: 1,
+			})
 		}
 		return out, nil
 	})
@@ -36,16 +47,28 @@ func TestTrackOutcomes_FillsMFE(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatal(err)
 	}
-	if o.MFE <= 0 || o.MaxRealizableR <= 0 {
-		t.Fatalf("outcome=%+v", o)
+	if o.PathStartUnix < signal {
+		t.Fatalf("path started before signal: %d < %d", o.PathStartUnix, signal)
 	}
-	if o.Decision != types.DecisionAccepted {
-		t.Fatalf("decision=%s", o.Decision)
+	if o.MFE <= 0 {
+		t.Fatalf("mfe from highs should be >0: %+v", o)
 	}
-	// second pass unchanged → 0 updates
-	n, err = s.TrackOutcomes(context.Background(), fetch, DefaultOutcomeTrackConfig())
+}
+
+func TestTrackOutcomes_MaxAge(t *testing.T) {
+	j := testJournal(t)
+	s := NewService(j, DefaultConfig())
+	old := time.Now().Add(-48 * time.Hour).Unix()
+	_ = j.SaveTicket(types.DecisionTicket{
+		ID: "old", Symbol: "X/USDT:USDT", Direction: types.CycleDirectionUp,
+		CreatedAt: old, SignalAt: old, RiskPlan: types.RiskPlan{EntryPrice: 1, StopPrice: 0.9},
+	})
+	fetch := ohlcvFunc(func(context.Context, string, string, int, int64) ([]types.Candle, error) {
+		return []types.Candle{{Timestamp: time.Now().Unix(), Close: 1, High: 1.1, Low: 0.9}}, nil
+	})
+	n, err := s.TrackOutcomes(context.Background(), fetch, DefaultOutcomeTrackConfig())
 	if err != nil || n != 0 {
-		t.Fatalf("idempotent updated=%d err=%v", n, err)
+		t.Fatalf("max age should skip, n=%d err=%v", n, err)
 	}
 }
 
@@ -56,7 +79,7 @@ func TestRunOutcomeLoop_Cancels(t *testing.T) {
 	go func() {
 		s.RunOutcomeLoop(ctx, ohlcvFunc(func(context.Context, string, string, int, int64) ([]types.Candle, error) {
 			return nil, nil
-		}), OutcomeTrackConfig{Interval: 50 * time.Millisecond, Timeout: time.Second})
+		}), OutcomeTrackConfig{Interval: 50 * time.Millisecond, Timeout: time.Second, MaxAge: time.Hour})
 		close(done)
 	}()
 	time.Sleep(20 * time.Millisecond)

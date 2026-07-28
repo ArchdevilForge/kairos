@@ -1,10 +1,4 @@
 // Command kairos-desk is the human decision CLI for OpportunitySessions / tickets.
-//
-//	kairos-desk sessions
-//	kairos-desk tickets [--session id]
-//	kairos-desk show <ticket-id>
-//	kairos-desk accept|wait|reject|missed <ticket-id> [--reason code] [--note text]
-//	kairos-desk close <ticket-id>
 package main
 
 import (
@@ -30,22 +24,22 @@ func main() {
 }
 
 func run(args []string) error {
+	// Root flags only (config/journal/json). Subcommand flags parsed per-command
+	// so `reject <id> --reason x` works (Go flag stops at first non-flag otherwise).
 	fs := flag.NewFlagSet("kairos-desk", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	cfgPath := fs.String("config", "config.yaml", "config file (storage path)")
 	journalPath := fs.String("journal", "", "override path to trading-journal.jsonl (or its directory)")
-	sessionFilter := fs.String("session", "", "filter tickets by session id")
-	reason := fs.String("reason", "", "reason code (comma-separated)")
-	note := fs.String("note", "", "free-text note")
 	asJSON := fs.Bool("json", false, "JSON output")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	rest := fs.Args()
 	if len(rest) < 1 {
-		return fmt.Errorf("usage: kairos-desk [-config] <sessions|tickets|candidates|show|accept|wait|reject|missed|close> ...")
+		return fmt.Errorf("usage: kairos-desk [-config] <sessions|tickets|candidates|show|accept|wait|reject|missed|close>")
 	}
 	cmd := rest[0]
+	cmdArgs := rest[1:]
 
 	journal, err := openJournal(*cfgPath, *journalPath)
 	if err != nil {
@@ -72,6 +66,12 @@ func run(args []string) error {
 		return nil
 
 	case "tickets":
+		tfs := flag.NewFlagSet("tickets", flag.ContinueOnError)
+		tfs.SetOutput(os.Stderr)
+		sessionFilter := tfs.String("session", "", "filter by session id")
+		if err := tfs.Parse(cmdArgs); err != nil {
+			return err
+		}
 		list, err := journal.ListTickets(*sessionFilter)
 		if err != nil {
 			return err
@@ -89,12 +89,18 @@ func run(args []string) error {
 		return nil
 
 	case "candidates":
+		tfs := flag.NewFlagSet("candidates", flag.ContinueOnError)
+		tfs.SetOutput(os.Stderr)
+		sessionFilter := tfs.String("session", "", "session id")
+		if err := tfs.Parse(cmdArgs); err != nil {
+			return err
+		}
 		sid := *sessionFilter
-		if sid == "" && len(rest) > 1 {
-			sid = rest[1]
+		if sid == "" && tfs.NArg() > 0 {
+			sid = tfs.Arg(0)
 		}
 		if sid == "" {
-			return fmt.Errorf("usage: kairos-desk candidates --session <id> | candidates <session-id>")
+			return fmt.Errorf("usage: kairos-desk candidates --session <id>")
 		}
 		c, ok, err := journal.GetCandidates(sid)
 		if err != nil {
@@ -108,21 +114,22 @@ func run(args []string) error {
 			return encode(c)
 		}
 		for i, cand := range c.Candidates {
-			fmt.Printf("%d  %s  long=%.2f short=%.2f RS=%.2f RW=%.2f\n",
-				i+1, cand.Symbol, cand.LongScore, cand.ShortScore, cand.RelativeStrength, cand.RelativeWeakness)
+			fmt.Printf("%d  %s  long=%.2f short=%.2f RS=%.2f RW=%.2f liq=%v spread=%v warn=%v\n",
+				i+1, cand.Symbol, cand.LongScore, cand.ShortScore, cand.RelativeStrength, cand.RelativeWeakness,
+				cand.LiquidityOK, cand.SpreadOK, cand.Warnings)
 		}
 		return nil
 
 	case "show":
-		if len(rest) < 2 {
+		if len(cmdArgs) < 1 {
 			return fmt.Errorf("usage: kairos-desk show <ticket-id>")
 		}
-		t, ok, err := journal.GetTicket(rest[1])
+		t, ok, err := journal.GetTicket(cmdArgs[0])
 		if err != nil {
 			return err
 		}
 		if !ok {
-			return fmt.Errorf("ticket not found: %s", rest[1])
+			return fmt.Errorf("ticket not found: %s", cmdArgs[0])
 		}
 		if *asJSON {
 			return encode(t)
@@ -134,9 +141,17 @@ func run(args []string) error {
 		return nil
 
 	case "accept", "wait", "reject", "missed":
-		if len(rest) < 2 {
-			return fmt.Errorf("usage: kairos-desk %s <ticket-id> [--reason code] [--note text]", cmd)
+		dfs := flag.NewFlagSet(cmd, flag.ContinueOnError)
+		dfs.SetOutput(os.Stderr)
+		reason := dfs.String("reason", "", "reason code (comma-separated)")
+		note := dfs.String("note", "", "free-text note")
+		if err := dfs.Parse(cmdArgs); err != nil {
+			return err
 		}
+		if dfs.NArg() < 1 {
+			return fmt.Errorf("usage: kairos-desk %s --reason code [--note text] <ticket-id>", cmd)
+		}
+		ticketID := dfs.Arg(0)
 		d := map[string]types.HumanDecision{
 			"accept": types.DecisionAccepted,
 			"wait":   types.DecisionWaiting,
@@ -155,22 +170,22 @@ func run(args []string) error {
 		if cmd == "reject" && len(codes) == 0 {
 			return fmt.Errorf("reject requires --reason <code> (e.g. too_extended)")
 		}
-		if err := svc.ApplyHumanDecision(rest[1], d, codes, *note); err != nil {
+		if err := svc.ApplyHumanDecision(ticketID, d, codes, *note); err != nil {
 			return err
 		}
-		fmt.Printf("ok %s %s\n", rest[1], d)
+		fmt.Printf("ok %s %s\n", ticketID, d)
 		return nil
 
 	case "close":
-		if len(rest) < 2 {
+		if len(cmdArgs) < 1 {
 			return fmt.Errorf("usage: kairos-desk close <ticket-id>")
 		}
-		t, ok, err := journal.GetTicket(rest[1])
+		t, ok, err := journal.GetTicket(cmdArgs[0])
 		if err != nil {
 			return err
 		}
 		if !ok {
-			return fmt.Errorf("ticket not found: %s", rest[1])
+			return fmt.Errorf("ticket not found: %s", cmdArgs[0])
 		}
 		t.Status = types.TicketStatusClosed
 		if err := journal.SaveTicket(t); err != nil {

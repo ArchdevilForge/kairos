@@ -4,6 +4,7 @@ package decision
 import (
 	"fmt"
 	"math"
+	"time"
 
 	"github.com/ArchdevilForge/kairos/internal/types"
 )
@@ -46,6 +47,10 @@ type BuildInput struct {
 	ZoneLow   float64
 	ZoneHigh  float64
 	Trigger   string
+
+	CreatedAt        int64
+	SignalAt         int64
+	EntryTriggeredAt int64
 }
 
 // BuildTicket creates a DecisionTicket from a playbook match.
@@ -109,6 +114,15 @@ func BuildTicket(in BuildInput) types.DecisionTicket {
 		warnings = append(warnings, "ticket missing invalidation lines")
 	}
 
+	created := in.CreatedAt
+	if created == 0 {
+		created = time.Now().Unix()
+	}
+	signalAt := in.SignalAt
+	if signalAt == 0 {
+		signalAt = created
+	}
+
 	return types.DecisionTicket{
 		SchemaVersion: types.DecisionTicketSchemaVersion,
 		ID:            in.TicketID,
@@ -126,11 +140,14 @@ func BuildTicket(in BuildInput) types.DecisionTicket {
 			ZoneHigh: in.ZoneHigh,
 			Trigger:  in.Trigger,
 		},
-		RiskPlan:      risk,
-		Reasons:       reasons,
-		Warnings:      warnings,
-		Invalidations: inv,
-		Status:        status,
+		RiskPlan:         risk,
+		Reasons:          reasons,
+		Warnings:         warnings,
+		Invalidations:    inv,
+		Status:           status,
+		CreatedAt:        created,
+		SignalAt:         signalAt,
+		EntryTriggeredAt: in.EntryTriggeredAt,
 	}
 }
 
