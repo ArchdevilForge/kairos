@@ -32,6 +32,7 @@ import (
 	"github.com/ArchdevilForge/kairos/internal/detector"
 	"github.com/ArchdevilForge/kairos/internal/exchange"
 	"github.com/ArchdevilForge/kairos/internal/notify"
+	"github.com/ArchdevilForge/kairos/internal/opportunity"
 	"github.com/ArchdevilForge/kairos/internal/storage"
 	"github.com/ArchdevilForge/kairos/internal/types"
 	"github.com/ArchdevilForge/kairos/internal/utils"
@@ -81,6 +82,9 @@ type Pipeline struct {
 
 	// Market pulse event log (JSONL; works in shadow mode).
 	mpStore *storage.MarketPulseStore
+
+	// Opportunity desk: one session per market pulse event (tickets need enrichment).
+	opportunity *opportunity.Service
 
 	// Delivery gating state. dedupLast is attempt-level per event key
 	// ("symbol__event_type[__direction]") and commits on every attempt so a
@@ -223,6 +227,15 @@ func NewPipeline(cfg *types.Config, tg *notify.TelegramClient) *Pipeline {
 				"outcomes", mpStore.OutcomePath(),
 				"snapshots", mpStore.SnapshotPath())
 		}
+	}
+
+	// Decision desk journal: always try to open (even if MarketPulse off) so
+	// kairos-desk can record manual sessions later. Failure is non-fatal.
+	if journal, err := storage.NewJournal(cfg.Storage); err != nil {
+		log.Warn("trading journal disabled", "error", err)
+	} else {
+		p.opportunity = opportunity.NewService(journal, opportunity.DefaultConfig())
+		log.Info("trading journal ready", "path", journal.Path())
 	}
 
 	return p
@@ -955,6 +968,13 @@ func (p *Pipeline) eventAggregator(
 				}
 				if err != nil {
 					p.log.Warn("market pulse store failed", "error", err, "event", evt.EventType)
+				}
+			}
+
+			// One OpportunitySession per pulse event (tickets require later enrichment).
+			if isMarketPulseEvent(evt.EventType) && p.opportunity != nil {
+				if _, err := p.opportunity.HandlePulseEvent(evt); err != nil {
+					p.log.Warn("opportunity session failed", "error", err, "event", evt.EventType)
 				}
 			}
 
