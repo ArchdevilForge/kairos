@@ -46,6 +46,10 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
+	if cmd == "help" || cmd == "-h" {
+		fmt.Println("kairos-eval summary|decisions|playbook|long|short|countertrend|outcomes")
+		return nil
+	}
 	rows, err := evaluation.BuildRows(j)
 	if err != nil {
 		return err
@@ -88,6 +92,27 @@ func run(args []string) error {
 			return encode(map[string]any{"playbook": id, "stats": g})
 		}
 		fmt.Printf("playbook %s  n=%d mean_r=%.4f win=%.2f\n", id, g.N, g.MeanR, g.WinRate)
+		return nil
+
+	case "outcomes":
+		outs, err := j.ListOutcomes()
+		if err != nil {
+			return err
+		}
+		if *asJSON {
+			return encode(outs)
+		}
+		for _, o := range outs {
+			r5 := 0.0
+			if o.Return5m != nil {
+				r5 = *o.Return5m
+			}
+			fmt.Printf("%s  %s  dec=%s  MFE=%.3f MAE=%.3f R=%.2f 5m=%.3f stop_first=%v\n",
+				o.TicketID, o.Symbol, o.Decision, o.MFE, o.MAE, o.MaxRealizableR, r5, o.StopHitFirst)
+		}
+		if len(outs) == 0 {
+			fmt.Println("(no outcomes)")
+		}
 		return nil
 
 	case "long", "short", "countertrend":

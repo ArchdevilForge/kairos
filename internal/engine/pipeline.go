@@ -419,6 +419,25 @@ func (p *Pipeline) Start(ctx context.Context) error {
 		return nil
 	})
 
+	// 5i2. Decision-desk counterfactual outcome refresh (5m path MFE/MAE).
+	if p.opportunity != nil {
+		g.Go(func() error {
+			name := p.primaryExchange()
+			ex := p.exchanges[name]
+			if ex == nil {
+				for _, e := range p.exchanges {
+					ex = e
+					break
+				}
+			}
+			if ex == nil {
+				return nil
+			}
+			p.opportunity.RunOutcomeLoop(gCtx, ex, opportunity.DefaultOutcomeTrackConfig())
+			return nil
+		})
+	}
+
 	// 5j. Market pulse evaluation loop + 60s calibration snapshot writer.
 	if p.marketPulseDet != nil {
 		g.Go(func() error {
@@ -522,6 +541,12 @@ func (p *Pipeline) enrichOpportunityAsync(evt types.AnomalyEvent) {
 		if len(res.Tickets) > 0 {
 			p.log.Info("opportunity tickets ready",
 				"session", res.Session.ID, "tickets", len(res.Tickets))
+			// seed counterfactual path ASAP (loop will refresh later)
+			if n, err := p.opportunity.TrackOutcomes(ctx, fetch, opportunity.DefaultOutcomeTrackConfig()); err != nil {
+				p.log.Warn("outcome seed failed", "error", err)
+			} else if n > 0 {
+				p.log.Info("outcomes seeded", "count", n)
+			}
 		}
 	}(evt, ex)
 }
