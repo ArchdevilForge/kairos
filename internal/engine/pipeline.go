@@ -489,6 +489,43 @@ func (p *Pipeline) primaryExchange() string {
 	return p.cfg.Exchange
 }
 
+// enrichOpportunityAsync fetches multi-TF OHLCV and attaches up to 3 tickets.
+// Runs in a goroutine so the aggregator never blocks on REST.
+func (p *Pipeline) enrichOpportunityAsync(evt types.AnomalyEvent) {
+	if p.opportunity == nil {
+		return
+	}
+	name := p.primaryExchange()
+	ex := p.exchanges[name]
+	if ex == nil {
+		// fall back to any live exchange
+		for _, e := range p.exchanges {
+			ex = e
+			break
+		}
+	}
+	if ex == nil {
+		return
+	}
+	go func(evt types.AnomalyEvent, fetch opportunity.OHLCVFetcher) {
+		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+		defer cancel()
+		res, err := p.opportunity.EnrichAndEvaluate(ctx, opportunity.EnrichRequest{
+			Event:   evt,
+			Fetcher: fetch,
+			Config:  opportunity.DefaultEnrichConfig(),
+		})
+		if err != nil {
+			p.log.Warn("opportunity enrich failed", "error", err, "event", evt.EventType)
+			return
+		}
+		if len(res.Tickets) > 0 {
+			p.log.Info("opportunity tickets ready",
+				"session", res.Session.ID, "tickets", len(res.Tickets))
+		}
+	}(evt, ex)
+}
+
 // coinglassSymbols picks the universe used for CoinGlass per-symbol polling:
 // the primary exchange when it has symbols, otherwise the first enabled
 // exchange with a non-empty universe.
@@ -971,10 +1008,12 @@ func (p *Pipeline) eventAggregator(
 				}
 			}
 
-			// One OpportunitySession per pulse event (tickets require later enrichment).
+			// One OpportunitySession per pulse event; async OHLCV enrichment may attach tickets.
 			if isMarketPulseEvent(evt.EventType) && p.opportunity != nil {
 				if _, err := p.opportunity.HandlePulseEvent(evt); err != nil {
 					p.log.Warn("opportunity session failed", "error", err, "event", evt.EventType)
+				} else {
+					p.enrichOpportunityAsync(evt)
 				}
 			}
 

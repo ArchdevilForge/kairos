@@ -167,7 +167,17 @@ func (s *Service) HandlePulseEvent(evt types.AnomalyEvent) (*types.OpportunitySe
 }
 
 // Evaluate runs the full Gate path and persists session + tickets.
+// Fails if a session for EventID already exists — use EvaluateOrAttach after pulse.
 func (s *Service) Evaluate(req EvaluateRequest) (EvaluateResult, error) {
+	return s.evaluate(req, false)
+}
+
+// EvaluateOrAttach is Evaluate, but if the pulse session already exists it attaches tickets to it.
+func (s *Service) EvaluateOrAttach(req EvaluateRequest) (EvaluateResult, error) {
+	return s.evaluate(req, true)
+}
+
+func (s *Service) evaluate(req EvaluateRequest, attachExisting bool) (EvaluateResult, error) {
 	var res EvaluateResult
 	if s == nil || !s.cfg.Enabled {
 		return res, nil
@@ -181,39 +191,48 @@ func (s *Service) Evaluate(req EvaluateRequest) (EvaluateResult, error) {
 		eventID = fmt.Sprintf("manual-%d", now)
 	}
 
+	var sess types.OpportunitySession
 	s.mu.Lock()
 	if sid, ok := s.openEventIDs[eventID]; ok {
-		s.mu.Unlock()
-		return res, fmt.Errorf("session already exists for event %s (%s)", eventID, sid)
+		if !attachExisting {
+			s.mu.Unlock()
+			return res, fmt.Errorf("session already exists for event %s (%s)", eventID, sid)
+		}
+		sess = types.OpportunitySession{
+			SchemaVersion:  types.OpportunitySessionSchemaVersion,
+			ID:             sid,
+			EventID:        eventID,
+			CreatedAt:      now,
+			ExpiresAt:      now + int64(s.cfg.SessionTTLSeconds),
+			PulseState:     req.PulseState,
+			PulseDirection: req.PulseDirection,
+			MarketCycle:    req.MarketCycle,
+			Status:         types.OpportunitySessionWatching,
+		}
+	} else {
+		sess = types.OpportunitySession{
+			SchemaVersion:  types.OpportunitySessionSchemaVersion,
+			ID:             fmt.Sprintf("sess-%s", eventID),
+			EventID:        eventID,
+			CreatedAt:      now,
+			ExpiresAt:      now + int64(s.cfg.SessionTTLSeconds),
+			PulseState:     req.PulseState,
+			PulseDirection: req.PulseDirection,
+			MarketCycle:    req.MarketCycle,
+			Status:         types.OpportunitySessionOpen,
+		}
+		s.openEventIDs[eventID] = sess.ID
 	}
 	s.mu.Unlock()
 
-	sess := types.OpportunitySession{
-		SchemaVersion:  types.OpportunitySessionSchemaVersion,
-		ID:             fmt.Sprintf("sess-%s", eventID),
-		EventID:        eventID,
-		CreatedAt:      now,
-		ExpiresAt:      now + int64(s.cfg.SessionTTLSeconds),
-		PulseState:     req.PulseState,
-		PulseDirection: req.PulseDirection,
-		MarketCycle:    req.MarketCycle,
-		Status:         types.OpportunitySessionOpen,
-	}
 	res.Session = sess
-
-	s.mu.Lock()
-	s.openEventIDs[eventID] = sess.ID
-	s.mu.Unlock()
-
 	if err := s.persistSession(sess); err != nil {
 		return res, err
 	}
 
-	// Rank
 	ranked := ranker.Rank(req.RankInputs, ranker.DefaultConfig())
 	res.Ranked = ranked
 
-	// Prefer pulse-aligned side order
 	var ordered []types.DirectionalCandidate
 	switch req.PulseDirection {
 	case types.CycleDirectionUp:
@@ -257,7 +276,6 @@ func (s *Service) Evaluate(req EvaluateRequest) (EvaluateResult, error) {
 			MidBox:         req.MidBox[cand.Symbol],
 			LeaderRank:     i + 1,
 		}
-		// default structure/invalidation fail-closed unless maps set true/lines
 		if req.StructureValid != nil {
 			in.StructureValid = req.StructureValid[cand.Symbol]
 		}
@@ -266,22 +284,19 @@ func (s *Service) Evaluate(req EvaluateRequest) (EvaluateResult, error) {
 		if !m.Matched {
 			continue
 		}
-		entry := req.EntryPrice[cand.Symbol]
-		stop := req.StopPrice[cand.Symbol]
 		t := decision.BuildTicket(decision.BuildInput{
 			TicketID:      fmt.Sprintf("tkt-%s-%d", sess.ID, len(tickets)+1),
 			Match:         m,
 			Context:       in.PlaybookContext,
 			Invalidations: in.Invalidations,
-			EntryPrice:    entry,
-			StopPrice:     stop,
+			EntryPrice:    req.EntryPrice[cand.Symbol],
+			StopPrice:     req.StopPrice[cand.Symbol],
 			Equity:        s.cfg.Equity,
 			Trigger:       "leader_pullback restart",
 		})
 		if err := s.persistTicket(t); err != nil {
 			return res, err
 		}
-		// seed empty counterfactual row so rejects are still tracked
 		_ = s.persistOutcome(storage.CounterfactualOutcome{
 			SchemaVersion: storage.CounterfactualSchemaVersion,
 			TicketID:      t.ID,
@@ -295,10 +310,8 @@ func (s *Service) Evaluate(req EvaluateRequest) (EvaluateResult, error) {
 
 	res.Matches = matches
 	res.Tickets = tickets
-
 	sess.Status = types.OpportunitySessionWatching
 	if len(tickets) == 0 {
-		// still watching — human may enrich later
 		sess.Status = types.OpportunitySessionOpen
 	}
 	res.Session = sess

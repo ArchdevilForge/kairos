@@ -106,17 +106,31 @@ func classifyRaw(s Series) types.CycleNode {
 		}
 	}
 
-	// crude room: distance to recent extremes as pct
+	// crude room vs prior swing extremes (exclude last 3 bars so the current
+	// candle's own high/low does not zero out continuation room).
 	roomUp, roomDown := 0.0, 0.0
 	if len(highs) >= 40 && s.Closes[len(s.Closes)-1] > 0 {
 		px := s.Closes[len(s.Closes)-1]
-		cap := maxOf(highs[len(highs)-40:])
-		floor := minOf(lows[len(lows)-40:])
-		if cap > px {
-			roomUp = (cap - px) / px * 100
+		end := len(highs) - 3
+		if end < 10 {
+			end = len(highs)
 		}
-		if floor < px && floor > 0 {
+		start := end - 40
+		if start < 0 {
+			start = 0
+		}
+		cap := maxOf(highs[start:end])
+		floor := minOf(lows[start:end])
+		if cap > px*1.002 {
+			roomUp = (cap - px) / px * 100
+		} else {
+			// ponytail: breakout / at highs → open-air floor
+			roomUp = 5
+		}
+		if floor < px*0.998 && floor > 0 {
 			roomDown = (px - floor) / px * 100
+		} else {
+			roomDown = 5
 		}
 	}
 
