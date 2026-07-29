@@ -62,6 +62,8 @@ func TestEnrichAndEvaluate_ProducesTickets(t *testing.T) {
 	cfg := DefaultEnrichConfig()
 	cfg.AssumeSpreadOK = true
 	cfg.MinQuoteVol = 1
+	// unit fixture is historical path; allow pullback before synthetic pulse ts
+	cfg.RequireInSessionPullback = false
 	res, err := s.EnrichAndEvaluate(context.Background(), EnrichRequest{
 		Event: evt, Fetcher: mockOHLCV{}, Config: cfg, Equity: 10_000,
 	})

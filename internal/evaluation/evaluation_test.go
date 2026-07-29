@@ -29,6 +29,33 @@ func TestComputeOutcome_LongStopFirst(t *testing.T) {
 	}
 }
 
+func TestHorizonOffByOne(t *testing.T) {
+	// 12 bars after entry → Complete1h and Return1h at Bars[11]
+	bars := make([]Bar, 12)
+	for i := range bars {
+		px := 100 + float64(i)*0.1
+		bars[i] = Bar{TS: int64(i + 1), Open: px, High: px, Low: px, Close: px}
+	}
+	o := ComputeOutcome(PathInput{
+		Direction: types.CycleDirectionUp, Bars: bars,
+		Entry: 100, Stop: 97, TimeExitBars: 12,
+	}, DefaultHorizons())
+	if !o.Complete1h || o.Return1h == nil {
+		t.Fatalf("1h should complete with 12 bars: complete=%v ret=%v", o.Complete1h, o.Return1h)
+	}
+	if !o.Finalized {
+		t.Fatal("12 bars = 1h time exit should finalize")
+	}
+	// 11 bars → not complete 1h
+	o2 := ComputeOutcome(PathInput{
+		Direction: types.CycleDirectionUp, Bars: bars[:11],
+		Entry: 100, Stop: 97, TimeExitBars: 12,
+	}, DefaultHorizons())
+	if o2.Complete1h || o2.Return1h != nil {
+		t.Fatalf("11 bars must not claim 1h: %+v", o2)
+	}
+}
+
 func TestComputeOutcome_NetRUsesCost(t *testing.T) {
 	o := ComputeOutcome(PathInput{
 		Direction: types.CycleDirectionUp,

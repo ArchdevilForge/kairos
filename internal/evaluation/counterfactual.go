@@ -97,11 +97,7 @@ func ComputeOutcome(in PathInput, hz HorizonBars) storage.CounterfactualOutcome 
 	exited := false
 	exitIdx := -1
 
-	limit := len(in.Bars)
-	if timeExit < limit {
-		// still walk full for MFE diagnosis, but mechanical time-exit at timeExit
-	}
-
+	// Walk all bars for path MFE/MAE; mechanical exit still stops at timeExit/stop/target.
 	for i, b := range in.Bars {
 		fav := b.High
 		adv := b.Low
@@ -162,12 +158,13 @@ func ComputeOutcome(in PathInput, hz HorizonBars) storage.CounterfactualOutcome 
 		exitIdx = len(in.Bars) - 1
 	}
 
-	setRet := func(bars int) *float64 {
-		// honest: need strictly more than `bars` index available (bars is count from 0)
-		if bars < 0 || len(in.Bars) <= bars {
+	// Horizons are bar *counts*; path[0] is first bar AFTER trigger close.
+	// ReturnNm uses Bars[count-1]; need len >= count.
+	setRet := func(count int) *float64 {
+		if count <= 0 || len(in.Bars) < count {
 			return nil
 		}
-		px := in.Bars[bars].Close
+		px := in.Bars[count-1].Close
 		v := sign * (px - in.Entry) / in.Entry * 100
 		v = math.Round(v*10000) / 10000
 		return &v
@@ -185,14 +182,15 @@ func ComputeOutcome(in PathInput, hz HorizonBars) storage.CounterfactualOutcome 
 	o.MechanicalR = math.Round(mechanicalR*100) / 100
 	o.NetR = math.Round((mechanicalR-costR)*100) / 100
 
-	o.Complete5m = len(in.Bars) > hz.M5
-	o.Complete15m = len(in.Bars) > hz.M15
-	o.Complete1h = len(in.Bars) > hz.H1
-	o.Complete4h = len(in.Bars) > hz.H4
-	// Finalized: hit stop/target OR reached fixed time-exit bars
-	o.Finalized = stopFirst || targetFirst || (exitIdx+1 >= timeExit && len(in.Bars) >= timeExit)
-	// Complete (legacy field): finalized for selection alpha
+	o.Complete5m = len(in.Bars) >= hz.M5
+	o.Complete15m = len(in.Bars) >= hz.M15
+	o.Complete1h = len(in.Bars) >= hz.H1
+	o.Complete4h = len(in.Bars) >= hz.H4
+	// Finalized: hit stop/target OR reached fixed time-exit bar count
+	o.Finalized = stopFirst || targetFirst || (len(in.Bars) >= timeExit && (exitIdx+1 >= timeExit || exitIdx < 0))
+	if !stopFirst && !targetFirst && len(in.Bars) >= timeExit {
+		o.Finalized = true
+	}
 	o.Complete = o.Finalized
-	_ = types.DirectionLong // keep? remove
 	return o
 }

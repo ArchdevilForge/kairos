@@ -101,10 +101,12 @@ func TestDetectPullbackTrigger_ShortMirror(t *testing.T) {
 func TestDetectPullbackTrigger_RejectsPrePulseRestart(t *testing.T) {
 	c := synthLongPullback()
 	for i := range c {
+		// bar open times; close = open+300
 		c[i].Timestamp = int64(1000 + i*300)
 	}
-	// pulse after last bar → restart is before pulse
-	r := DetectPullbackTrigger(types.CycleDirectionUp, c, TriggerOpts{MinRestartAt: 99999})
+	// pulse after last bar close → restart is before pulse
+	lastOpen := c[len(c)-1].Timestamp
+	r := DetectPullbackTrigger(types.CycleDirectionUp, c, TriggerOpts{MinRestartAt: lastOpen + 300 + 1})
 	if r.OK {
 		t.Fatal("pre-pulse restart must fail")
 	}

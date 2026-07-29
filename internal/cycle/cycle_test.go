@@ -212,13 +212,13 @@ func TestTransition_RequiresConfirm(t *testing.T) {
 		barsInState: 5,
 	}
 	raw := types.CycleNode{Direction: types.CycleDirectionDown, Phase: types.WavePhaseSpring, Confidence: 0.55}
-	out, st := applyTransition(policy, prev, raw)
+	out, st := applyTransition(policy, prev, raw, 1)
 	if out.Direction != types.CycleDirectionUp {
 		t.Fatalf("should hold up until confirm, got %s", out.Direction)
 	}
-	// feed confirms
+	// feed confirms on distinct bars
 	for i := 0; i < 3; i++ {
-		out, st = applyTransition(policy, st, raw)
+		out, st = applyTransition(policy, st, raw, int64(2+i))
 	}
 	if out.Direction != types.CycleDirectionDown || out.Phase != types.WavePhaseSpring {
 		t.Fatalf("after confirm want down/spring got %s/%s", out.Direction, out.Phase)
@@ -230,5 +230,30 @@ func TestMirrorHelpers(t *testing.T) {
 	m := mirrorCloses(c)
 	if math.Abs(m[0]-100) > 1e-9 || math.Abs(m[2]-80) > 1e-9 {
 		t.Fatalf("mirror closes %v", m)
+	}
+}
+
+func TestTransition_SameBarDoesNotAdvance(t *testing.T) {
+	policy := types.TransitionPolicy{ConfirmBars: 3, MinStateBars: 3, MinConfidenceGain: 0.5}
+	prev := &stickyState{
+		node:        types.CycleNode{Direction: types.CycleDirectionUp, Phase: types.WavePhaseSummer, Confidence: 0.7},
+		barsInState: 5, lastBarUnix: 100,
+	}
+	raw := types.CycleNode{Direction: types.CycleDirectionDown, Phase: types.WavePhaseSpring, Confidence: 0.55}
+	// same bar polled thrice must not confirm
+	var st *stickyState
+	out, st := applyTransition(policy, prev, raw, 100)
+	for i := 0; i < 5; i++ {
+		out, st = applyTransition(policy, st, raw, 100)
+	}
+	if out.Direction != types.CycleDirectionUp {
+		t.Fatalf("same-bar polls must not flip, got %s pending=%d", out.Direction, st.pendingCount)
+	}
+	// new bars confirm
+	for i := 0; i < 3; i++ {
+		out, st = applyTransition(policy, st, raw, int64(101+i))
+	}
+	if out.Direction != types.CycleDirectionDown {
+		t.Fatalf("after new bars want down, got %s", out.Direction)
 	}
 }

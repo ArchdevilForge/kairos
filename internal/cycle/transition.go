@@ -22,14 +22,17 @@ type stateKey struct {
 type stickyState struct {
 	node        types.CycleNode
 	barsInState int
+	lastBarUnix int64 // identity of last closed bar that advanced state
 	// pending candidate while confirming a switch
 	pending      types.CycleNode
 	pendingCount int
+	pendingBar   int64
 }
 
 // applyTransition enforces confirm bars / min state bars / confidence gain.
-// raw is the freshly detected node; prev may be nil on first bar.
-func applyTransition(policy types.TransitionPolicy, prev *stickyState, raw types.CycleNode) (types.CycleNode, *stickyState) {
+// barUnix identifies the last closed bar. Same barUnix as prev → refresh metrics
+// only; do NOT increment barsInState/pendingCount (poll ≠ new bar).
+func applyTransition(policy types.TransitionPolicy, prev *stickyState, raw types.CycleNode, barUnix int64) (types.CycleNode, *stickyState) {
 	if policy.ConfirmBars <= 0 {
 		policy.ConfirmBars = 1
 	}
@@ -38,28 +41,45 @@ func applyTransition(policy types.TransitionPolicy, prev *stickyState, raw types
 	}
 
 	if prev == nil {
-		s := &stickyState{node: raw, barsInState: 1}
+		s := &stickyState{node: raw, barsInState: 1, lastBarUnix: barUnix}
 		return raw, s
+	}
+
+	// Same closed bar re-polled: refresh display metrics, freeze transition counters.
+	if barUnix > 0 && barUnix == prev.lastBarUnix {
+		out := prev.node
+		out.TrendStrength = raw.TrendStrength
+		out.MomentumChange = raw.MomentumChange
+		out.Volatility = raw.Volatility
+		out.VolumeQuality = raw.VolumeQuality
+		out.RoomUpPct = raw.RoomUpPct
+		out.RoomDownPct = raw.RoomDownPct
+		out.StructureQuality = raw.StructureQuality
+		out.Confidence = raw.Confidence
+		out.Evidence = raw.Evidence
+		// keep direction/phase from sticky identity
+		prev.node = out
+		return out, prev
 	}
 
 	same := prev.node.Direction == raw.Direction && prev.node.Phase == raw.Phase
 	if same {
-		prev.node = raw // refresh metrics/evidence, keep identity
+		prev.node = raw
 		prev.barsInState++
+		prev.lastBarUnix = barUnix
 		prev.pendingCount = 0
 		prev.pending = types.CycleNode{}
+		prev.pendingBar = 0
 		return prev.node, prev
 	}
 
-	// Same direction, adjacent phase soft switch still needs confirm — but allow
-	// faster upgrade when confidence jumps.
 	confGain := raw.Confidence - prev.node.Confidence
 	canLeave := prev.barsInState >= policy.MinStateBars
 	strongJump := confGain >= policy.MinConfidenceGain && raw.Confidence >= prev.node.Confidence
 
 	if !canLeave && !strongJump {
-		// hold previous identity; keep counting
-		prev.barsInState++
+		prev.barsInState++ // still a new bar observation while holding
+		prev.lastBarUnix = barUnix
 		prev.pendingCount = 0
 		out := prev.node
 		out.TrendStrength = raw.TrendStrength
@@ -71,22 +91,26 @@ func applyTransition(policy types.TransitionPolicy, prev *stickyState, raw types
 		return out, prev
 	}
 
-	// accumulate pending confirmation
+	// pending confirmation — only count distinct bars
 	if prev.pending.Direction == raw.Direction && prev.pending.Phase == raw.Phase {
-		prev.pendingCount++
+		if barUnix == 0 || barUnix != prev.pendingBar {
+			prev.pendingCount++
+			prev.pendingBar = barUnix
+		}
 		prev.pending = raw
 	} else {
 		prev.pending = raw
 		prev.pendingCount = 1
+		prev.pendingBar = barUnix
 	}
 
 	if prev.pendingCount >= policy.ConfirmBars || strongJump {
 		out := prev.pending
-		return out, &stickyState{node: out, barsInState: 1}
+		return out, &stickyState{node: out, barsInState: 1, lastBarUnix: barUnix}
 	}
 
-	// not confirmed yet
 	prev.barsInState++
+	prev.lastBarUnix = barUnix
 	out := prev.node
 	out.TrendStrength = raw.TrendStrength
 	out.MomentumChange = raw.MomentumChange

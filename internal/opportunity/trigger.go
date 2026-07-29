@@ -190,7 +190,8 @@ func detectLongPullback(c []types.Candle) TriggerResult {
 		fmt.Sprintf("5m pullback low %.6g breaks", r.Stop),
 		"15m flips DOWN with structure break",
 	}
-	r.EntryTriggeredAt = last.Timestamp
+	// Exchange OHLCV timestamps are bar *open*; entry is at bar *close*.
+	r.EntryTriggeredAt = barCloseUnix(normTS(last.Timestamp), "5m")
 	return r
 }
 
@@ -296,6 +297,6 @@ func detectShortBounce(c []types.Candle) TriggerResult {
 		fmt.Sprintf("5m bounce high %.6g breaks", r.Stop),
 		"15m flips UP with structure break",
 	}
-	r.EntryTriggeredAt = last.Timestamp
+	r.EntryTriggeredAt = barCloseUnix(normTS(last.Timestamp), "5m")
 	return r
 }

@@ -26,18 +26,31 @@ func NewClassifier(policy types.TransitionPolicy) *Classifier {
 	}
 }
 
-// Series is one TF of closed OHLCV (unix seconds timestamps optional).
+// Series is one TF of closed OHLCV.
+// LastBarUnix is the open time of the last closed bar (exchange convention).
+// LastBarCloseUnix is when that bar became closed (= open + tf duration when known).
 type Series struct {
-	Timeframe string
-	Role      types.TimeframeRole
-	Closes    []float64
-	Highs     []float64
-	Lows      []float64
-	Volumes   []float64
+	Timeframe        string
+	Role             types.TimeframeRole
+	LastBarUnix      int64 // bar open unix seconds
+	LastBarCloseUnix int64 // bar close unix seconds (preferred for as-of / hysteresis)
+	Closes           []float64
+	Highs            []float64
+	Lows             []float64
+	Volumes          []float64
+}
+
+// barKeyUnix is the identity of the last closed bar for hysteresis (prefer close time).
+func (s Series) barKeyUnix() int64 {
+	if s.LastBarCloseUnix > 0 {
+		return s.LastBarCloseUnix
+	}
+	return s.LastBarUnix
 }
 
 // ClassifyNode detects direction+phase for one TF. symbol is hysteresis key only.
 // Uses closed bars only (caller must not pass forming candle).
+// Hysteresis advances only when barKeyUnix() is a new closed bar — not on poll repeats.
 func (c *Classifier) ClassifyNode(symbol string, s Series) types.CycleNode {
 	raw := classifyRaw(s)
 	if c == nil {
@@ -47,7 +60,7 @@ func (c *Classifier) ClassifyNode(symbol string, s Series) types.CycleNode {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	prev := c.state[key]
-	out, next := applyTransition(c.Policy, prev, raw)
+	out, next := applyTransition(c.Policy, prev, raw, s.barKeyUnix())
 	c.state[key] = next
 	return out
 }

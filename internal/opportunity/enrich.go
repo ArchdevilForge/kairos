@@ -43,7 +43,7 @@ func DefaultEnrichConfig() EnrichConfig {
 		MinQuoteVol:              1_000_000,
 		AssumeSpreadOK:           false,
 		WatchInterval:            5 * time.Minute,
-		RequireInSessionPullback: false, // restart-after-pulse is hard; full in-session PB optional
+		RequireInSessionPullback: true, // leader_pullback_v1: first pullback after pulse
 	}
 }
 
@@ -131,10 +131,7 @@ func (s *Service) EnrichAndEvaluate(ctx context.Context, req EnrichRequest) (Eva
 	fetchCtx, cancel := context.WithTimeout(ctx, cfg.Timeout)
 	defer cancel()
 
-	enrichCycles = s.cycles // hysteresis across symbols/calls on this service
-	defer func() { enrichCycles = nil }()
-
-	marketCycle, err := buildSymbolCycle(fetchCtx, req.Fetcher, cfg.MarketSymbol, cfg)
+	marketCycle, err := s.buildSymbolCycle(fetchCtx, req.Fetcher, cfg.MarketSymbol, cfg)
 	if err != nil {
 		s.log.Warn("market cycle fetch failed", "error", err, "symbol", cfg.MarketSymbol)
 		return empty, fmt.Errorf("market cycle: %w", err)
@@ -154,7 +151,7 @@ func (s *Service) EnrichAndEvaluate(ctx context.Context, req EnrichRequest) (Eva
 
 	for _, sym := range orderedSyms {
 		base := bySoft[sym]
-		symCycle, err := buildSymbolCycle(fetchCtx, req.Fetcher, sym, cfg)
+		symCycle, err := s.buildSymbolCycle(fetchCtx, req.Fetcher, sym, cfg)
 		if err != nil {
 			s.log.Warn("symbol cycle fetch failed", "symbol", sym, "error", err)
 			continue
@@ -174,8 +171,8 @@ func (s *Service) EnrichAndEvaluate(ctx context.Context, req EnrichRequest) (Eva
 			pulseAt = pulseAt / 1000
 		}
 		trig := DetectPullbackTrigger(dir, candles5m, TriggerOpts{
-			MinRestartAt:              pulseAt,
-			MinPullbackAt:             pulseAt,
+			MinRestartAt:             pulseAt,
+			MinPullbackAt:            pulseAt,
 			RequireInSessionPullback: cfg.RequireInSessionPullback,
 		})
 		if !trig.OK {
@@ -272,8 +269,10 @@ func measureQuoteVolume(candles []types.Candle) float64 {
 	return sum * (24.0 / (float64(n) * 5.0 / 60.0))
 }
 
-func buildSymbolCycle(ctx context.Context, fetch OHLCVFetcher, symbol string, cfg EnrichConfig) (types.CycleMap, error) {
+// buildSymbolCycle is a Service method so CycleService hysteresis is not shared via globals.
+func (s *Service) buildSymbolCycle(ctx context.Context, fetch OHLCVFetcher, symbol string, cfg EnrichConfig) (types.CycleMap, error) {
 	var series []cycle.Series
+	var asOf int64
 	for _, tf := range cfg.Timeframes {
 		candles, err := fetch.FetchOHLCV(ctx, symbol, tf, cfg.BarLimit, 0)
 		if err != nil {
@@ -282,6 +281,7 @@ func buildSymbolCycle(ctx context.Context, fetch OHLCVFetcher, symbol string, cf
 		if len(candles) < 41 {
 			return types.CycleMap{}, fmt.Errorf("%s %s: need >=41 bars got %d", symbol, tf, len(candles))
 		}
+		// drop potentially forming last bar
 		candles = candles[:len(candles)-1]
 		closes := make([]float64, len(candles))
 		highs := make([]float64, len(candles))
@@ -290,29 +290,60 @@ func buildSymbolCycle(ctx context.Context, fetch OHLCVFetcher, symbol string, cf
 		for i, c := range candles {
 			closes[i], highs[i], lows[i], vols[i] = c.Close, c.High, c.Low, c.Volume
 		}
+		last := candles[len(candles)-1]
+		openTS := normCandleTS(last.Timestamp)
+		closeTS := barCloseUnix(openTS, tf)
+		if closeTS > asOf {
+			asOf = closeTS
+		}
 		series = append(series, cycle.Series{
-			Timeframe: tf,
-			Role:      roleForTimeframe(tf),
-			Closes:    closes,
-			Highs:     highs,
-			Lows:      lows,
-			Volumes:   vols,
+			Timeframe:        tf,
+			Role:             roleForTimeframe(tf),
+			LastBarUnix:      openTS,
+			LastBarCloseUnix: closeTS,
+			Closes:           closes,
+			Highs:            highs,
+			Lows:             lows,
+			Volumes:          vols,
 		})
 	}
-	// asOf = last closed 5m-equivalent: use wall-less last bar index time if present on candles —
-	// Series has no ts; pass 0 rather than time.Now() (replay-honest).
-	// legacy climate unknown — do not invent summer.
+	// legacy climate unknown — do not invent summer
 	var legacy types.MarketPhase
-	if s := findServiceCycles(); s != nil {
-		return s.Map(symbol, 0, legacy, series), nil
+	if s != nil && s.cycles != nil {
+		return s.cycles.Map(symbol, asOf, legacy, series), nil
 	}
-	return cycle.MapStateless(symbol, 0, legacy, series), nil
+	return cycle.MapStateless(symbol, asOf, legacy, series), nil
 }
 
-// enrichCycles is set by Service methods; buildSymbolCycle is package-level for tests.
-var enrichCycles *cycle.Service
+func normCandleTS(ts int64) int64 {
+	if ts > 1_000_000_000_000 {
+		return ts / 1000
+	}
+	return ts
+}
 
-func findServiceCycles() *cycle.Service { return enrichCycles }
+// barCloseUnix assumes exchange timestamps are bar *open* times.
+func barCloseUnix(openUnix int64, tf string) int64 {
+	if openUnix <= 0 {
+		return 0
+	}
+	sec := int64(300) // default 5m
+	switch tf {
+	case "1m", "1M":
+		sec = 60
+	case "5m", "5M":
+		sec = 300
+	case "15m", "15M":
+		sec = 900
+	case "1h", "1H":
+		sec = 3600
+	case "4h", "4H":
+		sec = 14400
+	case "1d", "1D":
+		sec = 86400
+	}
+	return openUnix + sec
+}
 
 func roleForTimeframe(tf string) types.TimeframeRole {
 	switch tf {
