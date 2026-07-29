@@ -85,6 +85,8 @@ type Pipeline struct {
 
 	// Opportunity desk: one session per market pulse event (tickets need enrichment).
 	opportunity *opportunity.Service
+	// oppCtx cancelled when pipeline stops — watch/enrich goroutines should honor it.
+	oppCtx context.Context
 
 	// Delivery gating state. dedupLast is attempt-level per event key
 	// ("symbol__event_type[__direction]") and commits on every attempt so a
@@ -352,6 +354,7 @@ func (p *Pipeline) Start(ctx context.Context) error {
 
 	// 5. Launch goroutines via errgroup.
 	g, gCtx := errgroup.WithContext(ctx)
+	p.oppCtx = gCtx
 
 	// 5a. WS subscription loop per exchange (restartable on universe refresh).
 	for _, es := range p.exchangeStates {
@@ -538,35 +541,33 @@ func (p *Pipeline) enrichOpportunityAsync(evt types.AnomalyEvent) {
 	if ex == nil {
 		return
 	}
-	go func(evt types.AnomalyEvent, fetch opportunity.OHLCVFetcher) {
-		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
-		defer cancel()
+	// Use pipeline oppCtx when set (Start); else Background for tests.
+	base := p.oppCtx
+	if base == nil {
+		base = context.Background()
+	}
+	go func(evt types.AnomalyEvent, fetch opportunity.OHLCVFetcher, base context.Context) {
 		ecfg := opportunity.DefaultEnrichConfig()
 		ecfg.AssumeSpreadOK = p.cfg.Opportunity.AssumeSpreadOK
 		ocfg := opportunity.DefaultOutcomeTrackConfig()
 		if p.cfg.Opportunity.OutcomeMaxAgeHours > 0 {
 			ocfg.MaxAge = time.Duration(p.cfg.Opportunity.OutcomeMaxAgeHours * float64(time.Hour))
 		}
-		res, err := p.opportunity.EnrichAndEvaluate(ctx, opportunity.EnrichRequest{
+		// Watch loop respects pipeline cancel + session TTL inside WatchAndEnrich.
+		p.opportunity.WatchAndEnrich(base, opportunity.EnrichRequest{
 			Event:   evt,
 			Fetcher: fetch,
 			Config:  ecfg,
 		})
-		if err != nil {
-			p.log.Warn("opportunity enrich failed", "error", err, "event", evt.EventType)
-			return
+		// seed/refresh outcomes after watch returns (tickets or expiry)
+		ctx, cancel := context.WithTimeout(base, 25*time.Second)
+		defer cancel()
+		if n, err := p.opportunity.TrackOutcomes(ctx, fetch, ocfg); err != nil {
+			p.log.Warn("outcome seed failed", "error", err)
+		} else if n > 0 {
+			p.log.Info("outcomes seeded", "count", n)
 		}
-		if len(res.Tickets) > 0 {
-			p.log.Info("opportunity tickets ready",
-				"session", res.Session.ID, "tickets", len(res.Tickets),
-				"shadow", p.cfg.Opportunity.ShadowMode)
-			if n, err := p.opportunity.TrackOutcomes(ctx, fetch, ocfg); err != nil {
-				p.log.Warn("outcome seed failed", "error", err)
-			} else if n > 0 {
-				p.log.Info("outcomes seeded", "count", n)
-			}
-		}
-	}(evt, ex)
+	}(evt, ex, base)
 }
 
 // coinglassSymbols picks the universe used for CoinGlass per-symbol polling:

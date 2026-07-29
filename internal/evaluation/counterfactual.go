@@ -30,7 +30,8 @@ type Bar struct {
 	Close float64
 }
 
-// PathInput is a forward path for one ticket starting at/after signal.
+// PathInput is a forward path for one ticket.
+// Bars must start STRICTLY AFTER the trigger bar (no same-bar lookahead).
 type PathInput struct {
 	TicketID  string
 	SessionID string
@@ -41,13 +42,19 @@ type PathInput struct {
 	Bars   []Bar
 	Entry  float64
 	Stop   float64
-	Target float64 // 0 = no target; use time exit only
+	Target float64
 
-	// CostR is estimated round-trip cost in R units (fees+slippage).
+	// CostR estimated round-trip in R units. Prefer CostPct/stop for honesty.
 	CostR float64
+	// CostPct round-trip fee+slip as fraction (e.g. 0.001 = 10 bps). If >0 and
+	// stop distance known, overrides CostR.
+	CostPct float64
+
+	// TimeExitBars: mechanical time stop (default 12 = 1h on 5m). 0 → DefaultHorizons.H1.
+	TimeExitBars int
 }
 
-// ComputeOutcome walks high/low path for MFE/MAE, stop/target order, MechanicalR, NetR.
+// ComputeOutcome walks high/low path after entry bar.
 func ComputeOutcome(in PathInput, hz HorizonBars) storage.CounterfactualOutcome {
 	o := storage.CounterfactualOutcome{
 		SchemaVersion: storage.CounterfactualSchemaVersion,
@@ -68,19 +75,34 @@ func ComputeOutcome(in PathInput, hz HorizonBars) storage.CounterfactualOutcome 
 	if risk <= 0 {
 		risk = in.Entry * 0.01
 	}
+	costR := in.CostR
+	if in.CostPct > 0 {
+		stopPct := risk / in.Entry
+		if stopPct > 0 {
+			costR = in.CostPct / stopPct
+		}
+	}
+	timeExit := in.TimeExitBars
+	if timeExit <= 0 {
+		timeExit = hz.H1
+	}
 
 	o.PathStartUnix = in.Bars[0].TS
 	o.PathEndUnix = in.Bars[len(in.Bars)-1].TS
 
 	mfe, mae := 0.0, 0.0
 	stopFirst, targetFirst := false, false
-	stopped, targeted := false, false
 	maxR := 0.0
 	mechanicalR := 0.0
 	exited := false
+	exitIdx := -1
+
+	limit := len(in.Bars)
+	if timeExit < limit {
+		// still walk full for MFE diagnosis, but mechanical time-exit at timeExit
+	}
 
 	for i, b := range in.Bars {
-		// favorable extreme this bar
 		fav := b.High
 		adv := b.Low
 		if in.Direction == types.CycleDirectionDown {
@@ -100,7 +122,7 @@ func ComputeOutcome(in PathInput, hz HorizonBars) storage.CounterfactualOutcome 
 			maxR = rMult
 		}
 
-		if !exited && in.Stop > 0 {
+		if !exited {
 			hitStop := false
 			if in.Direction == types.CycleDirectionUp && b.Low <= in.Stop {
 				hitStop = true
@@ -117,43 +139,35 @@ func ComputeOutcome(in PathInput, hz HorizonBars) storage.CounterfactualOutcome 
 					hitTarget = true
 				}
 			}
-			// same bar ambiguity: conservative — stop first if both
 			if hitStop && hitTarget {
-				stopFirst = true
-				stopped = true
-				exited = true
+				stopFirst, exited, exitIdx = true, true, i
 				mechanicalR = -1
 			} else if hitStop {
-				stopFirst = true
-				stopped = true
-				exited = true
+				stopFirst, exited, exitIdx = true, true, i
 				mechanicalR = -1
 			} else if hitTarget {
-				targetFirst = true
-				targeted = true
-				exited = true
+				targetFirst, exited, exitIdx = true, true, i
 				mechanicalR = sign * (in.Target - in.Entry) / risk
+			} else if i+1 >= timeExit {
+				// fixed horizon time exit at this bar close
+				exited, exitIdx = true, i
+				mechanicalR = sign * (b.Close - in.Entry) / risk
 			}
 		}
-		_ = i
 	}
 	if !exited {
-		// time exit at last close
-		last := in.Bars[len(in.Bars)-1].Close
-		mechanicalR = sign * (last - in.Entry) / risk
+		// path shorter than time exit — not finalized
+		last := in.Bars[len(in.Bars)-1]
+		mechanicalR = sign * (last.Close - in.Entry) / risk
+		exitIdx = len(in.Bars) - 1
 	}
-	_ = stopped
-	_ = targeted
 
 	setRet := func(bars int) *float64 {
-		if bars <= 0 || len(in.Bars) == 0 {
+		// honest: need strictly more than `bars` index available (bars is count from 0)
+		if bars < 0 || len(in.Bars) <= bars {
 			return nil
 		}
-		idx := bars
-		if idx >= len(in.Bars) {
-			idx = len(in.Bars) - 1
-		}
-		px := in.Bars[idx].Close
+		px := in.Bars[bars].Close
 		v := sign * (px - in.Entry) / in.Entry * 100
 		v = math.Round(v*10000) / 10000
 		return &v
@@ -169,8 +183,16 @@ func ComputeOutcome(in PathInput, hz HorizonBars) storage.CounterfactualOutcome 
 	o.TargetHitFirst = targetFirst
 	o.MaxRealizableR = math.Round(maxR*100) / 100
 	o.MechanicalR = math.Round(mechanicalR*100) / 100
-	o.NetR = math.Round((mechanicalR-in.CostR)*100) / 100
-	// complete if we have at least 5m horizon bars
-	o.Complete = len(in.Bars) > hz.M5
+	o.NetR = math.Round((mechanicalR-costR)*100) / 100
+
+	o.Complete5m = len(in.Bars) > hz.M5
+	o.Complete15m = len(in.Bars) > hz.M15
+	o.Complete1h = len(in.Bars) > hz.H1
+	o.Complete4h = len(in.Bars) > hz.H4
+	// Finalized: hit stop/target OR reached fixed time-exit bars
+	o.Finalized = stopFirst || targetFirst || (exitIdx+1 >= timeExit && len(in.Bars) >= timeExit)
+	// Complete (legacy field): finalized for selection alpha
+	o.Complete = o.Finalized
+	_ = types.DirectionLong // keep? remove
 	return o
 }

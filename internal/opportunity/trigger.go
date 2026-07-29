@@ -23,37 +23,74 @@ type TriggerResult struct {
 	Reasons       []string
 	Failures      []string
 
-	// EntryTriggeredAt is the unix seconds of the restart bar (candle timestamp).
+	// EntryTriggeredAt is unix seconds of the restart (trigger) bar open/time.
 	EntryTriggeredAt int64
+	// PullbackAt is unix seconds of the pullback extreme bar.
+	PullbackAt int64
+	// ImpulseAt is unix seconds of the impulse extreme bar.
+	ImpulseAt int64
 }
 
-// DetectPullbackTrigger implements leader_pullback trigger logic on closed 5m bars.
+// TriggerOpts constrains pattern timing relative to MarketPulse / session.
+type TriggerOpts struct {
+	// MinRestartAt: restart bar timestamp must be >= this (pulse/session time).
+	MinRestartAt int64
+	// MinPullbackAt: pullback extreme should be >= this when >0 (prefer in-session pullback).
+	MinPullbackAt int64
+	// RequireInSessionPullback: if true, fail when pullback extreme is before MinPullbackAt.
+	RequireInSessionPullback bool
+}
+
+// DetectPullbackTrigger implements leader_pullback on closed bars.
 //
-// Long: impulse up → pullback holds above impulse base → higher low → restart up.
-// Short: mirror with lower high.
-//
-// Returns OK=false with Failures when the pattern is not present (fail closed).
-func DetectPullbackTrigger(dir types.CycleDirection, candles []types.Candle) TriggerResult {
+// Long: impulse → pullback HL → restart. Short: mirror LH.
+// opts.MinRestartAt enforces "after MarketPulse", not a pre-event fossil pattern.
+func DetectPullbackTrigger(dir types.CycleDirection, candles []types.Candle, opts TriggerOpts) TriggerResult {
 	var r TriggerResult
 	if len(candles) < 25 {
 		r.Failures = append(r.Failures, "insufficient_trigger_bars")
 		return r
 	}
-
 	n := len(candles)
-	// work on closed series as provided by caller
 	switch dir {
 	case types.CycleDirectionDown:
-		return detectShortBounce(candles[:n])
+		r = detectShortBounce(candles[:n])
 	default:
-		return detectLongPullback(candles[:n])
+		r = detectLongPullback(candles[:n])
 	}
+	if !r.OK {
+		return r
+	}
+	// normalize timestamps (ms → s)
+	r.EntryTriggeredAt = normTS(r.EntryTriggeredAt)
+	r.PullbackAt = normTS(r.PullbackAt)
+	r.ImpulseAt = normTS(r.ImpulseAt)
+
+	if opts.MinRestartAt > 0 && r.EntryTriggeredAt < opts.MinRestartAt {
+		r.OK = false
+		r.Failures = append(r.Failures, "restart_before_pulse")
+		r.Reasons = nil
+		return r
+	}
+	if opts.RequireInSessionPullback && opts.MinPullbackAt > 0 && r.PullbackAt > 0 && r.PullbackAt < opts.MinPullbackAt {
+		r.OK = false
+		r.Failures = append(r.Failures, "pullback_before_session")
+		r.Reasons = nil
+		return r
+	}
+	return r
+}
+
+func normTS(ts int64) int64 {
+	if ts > 1_000_000_000_000 {
+		return ts / 1000
+	}
+	return ts
 }
 
 func detectLongPullback(c []types.Candle) TriggerResult {
 	var r TriggerResult
 	n := len(c)
-	// 1) impulse peak in [n-30, n-8]
 	lo, hi := n-30, n-8
 	if lo < 1 {
 		lo = 1
@@ -68,7 +105,6 @@ func detectLongPullback(c []types.Candle) TriggerResult {
 			peakIdx = i
 		}
 	}
-	// trough before peak
 	troughIdx := lo
 	for i := lo; i < peakIdx; i++ {
 		if c[i].Low <= c[troughIdx].Low {
@@ -87,8 +123,8 @@ func detectLongPullback(c []types.Candle) TriggerResult {
 		return r
 	}
 	r.Reasons = append(r.Reasons, fmt.Sprintf("impulse_up %.2f%%", impulsePct))
+	r.ImpulseAt = c[peakIdx].Timestamp
 
-	// 2) pullback low after peak (before last 2 bars)
 	if peakIdx >= n-3 {
 		r.Failures = append(r.Failures, "no_room_for_pullback")
 		return r
@@ -104,12 +140,10 @@ func detectLongPullback(c []types.Candle) TriggerResult {
 		r.Failures = append(r.Failures, "no_pullback")
 		return r
 	}
-	// must not break impulse base (structure)
 	if pbLow < trough*0.999 {
 		r.Failures = append(r.Failures, "pullback_broke_structure")
 		return r
 	}
-	// higher low vs trough
 	if pbLow > trough {
 		r.HigherLow = true
 		r.Reasons = append(r.Reasons, "higher_low")
@@ -117,7 +151,7 @@ func detectLongPullback(c []types.Candle) TriggerResult {
 		r.Failures = append(r.Failures, "no_higher_low")
 		return r
 	}
-
+	r.PullbackAt = c[pbLowIdx].Timestamp
 	r.PullbackDepthPct = (peak - pbLow) / peak * 100
 	if r.PullbackDepthPct < 0.3 {
 		r.Failures = append(r.Failures, "pullback_too_shallow_noise")
@@ -129,22 +163,18 @@ func detectLongPullback(c []types.Candle) TriggerResult {
 	}
 	r.Reasons = append(r.Reasons, fmt.Sprintf("pullback_depth %.2f%%", r.PullbackDepthPct))
 
-	// 3) restart: last bars recover from pullback low; close above pullback midpoint
 	last := c[n-1]
 	mid := (peak + pbLow) / 2
 	if last.Close <= pbLow {
 		r.Failures = append(r.Failures, "no_restart_still_on_low")
 		return r
 	}
-	// prefer close reclaiming mid or making a higher close vs prior
 	prior := c[n-2].Close
 	if last.Close < mid && last.Close <= prior {
 		r.Failures = append(r.Failures, "no_restart_up")
 		return r
 	}
 	r.Reasons = append(r.Reasons, "restart_up")
-
-	// not absurdly extended beyond peak on entry
 	if last.Close > peak*1.02 {
 		r.Failures = append(r.Failures, "too_extended_past_peak")
 		return r
@@ -175,14 +205,12 @@ func detectShortBounce(c []types.Candle) TriggerResult {
 		r.Failures = append(r.Failures, "window_too_small")
 		return r
 	}
-	// impulse trough
 	troughIdx := lo
 	for i := lo; i <= hi; i++ {
 		if c[i].Low <= c[troughIdx].Low {
 			troughIdx = i
 		}
 	}
-	// peak before trough (rally into dump)
 	peakIdx := lo
 	for i := lo; i < troughIdx; i++ {
 		if c[i].High >= c[peakIdx].High {
@@ -201,12 +229,12 @@ func detectShortBounce(c []types.Candle) TriggerResult {
 		return r
 	}
 	r.Reasons = append(r.Reasons, fmt.Sprintf("impulse_down %.2f%%", impulsePct))
+	r.ImpulseAt = c[troughIdx].Timestamp
 
 	if troughIdx >= n-3 {
 		r.Failures = append(r.Failures, "no_room_for_bounce")
 		return r
 	}
-	// bounce high after trough
 	bhIdx := troughIdx + 1
 	for i := troughIdx + 1; i < n-2; i++ {
 		if c[i].High >= c[bhIdx].High {
@@ -229,7 +257,7 @@ func detectShortBounce(c []types.Candle) TriggerResult {
 		r.Failures = append(r.Failures, "no_lower_high")
 		return r
 	}
-
+	r.PullbackAt = c[bhIdx].Timestamp
 	r.ReboundPct = (bounceHigh - trough) / trough * 100
 	if r.ReboundPct < 0.3 {
 		r.Failures = append(r.Failures, "bounce_too_shallow_noise")

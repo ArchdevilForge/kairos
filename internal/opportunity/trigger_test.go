@@ -51,7 +51,7 @@ func bar(c, h, l float64) types.Candle {
 }
 
 func TestDetectPullbackTrigger_Long(t *testing.T) {
-	r := DetectPullbackTrigger(types.CycleDirectionUp, synthLongPullback())
+	r := DetectPullbackTrigger(types.CycleDirectionUp, synthLongPullback(), TriggerOpts{})
 	if !r.OK {
 		t.Fatalf("want OK, failures=%v", r.Failures)
 	}
@@ -68,7 +68,7 @@ func TestDetectPullbackTrigger_NoImpulse(t *testing.T) {
 	for i := 0; i < 40; i++ {
 		flat = append(flat, bar(100, 100.1, 99.9))
 	}
-	r := DetectPullbackTrigger(types.CycleDirectionUp, flat)
+	r := DetectPullbackTrigger(types.CycleDirectionUp, flat, TriggerOpts{})
 	if r.OK {
 		t.Fatal("flat must fail")
 	}
@@ -89,11 +89,32 @@ func TestDetectPullbackTrigger_ShortMirror(t *testing.T) {
 		}
 		short = append(short, types.Candle{Open: cl, Close: cl, High: h, Low: l, Volume: 1000, Timestamp: c.Timestamp})
 	}
-	r := DetectPullbackTrigger(types.CycleDirectionDown, short)
+	r := DetectPullbackTrigger(types.CycleDirectionDown, short, TriggerOpts{})
 	if !r.OK {
 		t.Fatalf("short mirror failures=%v reasons=%v", r.Failures, r.Reasons)
 	}
 	if !r.LowerHigh {
 		t.Fatal("want lower high")
+	}
+}
+
+func TestDetectPullbackTrigger_RejectsPrePulseRestart(t *testing.T) {
+	c := synthLongPullback()
+	for i := range c {
+		c[i].Timestamp = int64(1000 + i*300)
+	}
+	// pulse after last bar → restart is before pulse
+	r := DetectPullbackTrigger(types.CycleDirectionUp, c, TriggerOpts{MinRestartAt: 99999})
+	if r.OK {
+		t.Fatal("pre-pulse restart must fail")
+	}
+	found := false
+	for _, f := range r.Failures {
+		if f == "restart_before_pulse" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("failures=%v", r.Failures)
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ArchdevilForge/kairos/internal/cycle"
 	"github.com/ArchdevilForge/kairos/internal/decision"
 	"github.com/ArchdevilForge/kairos/internal/playbook"
 	"github.com/ArchdevilForge/kairos/internal/ranker"
@@ -69,6 +70,7 @@ type Service struct {
 	cfg      Config
 	journal  *storage.Journal
 	registry *playbook.Registry
+	cycles   *cycle.Service
 	log      *slog.Logger
 
 	mu sync.Mutex
@@ -88,6 +90,7 @@ func NewService(journal *storage.Journal, cfg Config) *Service {
 		cfg:          cfg,
 		journal:      journal,
 		registry:     playbook.DefaultRegistry(),
+		cycles:       cycle.NewService(),
 		log:          slog.Default().With("component", "opportunity"),
 		openEventIDs: make(map[string]string),
 	}

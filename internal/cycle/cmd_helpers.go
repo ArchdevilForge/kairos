@@ -14,8 +14,8 @@ func ClassifyOHLCV(tf string, role types.TimeframeRole, closes, highs, lows, vol
 	})
 }
 
-// MapFromOHLCV builds a CycleMap from multi-TF series (fresh classifier, default policy).
+// MapFromOHLCV builds a CycleMap without hysteresis (CLI/debug).
+// Production enrichment must use Service.Map so transition policy sticks.
 func MapFromOHLCV(symbol string, asOf int64, legacy types.MarketPhase, series []Series) types.CycleMap {
-	c := NewClassifier(DefaultTransitionPolicy())
-	return c.ClassifyMap(symbol, asOf, legacy, series)
+	return MapStateless(symbol, asOf, legacy, series)
 }

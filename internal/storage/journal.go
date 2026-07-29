@@ -123,11 +123,18 @@ type CounterfactualOutcome struct {
 
 	// MaxRealizableR = best MFE in R units (path diagnosis only).
 	MaxRealizableR float64 `json:"max_realizable_r"`
-	// MechanicalR = result under stop/target/time-exit rules (realized path).
+	// MechanicalR = result under stop/target/fixed-time-exit rules.
 	MechanicalR float64 `json:"mechanical_r"`
 	// NetR = MechanicalR after estimated costs (fees+slippage in R).
 	NetR float64 `json:"net_r"`
-	// Complete is true when forward path covers at least the 5m horizon.
+
+	Complete5m  bool `json:"complete_5m"`
+	Complete15m bool `json:"complete_15m"`
+	Complete1h  bool `json:"complete_1h"`
+	Complete4h  bool `json:"complete_4h"`
+	// Finalized: stop/target hit or fixed 1h time-exit reached — use for Selection Alpha.
+	Finalized bool `json:"finalized"`
+	// Complete is an alias of Finalized for older readers.
 	Complete bool `json:"complete"`
 
 	PathStartUnix int64 `json:"path_start_unix,omitempty"`

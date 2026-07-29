@@ -26,18 +26,24 @@ type EnrichConfig struct {
 	// AssumeSpreadOK is test/shadow-only when no L2 feed exists.
 	// Production must leave false (fail closed on unmeasured spread).
 	AssumeSpreadOK bool
+	// WatchInterval re-checks for post-pulse pullback until SessionTTL.
+	WatchInterval time.Duration
+	// RequireInSessionPullback: pullback extreme must also be after pulse.
+	RequireInSessionPullback bool
 }
 
 // DefaultEnrichConfig returns production fail-closed defaults.
 func DefaultEnrichConfig() EnrichConfig {
 	return EnrichConfig{
-		Timeframes:     []string{"1d", "4h", "15m", "5m"},
-		BarLimit:       90,
-		MaxSymbols:     3,
-		MarketSymbol:   "BTC/USDT:USDT",
-		Timeout:        20 * time.Second,
-		MinQuoteVol:    1_000_000,
-		AssumeSpreadOK: false,
+		Timeframes:               []string{"1d", "4h", "15m", "5m"},
+		BarLimit:                 90,
+		MaxSymbols:               3,
+		MarketSymbol:             "BTC/USDT:USDT",
+		Timeout:                  20 * time.Second,
+		MinQuoteVol:              1_000_000,
+		AssumeSpreadOK:           false,
+		WatchInterval:            5 * time.Minute,
+		RequireInSessionPullback: false, // restart-after-pulse is hard; full in-session PB optional
 	}
 }
 
@@ -125,6 +131,9 @@ func (s *Service) EnrichAndEvaluate(ctx context.Context, req EnrichRequest) (Eva
 	fetchCtx, cancel := context.WithTimeout(ctx, cfg.Timeout)
 	defer cancel()
 
+	enrichCycles = s.cycles // hysteresis across symbols/calls on this service
+	defer func() { enrichCycles = nil }()
+
 	marketCycle, err := buildSymbolCycle(fetchCtx, req.Fetcher, cfg.MarketSymbol, cfg)
 	if err != nil {
 		s.log.Warn("market cycle fetch failed", "error", err, "symbol", cfg.MarketSymbol)
@@ -160,7 +169,15 @@ func (s *Service) EnrichAndEvaluate(ctx context.Context, req EnrichRequest) (Eva
 		// closed bars only
 		candles5m = candles5m[:len(candles5m)-1]
 
-		trig := DetectPullbackTrigger(dir, candles5m)
+		pulseAt := int64(req.Event.Timestamp)
+		if pulseAt > 1_000_000_000_000 {
+			pulseAt = pulseAt / 1000
+		}
+		trig := DetectPullbackTrigger(dir, candles5m, TriggerOpts{
+			MinRestartAt:              pulseAt,
+			MinPullbackAt:             pulseAt,
+			RequireInSessionPullback: cfg.RequireInSessionPullback,
+		})
 		if !trig.OK {
 			s.log.Info("pullback trigger not matched", "symbol", sym, "failures", trig.Failures)
 			continue
@@ -282,8 +299,20 @@ func buildSymbolCycle(ctx context.Context, fetch OHLCVFetcher, symbol string, cf
 			Volumes:   vols,
 		})
 	}
-	return cycle.MapFromOHLCV(symbol, time.Now().Unix(), types.MarketPhaseSummer, series), nil
+	// asOf = last closed 5m-equivalent: use wall-less last bar index time if present on candles —
+	// Series has no ts; pass 0 rather than time.Now() (replay-honest).
+	// legacy climate unknown — do not invent summer.
+	var legacy types.MarketPhase
+	if s := findServiceCycles(); s != nil {
+		return s.Map(symbol, 0, legacy, series), nil
+	}
+	return cycle.MapStateless(symbol, 0, legacy, series), nil
 }
+
+// enrichCycles is set by Service methods; buildSymbolCycle is package-level for tests.
+var enrichCycles *cycle.Service
+
+func findServiceCycles() *cycle.Service { return enrichCycles }
 
 func roleForTimeframe(tf string) types.TimeframeRole {
 	switch tf {

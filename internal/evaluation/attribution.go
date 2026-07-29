@@ -150,8 +150,11 @@ func statsOf(rows []TicketRow) GroupStats {
 
 func fold(g GroupStats, r TicketRow) GroupStats {
 	g.N++
-	if !r.HasOut || !r.Outcome.Complete {
-		return g
+	if !r.HasOut || !r.Outcome.Finalized {
+		// fall back to Complete for older journal rows
+		if !r.HasOut || !r.Outcome.Complete {
+			return g
+		}
 	}
 	g.NComplete++
 	g.MeanNetR += r.Outcome.NetR

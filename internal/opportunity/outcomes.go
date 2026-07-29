@@ -16,8 +16,8 @@ type OutcomeTrackConfig struct {
 	MaxAge   time.Duration
 	BarLimit int
 	Timeout  time.Duration
-	// CostR estimated round-trip cost in R (fees+slippage). Default 0.05.
-	CostR float64
+	// CostPct round-trip fee+slip as fraction (e.g. 0.001 = 10bps).
+	CostPct float64
 }
 
 // DefaultOutcomeTrackConfig returns stage-1 defaults.
@@ -27,7 +27,7 @@ func DefaultOutcomeTrackConfig() OutcomeTrackConfig {
 		MaxAge:   6 * time.Hour,
 		BarLimit: 120,
 		Timeout:  20 * time.Second,
-		CostR:    0.05,
+		CostPct:  0.001, // ~10 bps round-trip placeholder; override from real fees
 	}
 }
 
@@ -89,15 +89,14 @@ func (s *Service) TrackOutcomes(ctx context.Context, fetch OHLCVFetcher, cfg Out
 			candles = candles[:len(candles)-1]
 		}
 
-		// keep bars with timestamp >= startUnix (forward path from signal)
+		// Forward path STRICTLY after trigger bar close (no same-bar lookahead).
 		var bars []evaluation.Bar
 		for _, c := range candles {
 			ts := c.Timestamp
-			// exchange may use seconds already
-			if ts > 1_000_000_000_000 { // ms
+			if ts > 1_000_000_000_000 {
 				ts = ts / 1000
 			}
-			if ts >= startUnix {
+			if ts > startUnix {
 				bars = append(bars, evaluation.Bar{
 					TS: ts, Open: c.Open, High: c.High, Low: c.Low, Close: c.Close,
 				})
@@ -140,16 +139,17 @@ func (s *Service) TrackOutcomes(ctx context.Context, fetch OHLCVFetcher, cfg Out
 		}
 
 		o := evaluation.ComputeOutcome(evaluation.PathInput{
-			TicketID:  t.ID,
-			SessionID: t.SessionID,
-			Symbol:    t.Symbol,
-			Direction: t.Direction,
-			Decision:  dec,
-			Bars:      bars,
-			Entry:     entry,
-			Stop:      stop,
-			Target:    target,
-			CostR:     cfg.CostR,
+			TicketID:     t.ID,
+			SessionID:    t.SessionID,
+			Symbol:       t.Symbol,
+			Direction:    t.Direction,
+			Decision:     dec,
+			Bars:         bars,
+			Entry:        entry,
+			Stop:         stop,
+			Target:       target,
+			CostPct:      cfg.CostPct,
+			TimeExitBars: hz.H1, // fixed 1h mechanical horizon on 5m
 		}, hz)
 		o.AsOfUnix = nowUnix
 
