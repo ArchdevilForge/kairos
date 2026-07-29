@@ -14,6 +14,25 @@ func (f ohlcvFunc) FetchOHLCV(ctx context.Context, symbol, timeframe string, lim
 	return f(ctx, symbol, timeframe, limit, beforeMs)
 }
 
+func TestForwardBars_StartsAtNextBarOpen(t *testing.T) {
+	triggerClose := int64(1000) // trigger bar 700–1000 closed at 1000
+	candles := []types.Candle{
+		{Timestamp: 700, Open: 99, High: 100, Low: 98, Close: 100},   // trigger bar open — exclude
+		{Timestamp: 1000, Open: 100, High: 102, Low: 99, Close: 101}, // first post-entry — include
+		{Timestamp: 1300, Open: 101, High: 103, Low: 100, Close: 102},
+	}
+	bars := forwardBars(candles, triggerClose)
+	if len(bars) != 2 {
+		t.Fatalf("want 2 forward bars, got %d", len(bars))
+	}
+	if bars[0].TS != triggerClose {
+		t.Fatalf("first forward bar open must equal trigger close: %d", bars[0].TS)
+	}
+	if bars[0].High != 102 {
+		t.Fatalf("first bar high=%v", bars[0].High)
+	}
+}
+
 func TestTrackOutcomes_UsesSignalTimeAndHighLow(t *testing.T) {
 	j := testJournal(t)
 	s := NewService(j, DefaultConfig())

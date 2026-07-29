@@ -23,7 +23,8 @@ type TriggerResult struct {
 	Reasons       []string
 	Failures      []string
 
-	// EntryTriggeredAt is unix seconds of the restart (trigger) bar open/time.
+	// EntryTriggeredAt is unix seconds of the restart bar *close* (entry clock).
+	// Exchange candle timestamps are bar open; close = open + timeframe.
 	EntryTriggeredAt int64
 	// PullbackAt is unix seconds of the pullback extreme bar.
 	PullbackAt int64

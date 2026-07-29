@@ -89,19 +89,10 @@ func (s *Service) TrackOutcomes(ctx context.Context, fetch OHLCVFetcher, cfg Out
 			candles = candles[:len(candles)-1]
 		}
 
-		// Forward path STRICTLY after trigger bar close (no same-bar lookahead).
-		var bars []evaluation.Bar
-		for _, c := range candles {
-			ts := c.Timestamp
-			if ts > 1_000_000_000_000 {
-				ts = ts / 1000
-			}
-			if ts > startUnix {
-				bars = append(bars, evaluation.Bar{
-					TS: ts, Open: c.Open, High: c.High, Low: c.Low, Close: c.Close,
-				})
-			}
-		}
+		// EntryTriggeredAt = trigger bar *close* time. Next bar's *open* equals that
+		// close time, so include ts >= entryAt (not >) — no same-bar lookahead because
+		// the trigger bar itself has open < entryAt and is excluded.
+		bars := forwardBars(candles, startUnix)
 		if len(bars) == 0 {
 			// no forward bars yet
 			continue
@@ -201,6 +192,24 @@ func abs(v float64) float64 {
 		return -v
 	}
 	return v
+}
+
+// forwardBars keeps closed OHLCV bars whose open time is >= entryAt.
+// entryAt is the trigger bar close time; the first post-entry bar opens then.
+func forwardBars(candles []types.Candle, entryAt int64) []evaluation.Bar {
+	out := make([]evaluation.Bar, 0, len(candles))
+	for _, c := range candles {
+		ts := c.Timestamp
+		if ts > 1_000_000_000_000 {
+			ts = ts / 1000
+		}
+		if ts >= entryAt {
+			out = append(out, evaluation.Bar{
+				TS: ts, Open: c.Open, High: c.High, Low: c.Low, Close: c.Close,
+			})
+		}
+	}
+	return out
 }
 
 var _ = storage.CounterfactualSchemaVersion
