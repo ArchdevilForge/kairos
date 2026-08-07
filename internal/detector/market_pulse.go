@@ -1101,12 +1101,20 @@ func (d *MarketPulseDetector) emitLocked(
 	}
 
 	leaders := make([]string, 0, len(snap.Leaders))
+	leaderDetail := make([]map[string]any, 0, len(snap.Leaders))
 	for _, m := range snap.Leaders {
 		leaders = append(leaders, m.Symbol)
+		leaderDetail = append(leaderDetail, map[string]any{
+			"symbol": m.Symbol, "return_pct": m.ReturnPct, "relative_pct": m.RelativePct, "z_score": m.ZScore,
+		})
 	}
 	laggards := make([]string, 0, len(snap.Laggards))
+	laggardDetail := make([]map[string]any, 0, len(snap.Laggards))
 	for _, m := range snap.Laggards {
 		laggards = append(laggards, m.Symbol)
+		laggardDetail = append(laggardDetail, map[string]any{
+			"symbol": m.Symbol, "return_pct": m.ReturnPct, "relative_pct": m.RelativePct, "z_score": m.ZScore,
+		})
 	}
 
 	data := map[string]any{
@@ -1131,6 +1139,8 @@ func (d *MarketPulseDetector) emitLocked(
 		"valid_z_symbols":        snap.ValidZSymbols,
 		"leaders":                leaders,
 		"laggards":               laggards,
+		"leaders_detail":         leaderDetail,
+		"laggards_detail":        laggardDetail,
 		"shadow_mode":            d.cfg.ShadowMode,
 	}
 	if snap.BTCReturn60s != nil {

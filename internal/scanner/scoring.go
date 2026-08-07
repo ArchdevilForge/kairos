@@ -57,27 +57,34 @@ func (s *MarketScanner) scoreCandidate(
 		score += velComponent
 		cand.ScoreReasons = append(cand.ScoreReasons, fmt.Sprintf("24h change component=%.2f", velComponent))
 
-		// 3. Relative strength bonus (up to 2 pts, long-only)
-		if *ticker.ChangePct > 0 {
-			rsWeight := getWeight(weights, "relativeStrength", 2.0)
-			rsComponent := math.Min(rsWeight, *ticker.ChangePct/8.0*rsWeight)
-			score += math.Max(0, rsComponent)
-			if rsComponent > 0 {
-				cand.ScoreReasons = append(cand.ScoreReasons, fmt.Sprintf("relative strength component=%.2f", rsComponent))
+		// 3. Relative move bonus (symmetric): |change| ranks leaders and laggards.
+		// ponytail: dual-sided; directional playbooks pick long vs short later.
+		rsWeight := getWeight(weights, "relativeStrength", 2.0)
+		rsComponent := math.Min(rsWeight, math.Abs(*ticker.ChangePct)/8.0*rsWeight)
+		score += math.Max(0, rsComponent)
+		if rsComponent > 0 {
+			side := "strength"
+			if *ticker.ChangePct < 0 {
+				side = "weakness"
 			}
+			cand.ScoreReasons = append(cand.ScoreReasons, fmt.Sprintf("relative %s component=%.2f", side, rsComponent))
 		}
 	} else {
 		cand.Warnings = append(cand.Warnings, "missing 24h percentage change")
 	}
 
-	// BTC relative strength vs alt 24h change (up to 1.5 pts)
+	// BTC relative edge vs alt 24h change (up to 1.5 pts, symmetric |Δ|)
 	if btcChange24h != nil && ticker.ChangePct != nil {
 		rs := *ticker.ChangePct - *btcChange24h
 		rsWeight := getWeight(weights, "btcRelativeStrength", 1.5)
-		rsComponent := math.Min(rsWeight, math.Max(0, rs)/5.0*rsWeight)
+		rsComponent := math.Min(rsWeight, math.Abs(rs)/5.0*rsWeight)
 		if rsComponent > 0 {
 			score += rsComponent
-			cand.ScoreReasons = append(cand.ScoreReasons, fmt.Sprintf("btc relative strength component=%.2f", rsComponent))
+			label := "btc relative strength"
+			if rs < 0 {
+				label = "btc relative weakness"
+			}
+			cand.ScoreReasons = append(cand.ScoreReasons, fmt.Sprintf("%s component=%.2f", label, rsComponent))
 		}
 	}
 

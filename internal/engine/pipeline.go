@@ -32,6 +32,7 @@ import (
 	"github.com/ArchdevilForge/kairos/internal/detector"
 	"github.com/ArchdevilForge/kairos/internal/exchange"
 	"github.com/ArchdevilForge/kairos/internal/notify"
+	"github.com/ArchdevilForge/kairos/internal/opportunity"
 	"github.com/ArchdevilForge/kairos/internal/storage"
 	"github.com/ArchdevilForge/kairos/internal/types"
 	"github.com/ArchdevilForge/kairos/internal/utils"
@@ -81,6 +82,11 @@ type Pipeline struct {
 
 	// Market pulse event log (JSONL; works in shadow mode).
 	mpStore *storage.MarketPulseStore
+
+	// Opportunity desk: one session per market pulse event (tickets need enrichment).
+	opportunity *opportunity.Service
+	// oppCtx cancelled when pipeline stops — watch/enrich goroutines should honor it.
+	oppCtx context.Context
 
 	// Delivery gating state. dedupLast is attempt-level per event key
 	// ("symbol__event_type[__direction]") and commits on every attempt so a
@@ -225,6 +231,22 @@ func NewPipeline(cfg *types.Config, tg *notify.TelegramClient) *Pipeline {
 		}
 	}
 
+	// Decision desk journal — only when opportunity.enabled (default false in config).
+	if cfg.Opportunity.Enabled {
+		if journal, err := storage.NewJournal(cfg.Storage); err != nil {
+			log.Warn("trading journal disabled", "error", err)
+		} else {
+			// Ticket sizing (riskBudgets/maxLeverage) comes from config
+			// (Canonical §9), never code constants.
+			ocfg := opportunity.ConfigFromTypes(cfg.Opportunity)
+			p.opportunity = opportunity.NewService(journal, ocfg)
+			log.Info("trading journal ready",
+				"path", journal.Path(),
+				"shadow", cfg.Opportunity.ShadowMode,
+				"assume_spread_ok", cfg.Opportunity.AssumeSpreadOK)
+		}
+	}
+
 	return p
 }
 
@@ -331,6 +353,7 @@ func (p *Pipeline) Start(ctx context.Context) error {
 
 	// 5. Launch goroutines via errgroup.
 	g, gCtx := errgroup.WithContext(ctx)
+	p.oppCtx = gCtx
 
 	// 5a. WS subscription loop per exchange (restartable on universe refresh).
 	for _, es := range p.exchangeStates {
@@ -406,6 +429,29 @@ func (p *Pipeline) Start(ctx context.Context) error {
 		return nil
 	})
 
+	// 5i2. Decision-desk counterfactual outcome refresh (5m path MFE/MAE).
+	if p.opportunity != nil {
+		g.Go(func() error {
+			name := p.primaryExchange()
+			ex := p.exchanges[name]
+			if ex == nil {
+				for _, e := range p.exchanges {
+					ex = e
+					break
+				}
+			}
+			if ex == nil {
+				return nil
+			}
+			ocfg := opportunity.DefaultOutcomeTrackConfig()
+			if p.cfg.Opportunity.OutcomeMaxAgeHours > 0 {
+				ocfg.MaxAge = time.Duration(p.cfg.Opportunity.OutcomeMaxAgeHours * float64(time.Hour))
+			}
+			p.opportunity.RunOutcomeLoop(gCtx, ex, ocfg)
+			return nil
+		})
+	}
+
 	// 5j. Market pulse evaluation loop + 60s calibration snapshot writer.
 	if p.marketPulseDet != nil {
 		g.Go(func() error {
@@ -474,6 +520,53 @@ func (p *Pipeline) primaryExchange() string {
 		return p.cfg.Exchanges.Primary
 	}
 	return p.cfg.Exchange
+}
+
+// enrichOpportunityAsync fetches multi-TF OHLCV and attaches up to 3 tickets.
+// Runs in a goroutine so the aggregator never blocks on REST.
+func (p *Pipeline) enrichOpportunityAsync(evt types.AnomalyEvent) {
+	if p.opportunity == nil {
+		return
+	}
+	name := p.primaryExchange()
+	ex := p.exchanges[name]
+	if ex == nil {
+		// fall back to any live exchange
+		for _, e := range p.exchanges {
+			ex = e
+			break
+		}
+	}
+	if ex == nil {
+		return
+	}
+	// Use pipeline oppCtx when set (Start); else Background for tests.
+	base := p.oppCtx
+	if base == nil {
+		base = context.Background()
+	}
+	go func(evt types.AnomalyEvent, fetch opportunity.OHLCVFetcher, base context.Context) {
+		ecfg := opportunity.DefaultEnrichConfig()
+		ecfg.AssumeSpreadOK = p.cfg.Opportunity.AssumeSpreadOK
+		ocfg := opportunity.DefaultOutcomeTrackConfig()
+		if p.cfg.Opportunity.OutcomeMaxAgeHours > 0 {
+			ocfg.MaxAge = time.Duration(p.cfg.Opportunity.OutcomeMaxAgeHours * float64(time.Hour))
+		}
+		// Watch loop respects pipeline cancel + session TTL inside WatchAndEnrich.
+		p.opportunity.WatchAndEnrich(base, opportunity.EnrichRequest{
+			Event:   evt,
+			Fetcher: fetch,
+			Config:  ecfg,
+		})
+		// seed/refresh outcomes after watch returns (tickets or expiry)
+		ctx, cancel := context.WithTimeout(base, 25*time.Second)
+		defer cancel()
+		if n, err := p.opportunity.TrackOutcomes(ctx, fetch, ocfg); err != nil {
+			p.log.Warn("outcome seed failed", "error", err)
+		} else if n > 0 {
+			p.log.Info("outcomes seeded", "count", n)
+		}
+	}(evt, ex, base)
 }
 
 // coinglassSymbols picks the universe used for CoinGlass per-symbol polling:
@@ -955,6 +1048,15 @@ func (p *Pipeline) eventAggregator(
 				}
 				if err != nil {
 					p.log.Warn("market pulse store failed", "error", err, "event", evt.EventType)
+				}
+			}
+
+			// One OpportunitySession per pulse event; async OHLCV enrichment may attach tickets.
+			if isMarketPulseEvent(evt.EventType) && p.opportunity != nil {
+				if _, err := p.opportunity.HandlePulseEvent(evt); err != nil {
+					p.log.Warn("opportunity session failed", "error", err, "event", evt.EventType)
+				} else {
+					p.enrichOpportunityAsync(evt)
 				}
 			}
 
