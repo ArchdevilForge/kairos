@@ -291,3 +291,44 @@ func (m *mockPipelineExchange) FetchOHLCV(context.Context, string, string, int, 
 	return nil, nil
 }
 func (m *mockPipelineExchange) Close() error { return nil }
+
+func TestEventAggregator_DuplicatePulseEnrichesOnce(t *testing.T) {
+	cfg := &types.Config{
+		Opportunity: types.OpportunityConfig{Enabled: true},
+		Storage:     types.StorageConfig{DatabasePath: filepath.Join(t.TempDir(), "kairos.db")},
+	}
+	p := NewPipeline(cfg, nil)
+	if p.opportunity == nil {
+		t.Fatal("opportunity service must be wired when enabled")
+	}
+	calls := 0
+	old := enrichPulse
+	enrichPulse = func(_ *Pipeline, _ types.AnomalyEvent) { calls++ }
+	defer func() { enrichPulse = old }()
+
+	delivery := make(chan types.AnomalyEvent, 2)
+	src := make(chan types.AnomalyEvent, 2)
+	evt := types.AnomalyEvent{
+		EventType: "market_impulse",
+		EventID:   "e-dup",
+		Timestamp: float64(time.Now().Unix()),
+		Data:      map[string]any{"direction": "up", "state_to": "IMPULSE_UP", "leaders": []string{"SOL/USDT:USDT"}},
+	}
+	src <- evt
+	src <- evt // same EventID again — session already exists
+	close(src)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go p.eventAggregator(ctx, []eventSource{{ch: src, origin: "okx"}}, delivery)
+	for i := 0; i < 2; i++ {
+		select {
+		case <-delivery:
+		case <-time.After(2 * time.Second):
+			t.Fatal("timeout waiting for delivery")
+		}
+	}
+	if calls != 1 {
+		t.Fatalf("duplicate pulse must enrich exactly once, got %d", calls)
+	}
+}
