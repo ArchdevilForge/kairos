@@ -93,3 +93,21 @@ func TestRecordDecision_ReasonCodes(t *testing.T) {
 		t.Fatalf("%+v", r)
 	}
 }
+
+func TestReasonCodeHelpers(t *testing.T) {
+	if !types.IsValidReasonCode(types.ReasonTooExtended) {
+		t.Fatal("too_extended must be valid")
+	}
+	if types.IsValidReasonCode("made_up") {
+		t.Fatal("made_up must be invalid")
+	}
+	valid := types.ValidReasonCodes()
+	if len(valid) != 12 {
+		t.Fatalf("want 12 canonical codes, got %d: %v", len(valid), valid)
+	}
+	for _, c := range valid {
+		if !types.IsValidReasonCode(c) {
+			t.Fatalf("code %q from ValidReasonCodes must validate", c)
+		}
+	}
+}

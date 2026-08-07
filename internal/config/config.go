@@ -273,6 +273,16 @@ func setDefaults(v *viper.Viper) {
 		"maxTicketsPerSession": 3,
 		"assumeSpreadOK":       false,
 		"outcomeMaxAgeHours":   6,
+		// Canonical §9: risk sizing is config-owned, not code constants.
+		"riskBudgets": map[string]any{
+			"alignedSpring": 0.75,
+			"alignedSummer": 0.75,
+			"alignedAutumn": 0.40,
+			"counterTrend":  0.25,
+			"mixedContext":  0.0,
+			"noTrade":       0.0,
+		},
+		"maxLeverage": 5,
 	})
 
 	// MarketPulse defaults: disabled unless explicitly enabled. Shadow mode is

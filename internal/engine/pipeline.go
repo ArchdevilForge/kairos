@@ -236,10 +236,9 @@ func NewPipeline(cfg *types.Config, tg *notify.TelegramClient) *Pipeline {
 		if journal, err := storage.NewJournal(cfg.Storage); err != nil {
 			log.Warn("trading journal disabled", "error", err)
 		} else {
-			ocfg := opportunity.DefaultConfig()
-			if cfg.Opportunity.MaxTicketsPerSession > 0 {
-				ocfg.MaxTicketsPerSession = cfg.Opportunity.MaxTicketsPerSession
-			}
+			// Ticket sizing (riskBudgets/maxLeverage) comes from config
+			// (Canonical §9), never code constants.
+			ocfg := opportunity.ConfigFromTypes(cfg.Opportunity)
 			p.opportunity = opportunity.NewService(journal, ocfg)
 			log.Info("trading journal ready",
 				"path", journal.Path(),

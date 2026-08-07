@@ -247,6 +247,11 @@ type OpportunityConfig struct {
 	AssumeSpreadOK bool `mapstructure:"assumeSpreadOK" json:"assumeSpreadOK" yaml:"assumeSpreadOK"`
 	// OutcomeMaxAgeHours caps forward tracking (default 6).
 	OutcomeMaxAgeHours float64 `mapstructure:"outcomeMaxAgeHours" json:"outcomeMaxAgeHours" yaml:"outcomeMaxAgeHours"`
+	// RiskBudgets maps risk template (camelCase key) → risk_budget_pct of
+	// equity. Canonical §9: numeric pct lives in config, not code constants.
+	RiskBudgets map[string]float64 `mapstructure:"riskBudgets" json:"riskBudgets" yaml:"riskBudgets"`
+	// MaxLeverage caps leverage on decision tickets (0 → 5 fallback).
+	MaxLeverage float64 `mapstructure:"maxLeverage" json:"maxLeverage" yaml:"maxLeverage"`
 }
 
 // TelegramConfig holds Telegram delivery settings.

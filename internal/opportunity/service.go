@@ -22,15 +22,67 @@ type Config struct {
 	SessionTTLSeconds    int
 	Equity               float64 // optional sizing reference
 	Enabled              bool
+	// RiskBudgets maps risk template → risk_budget_pct of equity. Source of
+	// truth is config (Canonical §9: numeric pct from config, not code constants).
+	RiskBudgets decision.RiskBudgets
+	// MaxLeverage caps leverage on tickets (0 → BuildTicket default 5).
+	MaxLeverage float64
 }
 
-// DefaultConfig returns stage-1 defaults.
+// DefaultConfig returns stage-1 defaults (ticket sizing falls back to the
+// conservative decision defaults; config-driven paths override via ConfigFromTypes).
 func DefaultConfig() Config {
 	return Config{
 		MaxTicketsPerSession: 3,
 		SessionTTLSeconds:    3600,
 		Enabled:              true,
+		RiskBudgets:          decision.DefaultRiskBudgets(),
+		MaxLeverage:          5,
 	}
+}
+
+// riskBudgetKeys maps config-layer camelCase keys to risk template IDs.
+var riskBudgetKeys = map[string]string{
+	"alignedspring": types.RiskTemplateAlignedSpring,
+	"alignedsummer": types.RiskTemplateAlignedSummer,
+	"alignedautumn": types.RiskTemplateAlignedAutumn,
+	"countertrend":  types.RiskTemplateCounterTrend,
+	"mixedcontext":  types.RiskTemplateMixedContext,
+	"notrade":       types.RiskTemplateNoTrade,
+	// snake template IDs accepted as aliases
+	"aligned_spring": types.RiskTemplateAlignedSpring,
+	"aligned_summer": types.RiskTemplateAlignedSummer,
+	"aligned_autumn": types.RiskTemplateAlignedAutumn,
+	"counter_trend":  types.RiskTemplateCounterTrend,
+	"mixed_context":  types.RiskTemplateMixedContext,
+	"no_trade":       types.RiskTemplateNoTrade,
+}
+
+// riskBudgetsFromConfig converts config-layer riskBudgets (camelCase keys;
+// keys are matched case-insensitively so viper lowercasing cannot break it)
+// to template-keyed budgets; templates missing from config keep decision defaults.
+func riskBudgetsFromConfig(m map[string]float64) decision.RiskBudgets {
+	out := decision.DefaultRiskBudgets()
+	for k, v := range m {
+		if tmpl, ok := riskBudgetKeys[strings.ToLower(k)]; ok {
+			out[tmpl] = v
+		}
+	}
+	return out
+}
+
+// ConfigFromTypes maps the config-layer opportunity section onto the runtime
+// Config so risk sizing comes from config (Canonical §9), not code constants.
+func ConfigFromTypes(c types.OpportunityConfig) Config {
+	cfg := DefaultConfig()
+	if c.MaxTicketsPerSession > 0 {
+		cfg.MaxTicketsPerSession = c.MaxTicketsPerSession
+	}
+	cfg.RiskBudgets = riskBudgetsFromConfig(c.RiskBudgets)
+	if c.MaxLeverage > 0 {
+		cfg.MaxLeverage = c.MaxLeverage
+	}
+	return cfg
 }
 
 // EvaluateRequest is a full offline/analysis path (tests + enricher).
@@ -301,6 +353,8 @@ func (s *Service) evaluate(req EvaluateRequest, attachExisting bool) (EvaluateRe
 			EntryPrice:       req.EntryPrice[cand.Symbol],
 			StopPrice:        req.StopPrice[cand.Symbol],
 			Equity:           s.cfg.Equity,
+			Budgets:          s.cfg.RiskBudgets,
+			MaxLeverage:      s.cfg.MaxLeverage,
 			Trigger:          "leader_pullback restart",
 			CreatedAt:        now,
 			SignalAt:         signalAt,
@@ -335,7 +389,17 @@ func (s *Service) evaluate(req EvaluateRequest, attachExisting bool) (EvaluateRe
 }
 
 // ApplyHumanDecision records accept/wait/reject/missed and updates ticket status.
+// Canonical §8: reason codes are required — at least one valid code or the
+// decision is rejected, so Accepted vs Rejected EV attribution stays clean.
 func (s *Service) ApplyHumanDecision(ticketID string, d types.HumanDecision, reasons []string, note string) error {
+	if len(reasons) == 0 {
+		return fmt.Errorf("human decision requires at least one reason code (canonical: reason codes are required)")
+	}
+	for _, c := range reasons {
+		if !types.IsValidReasonCode(c) {
+			return fmt.Errorf("unknown reason code %q (valid: %v)", c, types.ValidReasonCodes())
+		}
+	}
 	if s == nil || s.journal == nil {
 		return fmt.Errorf("journal not configured")
 	}

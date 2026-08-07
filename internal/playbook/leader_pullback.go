@@ -191,7 +191,7 @@ func (p *LeaderPullback) MatchInput(in LeaderPullbackInput) types.PlaybookMatch 
 		if counter {
 			tradeClass = types.TradeClassCounterTrendLong
 			template = types.RiskTemplateCounterTrend
-			grade = minGrade(grade, types.TicketGradeB)
+			grade = minGrade(grade, types.TicketGradeC)
 			reasons = append(reasons, "counter_trend_long vs context")
 		} else {
 			tradeClass = types.TradeClassAlignedLong
@@ -242,7 +242,7 @@ func (p *LeaderPullback) MatchInput(in LeaderPullbackInput) types.PlaybookMatch 
 		if counter {
 			tradeClass = types.TradeClassCounterTrendShort
 			template = types.RiskTemplateCounterTrend
-			grade = minGrade(grade, types.TicketGradeB)
+			grade = minGrade(grade, types.TicketGradeC)
 			reasons = append(reasons, "counter_trend_short vs context")
 		} else {
 			tradeClass = types.TradeClassAlignedShort
@@ -274,11 +274,8 @@ func (p *LeaderPullback) MatchInput(in LeaderPullbackInput) types.PlaybookMatch 
 	}
 
 	if counter {
-		grade = minGrade(grade, types.TicketGradeB)
-		// extra warnings → C
-		if len(warnings) >= 2 {
-			grade = types.TicketGradeC
-		}
+		// Canonical §6: C = "Counter-trend only" — counter-trend is never above C.
+		grade = minGrade(grade, types.TicketGradeC)
 	}
 
 	return types.PlaybookMatch{

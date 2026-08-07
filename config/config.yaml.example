@@ -284,3 +284,14 @@ opportunity:
   maxTicketsPerSession: 3
   assumeSpreadOK: false
   outcomeMaxAgeHours: 6
+  # Risk sizing (Canonical §9: numeric pct from config, not code constants).
+  # riskBudgets values are % of equity at risk per template (0.75 = 0.75%).
+  # maxLeverage caps the ticket risk plan (0 keeps the code fallback of 5).
+  riskBudgets:
+    alignedSpring: 0.75
+    alignedSummer: 0.75
+    alignedAutumn: 0.40
+    counterTrend: 0.25
+    mixedContext: 0.0
+    noTrade: 0.0
+  maxLeverage: 5

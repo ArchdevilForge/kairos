@@ -353,7 +353,7 @@ Legacy file stays available as `legacy_cycle` (rename or copy) for comparison.
 ## 8. Acceptance fixtures (required later)
 
 1. **Mirror symmetry**: up sequence → UP/SPRING→SUMMER; price-mirrored → DOWN/SPRING→SUMMER
-2. **Nested counter-trend**: 1d DOWN/SUMMER + lower TF UP stack → counter_trend_long, grade ≤ B, add-on false
+2. **Nested counter-trend**: 1d DOWN/SUMMER + lower TF UP stack → counter_trend_long, grade ≤ C, add-on false
 3. **Chop winter**: MA thrash + false breaks → neutral/winter, alignment no_trade
 4. **Stability**: last-bar noise must not flip SPRING↔AUTUMN↔SUMMER without hysteresis
 5. **Replay equality**: same inputs + config → identical CycleMap

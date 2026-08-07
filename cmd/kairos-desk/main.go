@@ -167,8 +167,10 @@ func run(args []string) error {
 				}
 			}
 		}
-		if cmd == "reject" && len(codes) == 0 {
-			return fmt.Errorf("reject requires --reason <code> (e.g. too_extended)")
+		// Canonical §8: reason codes are required for every decision (the
+		// service layer enforces too — this is just the friendlier CLI error).
+		if len(codes) == 0 {
+			return fmt.Errorf("%s requires --reason <code> (e.g. too_extended)", cmd)
 		}
 		if err := svc.ApplyHumanDecision(ticketID, d, codes, *note); err != nil {
 			return err

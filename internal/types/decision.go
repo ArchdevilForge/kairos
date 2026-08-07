@@ -17,6 +17,7 @@ const (
 )
 
 // Standard reason codes for human decisions (free text alone is not enough).
+// Canonical (TRADING_SYSTEM_CANONICAL §8): reason codes are required.
 const (
 	ReasonStructureGood     = "structure_good"
 	ReasonStructureBad      = "structure_bad"
@@ -31,6 +32,29 @@ const (
 	ReasonFearOfLoss        = "fear_of_loss"
 	ReasonManualOverride    = "manual_override"
 )
+
+// standardReasonCodes is the single source of truth for valid codes.
+var standardReasonCodes = []string{
+	ReasonStructureGood, ReasonStructureBad, ReasonTooExtended,
+	ReasonNotRealLeader, ReasonInsufficientRoom, ReasonCounterTrend,
+	ReasonMarketBreadthWeak, ReasonFundingCrowded, ReasonLateToEvent,
+	ReasonEmotionalSkip, ReasonFearOfLoss, ReasonManualOverride,
+}
+
+// ValidReasonCodes returns the canonical reason codes.
+func ValidReasonCodes() []string {
+	return append([]string(nil), standardReasonCodes...)
+}
+
+// IsValidReasonCode reports whether c is a canonical reason code.
+func IsValidReasonCode(c string) bool {
+	for _, v := range standardReasonCodes {
+		if c == v {
+			return true
+		}
+	}
+	return false
+}
 
 // TicketStatus is the desk lifecycle of a DecisionTicket.
 type TicketStatus string

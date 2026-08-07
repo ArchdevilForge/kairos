@@ -125,8 +125,47 @@ func TestLeaderPullback_CounterTrendCap(t *testing.T) {
 	if m.TradeClass != types.TradeClassCounterTrendLong {
 		t.Fatalf("class=%s", m.TradeClass)
 	}
-	if m.Grade == types.TicketGradeA {
-		t.Fatalf("counter trend must cap grade <= B, got A")
+	if m.Grade != types.TicketGradeC {
+		t.Fatalf("counter trend long must cap at C (never A/B), got %s", m.Grade)
+	}
+	if m.RiskTemplate != types.RiskTemplateCounterTrend {
+		t.Fatalf("template=%s", m.RiskTemplate)
+	}
+}
+
+func TestLeaderPullback_CounterTrendShortCap(t *testing.T) {
+	in := alignedLongInput()
+	// mirror maps: 1d/4h up summer, lower down; primary up, pulse down
+	for k, n := range in.MarketCycle.Nodes {
+		n.Direction = types.CycleDirectionDown
+		if n.Role == types.TimeframeRoleContext {
+			n.Phase = types.WavePhaseSummer
+		}
+		n.RoomUpPct, n.RoomDownPct = n.RoomDownPct, n.RoomUpPct
+		in.MarketCycle.Nodes[k] = n
+	}
+	in.SymbolCycle = in.MarketCycle
+	in.MarketCycle.PrimaryDirection = types.CycleDirectionUp
+	in.MarketCycle.Alignment = types.AlignmentCounterTrend
+	in.MarketCycle.TradeClass = types.TradeClassCounterTrendShort
+	in.PulseDirection = types.CycleDirectionDown
+	in.PulseState = types.MarketStateImpulseDown
+	in.Candidate.RelativeStrength = 0.1
+	in.Candidate.RelativeWeakness = 3
+	in.Candidate.PullbackStrength = 0.2
+	in.Candidate.ReboundWeakness = 1.5
+	in.Candidate.LongScore, in.Candidate.ShortScore = 1, 8
+
+	p := &LeaderPullback{}
+	m := p.MatchInput(in)
+	if !m.Matched {
+		t.Fatalf("counter trend short should match: %+v", m)
+	}
+	if m.TradeClass != types.TradeClassCounterTrendShort {
+		t.Fatalf("class=%s", m.TradeClass)
+	}
+	if m.Grade != types.TicketGradeC {
+		t.Fatalf("counter trend short must cap at C (never A/B), got %s", m.Grade)
 	}
 	if m.RiskTemplate != types.RiskTemplateCounterTrend {
 		t.Fatalf("template=%s", m.RiskTemplate)

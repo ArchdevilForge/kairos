@@ -183,3 +183,70 @@ func TestEvaluate_WinterNoTickets(t *testing.T) {
 		t.Fatalf("winter must yield 0 tickets, got %d", len(res.Tickets))
 	}
 }
+
+func TestApplyHumanDecision_RequiresReasonCode(t *testing.T) {
+	j := testJournal(t)
+	s := NewService(j, DefaultConfig())
+	mkt := cycleUp()
+	res, err := s.Evaluate(EvaluateRequest{
+		EventID:        "ev-reason",
+		PulseState:     types.MarketStateImpulseUp,
+		PulseDirection: types.CycleDirectionUp,
+		MarketCycle:    mkt,
+		SymbolCycles:   map[string]types.CycleMap{"SOL/USDT:USDT": mkt},
+		RankInputs:     []ranker.Input{measuredInput("SOL/USDT:USDT", 6, 1)},
+		Invalidations:  map[string][]string{"SOL/USDT:USDT": {"x"}},
+		StructureValid: map[string]bool{"SOL/USDT:USDT": true},
+		EntryPrice:     map[string]float64{"SOL/USDT:USDT": 100},
+		StopPrice:      map[string]float64{"SOL/USDT:USDT": 98},
+	})
+	if err != nil || len(res.Tickets) != 1 {
+		t.Fatalf("tickets=%d err=%v", len(res.Tickets), err)
+	}
+	tid := res.Tickets[0].ID
+
+	// No reason code → rejected at the service layer (canonical §8).
+	if err := s.ApplyHumanDecision(tid, types.DecisionAccepted, nil, "no code"); err == nil {
+		t.Fatal("decision without reason code must fail")
+	}
+	// Unknown code → rejected.
+	if err := s.ApplyHumanDecision(tid, types.DecisionAccepted, []string{"made_up_code"}, ""); err == nil {
+		t.Fatal("unknown reason code must fail")
+	}
+	// Valid code → persisted.
+	if err := s.ApplyHumanDecision(tid, types.DecisionAccepted, []string{types.ReasonStructureGood}, ""); err != nil {
+		t.Fatal(err)
+	}
+	dec, ok, err := j.GetDecision(tid)
+	if err != nil || !ok || dec.Decision != types.DecisionAccepted {
+		t.Fatalf("dec=%+v ok=%v err=%v", dec, ok, err)
+	}
+}
+
+func TestConfigFromTypes_RiskBudgets(t *testing.T) {
+	cfg := ConfigFromTypes(types.OpportunityConfig{
+		MaxTicketsPerSession: 2,
+		RiskBudgets: map[string]float64{
+			"alignedSpring": 1.0,
+			"counterTrend":  0.1,
+			"no_trade":      0.0,
+		},
+		MaxLeverage: 3,
+	})
+	if cfg.MaxTicketsPerSession != 2 {
+		t.Fatalf("max tickets: got %d", cfg.MaxTicketsPerSession)
+	}
+	if cfg.MaxLeverage != 3 {
+		t.Fatalf("max leverage: got %v", cfg.MaxLeverage)
+	}
+	if got := cfg.RiskBudgets[types.RiskTemplateAlignedSpring]; got != 1.0 {
+		t.Fatalf("aligned spring budget: got %v", got)
+	}
+	if got := cfg.RiskBudgets[types.RiskTemplateCounterTrend]; got != 0.1 {
+		t.Fatalf("counter trend budget: got %v", got)
+	}
+	// Templates not in config keep the conservative fallback.
+	if got := cfg.RiskBudgets[types.RiskTemplateAlignedSummer]; got != 0.75 {
+		t.Fatalf("aligned summer budget: got %v", got)
+	}
+}

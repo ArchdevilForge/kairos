@@ -127,7 +127,7 @@ Allowed only if setup+trigger stack is clean **and** labeled:
 
 ```text
 TradeClass: counter_trend_long  (or counter_trend_short mirror)
-Grade: ≤ B (typically B or C)
+Grade: ≤ C (counter-trend is never above C)
 RiskTemplate: counter_trend
 ```
 
@@ -181,7 +181,7 @@ Rank is ordering only among gate passers. It does not revive gate failures.
 
 Cap:
 
-- Counter-trend → max B (prefer C if any extra warning)
+- Counter-trend → max C
 - Context AUTUMN aligned continuation → max B, no add-on
 - Missing invalidation → D
 
@@ -296,7 +296,7 @@ Research targets:
 ## 12. Acceptance tests (later code PRs)
 
 1. Long fixture leader ranks #1; mirrored short laggard ranks #1
-2. Nested counter-trend long → trade_class counter_trend_long, grade ≤ B, add-on false
+2. Nested counter-trend long → trade_class counter_trend_long, grade ≤ C, add-on false
 3. Chop winter → no match
 4. Missing invalidation → no match
 5. Replay equality on MatchResult

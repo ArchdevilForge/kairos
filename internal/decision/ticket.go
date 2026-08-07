@@ -9,11 +9,12 @@ import (
 	"github.com/ArchdevilForge/kairos/internal/types"
 )
 
-// RiskBudgets maps template → default risk_budget_pct of equity.
-// Override via Config; these are desk defaults only.
+// RiskBudgets maps risk template → risk_budget_pct of equity.
+// Canonical §9: numeric pct lives in config, not code constants — these are
+// fallback defaults only, and the opportunity path always passes config values.
 type RiskBudgets map[string]float64
 
-// DefaultRiskBudgets returns conservative stage-1 budgets.
+// DefaultRiskBudgets returns conservative stage-1 fallback budgets.
 func DefaultRiskBudgets() RiskBudgets {
 	return RiskBudgets{
 		types.RiskTemplateAlignedSpring: 0.75,

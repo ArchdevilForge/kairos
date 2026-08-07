@@ -31,6 +31,37 @@ func Normalize(cfg *types.Config) {
 	}
 	// Keep the legacy field readable for old call sites and logs.
 	cfg.Exchange = cfg.Exchanges.Primary
+	// Viper lowercases every config key, which would leak into the raw
+	// riskBudgets map; restore canonical camelCase keys so callers and docs
+	// agree on naming.
+	cfg.Opportunity.RiskBudgets = canonicalRiskBudgetKeys(cfg.Opportunity.RiskBudgets)
+}
+
+// riskBudgetCanonical maps lowercased risk budget keys to canonical names.
+var riskBudgetCanonical = map[string]string{
+	"alignedspring": "alignedSpring",
+	"alignedsummer": "alignedSummer",
+	"alignedautumn": "alignedAutumn",
+	"countertrend":  "counterTrend",
+	"mixedcontext":  "mixedContext",
+	"notrade":       "noTrade",
+}
+
+// canonicalRiskBudgetKeys restores canonical camelCase keys; unknown keys pass
+// through unchanged (snake template IDs like aligned_spring are accepted too).
+func canonicalRiskBudgetKeys(m map[string]float64) map[string]float64 {
+	if len(m) == 0 {
+		return m
+	}
+	out := make(map[string]float64, len(m))
+	for k, v := range m {
+		if c, ok := riskBudgetCanonical[strings.ToLower(k)]; ok {
+			out[c] = v
+		} else {
+			out[k] = v
+		}
+	}
+	return out
 }
 
 // Validate checks that the configuration is executable: no value may cause a
@@ -221,6 +252,16 @@ func Validate(cfg *types.Config) error {
 		}
 		checkConfirm("impulse", mp.Impulse.ConfirmationSamples, mp.Impulse.ConfirmationWindowSamples)
 		checkConfirm("trend", mp.Trend.ConfirmationSamples, mp.Trend.ConfirmationWindowSamples)
+	}
+
+	// --- opportunity desk ----------------------------------------------------
+	if cfg.Opportunity.MaxLeverage < 0 {
+		addf("opportunity.maxLeverage must be >= 0 (0 keeps the BuildTicket fallback), got %v", cfg.Opportunity.MaxLeverage)
+	}
+	for k, v := range cfg.Opportunity.RiskBudgets {
+		if v < 0 {
+			addf("opportunity.riskBudgets.%s must be >= 0, got %v", k, v)
+		}
 	}
 
 	if len(errs) == 0 {
