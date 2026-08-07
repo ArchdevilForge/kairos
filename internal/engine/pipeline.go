@@ -42,6 +42,12 @@ import (
 // exchangeNew creates exchange adapters; overridden in tests.
 var exchangeNew = exchange.New
 
+// enrichPulse spawns async OHLCV enrichment for a pulse event; a var so tests
+// can count spawns (duplicate events must not enrich twice).
+var enrichPulse = func(p *Pipeline, evt types.AnomalyEvent) {
+	p.enrichOpportunityAsync(evt)
+}
+
 // ────────────────────────────────────────────────────────────────
 // Pipeline
 // ────────────────────────────────────────────────────────────────
@@ -1052,11 +1058,15 @@ func (p *Pipeline) eventAggregator(
 			}
 
 			// One OpportunitySession per pulse event; async OHLCV enrichment may attach tickets.
+			// HandlePulseEvent returns (nil, nil) for duplicate events — only enrich
+			// when a session was actually created, or the same session would get a
+			// second watch goroutine.
 			if isMarketPulseEvent(evt.EventType) && p.opportunity != nil {
-				if _, err := p.opportunity.HandlePulseEvent(evt); err != nil {
+				sess, err := p.opportunity.HandlePulseEvent(evt)
+				if err != nil {
 					p.log.Warn("opportunity session failed", "error", err, "event", evt.EventType)
-				} else {
-					p.enrichOpportunityAsync(evt)
+				} else if sess != nil {
+					enrichPulse(p, evt)
 				}
 			}
 
