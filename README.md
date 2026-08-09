@@ -6,7 +6,10 @@ Crypto futures **market attention** alert system. 确定性的链上门槛数据
 
 主产品：MarketPulse 判断「整个市场何时值得打开盘面」。单币检测器解释「谁在动」；scanner 仅作告警后的可选解释层，不默认定时推送入场/止损。
 
-Go 单体仓库：`cmd/` 入口 + `internal/` 实现。
+Go 单体仓库：`cmd/` 入口 + `internal/` 实现；monorepo 子目录：
+
+- `bus/` — kairos-bus（Python 事件总线：楼层 JSONL → 门控 → Telegram → 聚合输出）
+- `coinglass/` — coinglass-decrypt（Python 参考实现，Go 原生解密在 `internal/data/coinglass.go`）
 
 ## Architecture
 
@@ -17,6 +20,7 @@ Exchange WebSocket  ──→  单币检测器（价格/成交量/OI/资金费�
                      events + 60s snapshots JSONL  ──→  kairos-calibrate（lift_5m）
                              ↓
 CoinGlass API  ──→  多空比/爆仓（可选）  ──→  Telegram / DingTalk
+kairos-oiscan ──→  全市场 OI 异动(发现+确认)  ──→  bus/inbound/futures/*.jsonl
 ```
 
 详见 `docs/GOAL_MARKET_PULSE.md`。90 天主 KPI：告警后 5m 延续 vs **non-alert directional baseline** 的 `experimental_lift_5m`（小样本仅 exploratory）。

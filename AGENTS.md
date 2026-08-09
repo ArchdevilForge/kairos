@@ -36,6 +36,7 @@ It scans futures markets, detects hard-data anomalies, scores deterministic setu
 go build -o kairosd ./cmd/kairosd
 go build -o kairos-alert ./cmd/kairos-alert
 go build -o kairos-backtest ./cmd/kairos-backtest
+go build -o kairos-oiscan ./cmd/kairos-oiscan   # 全市场 OI 异动扫描 → bus/inbound/futures
 
 ./kairosd --config config/config.yaml               # Realtime hard-data Telegram alerts
 ./kairos-alert --config config/config.yaml --dry-run

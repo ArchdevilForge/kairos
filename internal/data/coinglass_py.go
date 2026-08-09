@@ -86,7 +86,8 @@ func resolveCoinGlassDecryptRoot() string {
 
 func coinGlassDecryptCandidates() []string {
 	root := findKairosRoot()
-	sibling := filepath.Clean(filepath.Join(root, "..", "coinglass-decrypt"))
+	// Monorepo: coinglass/ lives inside the kairos repo (was a sibling repo).
+	sibling := filepath.Clean(filepath.Join(root, "coinglass"))
 	return []string{sibling}
 }
 

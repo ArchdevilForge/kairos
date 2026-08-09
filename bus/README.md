@@ -6,6 +6,8 @@ bus 统一做 severity 门控、dedup、cooldown,Telegram 统一推送,输出聚
 
 > 定位:不是监控程序,是**事件总线**。kairos(Go,合约楼层)不动,
 > kairos-bus(Python)把各楼层的事件纪律收口到一层。
+>
+> 2026-08-09 起并入 kairos monorepo(本目录 = kairos/bus/),不再独立维护。
 
 ## 架构
 

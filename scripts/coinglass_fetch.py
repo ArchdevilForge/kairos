@@ -15,9 +15,9 @@ def _decrypt_root() -> Path:
     env = os.environ.get("KAIROS_COINGLASS_DECRYPT", "").strip()
     if env:
         return Path(env).expanduser().resolve()
-    # sibling repo: ../coinglass-decrypt next to kairos root
+    # monorepo: coinglass/ lives inside the kairos repo
     kairos_root = Path(__file__).resolve().parents[1]
-    sibling = (kairos_root.parent / "coinglass-decrypt").resolve()
+    sibling = (kairos_root / "coinglass").resolve()
     if (sibling / "decrypt.py").is_file():
         return sibling
     raise SystemExit(

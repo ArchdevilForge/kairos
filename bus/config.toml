@@ -26,10 +26,12 @@ never_notify_event_types = ["outcome", "calibration", "snapshot"]  # 只进聚�
 
 [floors.futures]
 source = "futures"
-allowed_event_types = ["price_velocity", "volume_spike", "market_impulse"]
+# oi_surge/launch_confirmed/launch_fading 来自 cmd/kairos-oiscan(全市场 OI 异动扫描)
+allowed_event_types = ["price_velocity", "volume_spike", "market_impulse",
+                       "oi_surge", "launch_confirmed", "launch_fading"]
 min_severity = "LOW"
 blacklist = ["LUNA/USDT:USDT"]
-skip_cooldown_event_types = ["market_impulse"]
+skip_cooldown_event_types = ["market_impulse", "launch_confirmed", "launch_fading"]
 
 [floors.meme]
 source = "meme"
