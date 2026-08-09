@@ -1,0 +1,19 @@
+{
+  "success": true,
+  "message": "获取Hyperliquid市场概览数据成功",
+  "status": 200,
+  "data": {
+    "total_position_value": 958164909.9526315,
+    "long_position_value": 91440178.02264899,
+    "short_position_value": 866724731.9299822,
+    "total_margin_used": 156681281.11798897,
+    "long_margin_used": 7357480.161534995,
+    "short_margin_used": 149323800.95645392,
+    "total_unrealized_pnl": 7944343.879442001,
+    "long_unrealized_pnl": -4740071.945685,
+    "short_unrealized_pnl": 12684415.825127007,
+    "total_cum_funding_sinceopen": -21572266.252382994,
+    "long_cum_funding_sinceopen": 326774.79906900006,
+    "short_cum_funding_sinceopen": -21899041.051452
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "path": "upgrade/alert/list/signal",
+  "body": {},
+  "r": {
+    "success": true,
+    "message": "",
+    "status": 200,
+    "data": {
+      "body": [],
+      "last_time": 0,
+      "last_id": 0,
+      "ews_count": 0,
+      "invalid_count": 0
+    }
+  }
+}

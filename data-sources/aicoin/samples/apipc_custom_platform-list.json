@@ -1,0 +1,337 @@
+{
+  "host": "apipc",
+  "path": "custom/platform-list",
+  "body": {},
+  "r": {
+    "success": true,
+    "message": "",
+    "status": 200,
+    "data": {
+      "hot_list": [
+        "binance",
+        "okex",
+        "huobipro",
+        "pionex",
+        "gate",
+        "hyperliquid",
+        "bybit",
+        "bitget",
+        "coinbase"
+      ],
+      "list": [
+        {
+          "0": "",
+          "ad_title": "返10%+$500",
+          "ad_url": "https://jump.do/xlink?checkProxy=true&proxyId=3",
+          "labels": "市场深度较好",
+          "market_key": "binance",
+          "market_logo": "https://static.aicoinstorge.com/marketLogo/20180611/152871709991062.png",
+          "market_name": "币安",
+          "registerLink": "https://jump.do/xlink?checkProxy=true&proxyId=3"
+        },
+        {
+          "0": "",
+          "ad_title": "永久返20%",
+          "ad_url": "https://jump.do/xlink?checkProxy=true&proxyId=2",
+          "labels": "手续费最优惠",
+          "market_key": "okex",
+          "market_logo": "https://static.aicoinstorge.com/market_img/20220609/165477087581264.png",
+          "market_name": "欧易OKX",
+          "registerLink": "https://jump.do/xlink?checkProxy=true&proxyId=2"
+        },
+        {
+          "0": "",
+          "ad_title": "领$1,500！追热币",
+          "ad_url": "https://jump.do/xlink?checkProxy=true&proxyId=4",
+          "labels": "热币多，合约赛奖励多",
+          "market_key": "huobipro",
+          "market_logo": "https://static.aicoinstorge.com/market_img/20221122/166910355036901.png",
+          "market_name": "HTX",
+          "registerLink": "https://jump.do/xlink?checkProxy=true&proxyId=4"
+        },
+        {
+          "0": "",
+          "ad_title": "送 $50 USDC",
+          "ad_url": "https://jump.do/xlink?checkProxy=true&proxyId=25",
+          "labels": "美国首家合规",
+          "market_key": "coinbase",
+          "market_logo": "https://static.aicoinstorge.com/market_img/20230215/167642962537725.png",
+          "market_name": "Coinbase Pro",
+          "registerLink": "https://jump.do/xlink?checkProxy=true&proxyId=25"
+        },
+        {
+          "0": "",
+          "ad_title": "返10%赢$6,200",
+          "ad_url": "https://jump.do/xlink?checkProxy=true&proxyId=6",
+          "labels": "合约流动性强，交易奖励丰富",
+          "market_key": "bitget",
+          "market_logo": "https://static.aicoinstorge.com/market_img/20230803/169105164585996.png",
+          "market_name": "Bitget",
+          "registerLink": "https://jump.do/xlink?checkProxy=true&proxyId=6"
+        },
+        {
+          "0": "",
+          "ad_title": "注册赢$10,000",
+          "ad_url": "https://jump.do/xlink?checkProxy=true&proxyId=5",
+          "labels": "上新频繁",
+          "market_key": "gate",
+          "market_logo": "https://static.aicoinstorge.com/market_img/20220622/165588264865125.png",
+          "market_name": "大门",
+          "registerLink": "https://jump.do/xlink?checkProxy=true&proxyId=5"
+        },
+        {
+          "0": "",
+          "ad_title": "",
+          "ad_url": "",
+          "labels": "",
+          "market_key": "kraken",
+          "market_logo": "https://static.aicoinstorge.com/marketLogo/20180525/152723536130247.png",
+          "market_name": "Kraken",
+          "registerLink": ""
+        },
+        {
+          "0": "",
+          "ad_title": "注册赢$100返$5,000",
+          "ad_url": "https://jump.do/xlink?checkProxy=true&proxyId=15",
+          "labels": "合约专业度高",
+          "market_key": "bybit",
+          "market_logo": "https://static.aicoinstorge.com/market_img/20220420/165045826980756.png",
+          "market_name": "Bybit",
+          "registerLink": "https://jump.do/xlink?checkProxy=true&proxyId=15"
+        },
+        {
+          "0": "",
+          "ad_title": "",
+          "ad_url": "",
+          "labels": "BTC数据最全",
+          "market_key": "bitstamp",
+          "market_logo": "https://static.aicoinstorge.com/marketLogo/20180716/153173081840490.png",
+          "market_name": "Bitstamp",
+          "registerLink": "https://www.bitstamp.net"
+        },
+        {
+          "0": "",
+          "ad_title": "",
+          "ad_url": "",
+          "labels": "",
+          "market_key": "bitfinex",
+          "market_logo": "https://static.aicoinstorge.com/marketLogo/20180611/152871711315543.png",
+          "market_name": "Bitfinex",
+          "registerLink": "https://www.bitfinex.com/sign-up?refcode=7CwZSrLul"
+        },
+        {
+          "0": "",
+          "ad_title": "",
+          "ad_url": "",
+          "labels": "",
+          "market_key": "bitflyer",
+          "market_logo": "https://static.aicoinstorge.com/marketLogo/20180716/153174191569587.png",
+          "market_name": "bitFlyer",
+          "registerLink": ""
+        },
+        {
+          "0": "",
+          "ad_title": "",
+          "ad_url": "",
+          "labels": "",
+          "market_key": "poloniex",
+          "market_logo": "https://static.aicoinstorge.com/market_img/20220809/166000940693516.png",
+          "market_name": "Poloniex",
+          "registerLink": "https://poloniex.com/"
+        },
+        {
+          "0": "",
+          "ad_title": "注册用邀请码: tohUtU",
+          "ad_url": "https://www.bitmex.com/app/register/tohUtU",
+          "labels": "期货交易巨头",
+          "market_key": "bitmex",
+          "market_logo": "https://static.aicoinstorge.com/marketLogo/20190515/155792517123533.png",
+          "market_name": "BitMEX",
+          "registerLink": "https://www.bitmex.com/app/register/tohUtU"
+        },
+        {
+          "0": "",
+          "ad_title": "赢$14,000",
+          "ad_url": "",
+          "labels": "上新快、福利多，活动奖励大",
+          "market_key": "bitmart",
+          "market_logo": "https://static.aicoinstorge.com/marketLogo/20180716/153174023950208.png",
+          "market_name": "BitMart",
+          "registerLink": "https://jump.do/xlink?checkProxy=true&proxyId=13"
+        },
+        {
+          "0": "",
+          "ad_title": "",
+          "ad_url": "",
+          "chainLogo": "https://static.aicoinstorge.com/chainManage_img/20230518/168441382026666.png",
+          "labels": "",
+          "market_key": "uniswap",
+          "market_logo": "https://static.aicoinstorge.com/market_img/20210126/161164638118814.png",
+          "market_name": "Uniswap V2 (ETH)",
+          "registerLink": "https://uniswap.exchange/swap"
+        },
+        {
+          "0": "",
+          "ad_title": "领$1,000新人礼包",
+          "ad_url": "https://jump.do/xlink?checkProxy=true&proxyId=17",
+          "labels": "",
+          "market_key": "coinw",
+          "market_logo": "https://static.aicoinstorge.com/market_img/20240912/172611691041941.png",
+          "market_name": "币赢",
+          "registerLink": "https://jump.do/xlink?checkProxy=true&proxyId=17"
+        },
+        {
+          "0": "",
+          "ad_title": "",
+          "ad_url": "",
+          "labels": "",
+          "market_key": "coinex",
+          "market_logo": "https://static.aicoinstorge.com/marketLogo/20180703/153059952875044.png",
+          "market_name": "CoinEx",
+          "registerLink": "https://www.coinex.com/"
+        },
+        {
+          "0": "",
+          "ad_title": "",
+          "ad_url": "",
+          "labels": "",
+          "market_key": "megabit",
+          "market_logo": "https://static.aicoinstorge.com/market_img/20250417/174488027398264.png",
+          "market_name": "MGBX",
+          "registerLink": "https://mgbx.com/"
+        },
+        {
+          "0": "",
+          "ad_title": "",
+          "ad_url": "",
+          "labels": "",
+          "market_key": "hitbtc",
+          "market_logo": "https://static.aicoinstorge.com/marketLogo/20180525/152723524289703.png",
+          "market_name": "Hitbtc",
+          "registerLink": "https://hitbtc.com"
+        },
+        {
+          "0": "",
+          "ad_title": "",
+          "ad_url": "",
+          "labels": "",
+          "market_key": "bithumb",
+          "market_logo": "https://static.aicoinstorge.com/marketLogo/20180525/152723432825298.png",
+          "market_name": "bithumb",
+          "registerLink": "https://www.bithumb.com/"
+        },
+        {
+          "0": "",
+          "ad_title": "",
+          "ad_url": "",
+          "labels": "",
+          "market_key": "hotcoin",
+          "market_logo": "https://static.aicoinstorge.com/market_img/20251009/175998219749343.png",
+          "market_name": "热币",
+          "registerLink": "https://www.hotcoin.com"
+        },
+        {
+          "0": "",
+          "ad_title": "",
+          "ad_url": "",
+          "labels": "",
+          "market_key": "korbit",
+          "market_logo": "https://static.aicoinstorge.com/marketLogo/20180716/153173925170387.png",
+          "market_name": "korbit",
+          "registerLink": "https://www.korbit.co.kr/"
+        },
+        {
+          "0": "",
+          "ad_title": "返4%",
+          "ad_url": "https://app.hyperliquid.xyz/join/AICOIN88",
+          "labels": "",
+          "market_key": "hyperliquid",
+          "market_logo": "https://static.aicoin.com/market_img/20260128/176956451782778.png",
+          "market_name": "Hyperliquid",
+          "registerLink": "https://app.hyperliquid.xyz/join/AICOIN88"
+        },
+        {
+          "0": "",
+          "ad_title": "",
+          "ad_url": "",
+          "labels": "",
+          "market_key": "deribit",
+          "market_logo": "https://static.aicoinstorge.com/marketLogo/20181013/153940050014294.png",
+          "market_name": "Deribit",
+          "registerLink": "http://asia.deribit.com"
+        },
+        {
+          "0": "",
+          "ad_title": "",
+          "ad_url": "",
+          "labels": "",
+          "market_key": "deepcoin",
+          "market_logo": "https://static.aicoinstorge.com/market_img/20230714/168931680165486.png",
+          "market_name": "Deepcoin",
+          "registerLink": "https://www.deepcoin.live/zh/register?status=reg&inviteCode=9105709"
+        },
+        {
+          "0": "",
+          "ad_title": "",
+          "ad_url": "",
+          "labels": "",
+          "market_key": "upbit",
+          "market_logo": "https://static.aicoinstorge.com/marketLogo/20180727/153265935950605.png",
+          "market_name": "Upbit",
+          "registerLink": "https://sg.upbit.com/"
+        },
+        {
+          "0": "",
+          "ad_title": "",
+          "ad_url": "",
+          "labels": "",
+          "market_key": "bbxaz",
+          "market_logo": "https://static.aicoin.com/market_img/20260514/177874939612983.png",
+          "market_name": "BBX",
+          "registerLink": "https://bbx.com"
+        },
+        {
+          "0": "",
+          "ad_title": "",
+          "ad_url": "",
+          "labels": "",
+          "market_key": "weex",
+          "market_logo": "https://static.aicoinstorge.com/market_img/20250513/174713008040925.png",
+          "market_name": "WEEX",
+          "registerLink": "https://www.weex.com/"
+        },
+        {
+          "0": "",
+          "ad_title": "",
+          "ad_url": "",
+          "labels": "",
+          "market_key": "biking",
+          "market_logo": "https://static.aicoinstorge.com/market_img/20211008/163366337635052.png",
+          "market_name": "币王",
+          "registerLink": "https://www.wang.tel"
+        },
+        {
+          "0": "",
+          "ad_title": "",
+          "ad_url": "",
+          "chainLogo": "https://static.aicoinstorge.com/chainManage_img/20230518/168441382026666.png",
+          "labels": "",
+          "market_key": "uniswapv3",
+          "market_logo": "https://static.aicoinstorge.com/market_img/20210610/162330191565223.png",
+          "market_name": "Uniswap V3 (ETH)",
+          "registerLink": ""
+        },
+        {
+          "0": "",
+          "ad_title": "",
+          "ad_url": "",
+          "labels": "",
+          "market_key": "ueex",
+          "market_logo": "https://static.aicoinstorge.com/market_img/20250121/173745717628930.png",
+          "market_name": "优易",
+          "registerLink": "https://www.ueex.bet/"
+        }
+      ]
+    }
+  }
+}

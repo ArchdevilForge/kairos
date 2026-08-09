@@ -1,0 +1,320 @@
+{
+  "success": true,
+  "message": "",
+  "status": 200,
+  "data": {
+    "list": [
+      {
+        "airdropId": "6a108389a905aa5c736ea5df",
+        "projectName": "K25.ai",
+        "projectLogo": "https://images.cryptorank.io/coins/60x60.k_25_ai1779436424693.png",
+        "tokenSymbol": "<redacted>",
+        "rating": 34,
+        "moniScore": 5,
+        "activityTypes": [
+          "Social",
+          "Fill The Form"
+        ],
+        "status": "CONFIRMED",
+        "rewardType": "Whitelist/Waitlist",
+        "cost": 0,
+        "time": 20,
+        "moniScoreChange": 0,
+        "taskStats": {
+          "totalCount": 1,
+          "openCount": 1,
+          "closedCount": 0
+        },
+        "totalRaise": 10000000,
+        "funds": [
+          {
+            "slug": "amber-group",
+            "name": "Amber Group",
+            "logo": "https://images.cryptorank.io/funds/60x60.amber_group1658307102691.png",
+            "tier": 2,
+            "isLead": false,
+            "category": "Venture"
+          },
+          {
+            "slug": "newgenivf-group",
+            "name": "NewGenIVF Group",
+            "logo": "https://images.cryptorank.io/funds/60x60.new_gen_ivf_group1779437071766.png",
+            "tier": 0,
+            "isLead": false,
+            "category": "Corporation"
+          }
+        ],
+        "linkToClaim": "",
+        "checkLink": "",
+        "socialLinks": [
+          {
+            "type": "web",
+            "value": "https://k25.ai/"
+          },
+          {
+            "type": "twitter",
+            "value": "https://x.com/K25dotai?hzet=dszqupsbol",
+            "bio": "Live 24 Hours Predict 1 Steps Ahead\n\nWaitlist: k25.ai/\nDiscord: discord.gg/wNCGEfVaW\nTG: t.me/+w39AqDcqPR00ZjY1\nt.me/k25_dotai",
+            "backgroundImage": "https://web3-announcements.aicoinstorge.com/cryptorank/bg/k-25-ai-activity1195-90503ea281446dec.jpg"
+          }
+        ],
+        "statusUpdateAt": 1784908578958,
+        "createdAt": 1779465705304
+      },
+      {
+        "airdropId": "6912b4cca905aa5c734a7db7",
+        "projectName": "T-Rex",
+        "projectLogo": "https://images.cryptorank.io/coins/60x60.t_rex1746789236870.png",
+        "tokenSymbol": "<redacted>",
+        "rating": 230,
+        "moniScore": 1246,
+        "activityTypes": [
+          "Social",
+          "Predictions",
+          "Bounty Platforms",
+          "Fill The Form",
+          "Mint NFT",
+          "Ambassador program",
+          "Getting a role"
+        ],
+        "status": "POTENTIAL",
+        "rewardType": "Airdrop",
+        "cost": 0,
+        "time": 33,
+        "moniScoreChange": 0,
+        "taskStats": {
+          "totalCount": 10,
+          "openCount": 4,
+          "closedCount": 6
+        },
+        "totalRaise": 17000000,
+        "funds": [
+          {
+            "slug": "framework-ventures",
+            "name": "Framework Ventures",
+            "logo": "https://images.cryptorank.io/funds/60x60.framework ventures1648565125587.png",
+            "tier": 2,
+            "isLead": false,
+            "category": "Venture"
+          },
+          {
+            "slug": "hypersphereventures",
+            "name": "Hypersphere Ventures",
+            "logo": "https://images.cryptorank.io/funds/60x60.hypersphere_ventures1737618413682.png",
+            "tier": 2,
+            "isLead": false,
+            "category": "Venture"
+          },
+          {
+            "slug": "snz-holding",
+            "name": "SNZ Holding",
+            "logo": "https://images.cryptorank.io/funds/60x60.snz_holding1658394484113.png",
+            "tier": 3,
+            "isLead": false,
+            "category": "Venture"
+          },
+          {
+            "slug": "arkstream-capital",
+            "name": "ArkStream Capital",
+            "logo": "https://images.cryptorank.io/funds/60x60.ark_stream_capital1658739032092.png",
+            "tier": 3,
+            "isLead": false,
+            "category": "Venture"
+          },
+          {
+            "slug": "coin-98-ventures",
+            "name": "Arche Fund",
+            "logo": "https://images.cryptorank.io/funds/60x60.arche_fund1694437329437.png",
+            "tier": 3,
+            "isLead": false,
+            "category": "Venture"
+          },
+          {
+            "slug": "north-island-ventures",
+            "name": "North Island Ventures",
+            "logo": "https://images.cryptorank.io/funds/60x60.north_island_ventures1776091241537.png",
+            "tier": 4,
+            "isLead": false,
+            "category": "Venture"
+          },
+          {
+            "slug": "portal-ventures",
+            "name": "Portal Ventures",
+            "logo": "https://images.cryptorank.io/funds/60x60.portal_ventures1667992362624.png",
+            "tier": 4,
+            "isLead": false,
+            "category": "Venture"
+          },
+          {
+            "slug": "mindfulness-capital",
+            "name": "Mindfulness Capital",
+            "logo": "https://images.cryptorank.io/funds/60x60.mindfulness_capital1681127187846.png",
+            "tier": 4,
+            "isLead": false,
+            "category": "Venture"
+          },
+          {
+            "slug": "arbitrum-gaming-ventures",
+            "name": "Arbitrum Gaming Ventures",
+            "logo": "https://images.cryptorank.io/funds/60x60.arbitrum_gaming_ventures1746790395847.png",
+            "tier": 4,
+            "isLead": false,
+            "category": "Venture"
+          }
+        ],
+        "linkToClaim": "",
+        "checkLink": "",
+        "socialLinks": [
+          {
+            "type": "web",
+            "value": "https://trex.xyz/"
+          },
+          {
+            "type": "twitter",
+            "value": "https://x.com/TREX_chain",
+            "bio": "数据与参与层\n重塑Web3经济的价值分配 🦖 🦖\n由 @PortalVentures @NorthIslandVC @Arbitrum @hiFramework 支持",
+            "backgroundImage": "https://web3-announcements.aicoinstorge.com/cryptorank/bg/t-rex-activity801-816ff96b23f4593b.jpg"
+          },
+          {
+            "type": "gitbook",
+            "value": "https://trex-1.gitbook.io/trex"
+          }
+        ],
+        "prevStatus": "CONFIRMED",
+        "statusUpdateAt": 1784907086982,
+        "statusChangeAt": 1767960268070,
+        "createdAt": 1746796590673
+      },
+      {
+        "airdropId": "6a63832ba905aa5c7353f829",
+        "projectName": "The Pit App",
+        "projectLogo": "https://images.cryptorank.io/coins/60x60.the_pit_app1784903818314.png",
+        "tokenSymbol": "<redacted>",
+        "rating": 1,
+        "moniScore": 533,
+        "activityTypes": [
+          "Fill The Form"
+        ],
+        "status": "CONFIRMED",
+        "rewardType": "Whitelist/Waitlist",
+        "cost": 0,
+        "time": 2,
+        "moniScoreChange": 0,
+        "taskStats": {
+          "totalCount": 1,
+          "openCount": 1,
+          "closedCount": 0
+        },
+        "linkToClaim": "",
+        "checkLink": "",
+        "socialLinks": [
+          {
+            "type": "twitter",
+            "value": "https://x.com/ThePitApp?hzet=dszqupsbol",
+            "bio": "The social layer for Hyperliquid\nBacked by @yzilabs @polychain",
+            "backgroundImage": "https://web3-announcements.aicoinstorge.com/cryptorank/bg/the-pit-app-activity1252-b97bdada3907e477.jpg"
+          },
+          {
+            "type": "web",
+            "value": "https://www.thepitapp.xyz/"
+          },
+          {
+            "type": "discord",
+            "value": "https://discord.com/invite/DfF732dp7"
+          }
+        ],
+        "statusUpdateAt": 1784905126690,
+        "createdAt": 1784905126690
+      },
+      {
+        "airdropId": "6a63646ea905aa5c7331b21c",
+        "projectName": "WaterX",
+        "projectLogo": "https://images.cryptorank.io/coins/60x60.water_x1780933312550.png",
+        "tokenSymbol": "<redacted>",
+        "rating": 0,
+        "moniScore": 214,
+        "activityTypes": [
+          "Getting a role",
+          "Trading"
+        ],
+        "status": "POTENTIAL",
+        "rewardType": "Airdrop",
+        "cost": 50,
+        "time": 40,
+        "moniScoreChange": 0,
+        "taskStats": {
+          "totalCount": 2,
+          "openCount": 2,
+          "closedCount": 0
+        },
+        "linkToClaim": "",
+        "checkLink": "",
+        "socialLinks": [
+          {
+            "type": "web",
+            "value": "https://waterx.app"
+          },
+          {
+            "type": "twitter",
+            "value": "https://x.com/WaterX_app?hzet=dszqupsbol",
+            "bio": "AI-native trading engine on @SuiNetwork. Trade everything. Outthink the market. Join our DC: discord.com/invite/waterxapp",
+            "backgroundImage": "https://web3-announcements.aicoinstorge.com/cryptorank/bg/waterx-activity1215-5b96ded980aae2b3.jpg"
+          },
+          {
+            "type": "gitbook",
+            "value": "https://docs.waterx.app/"
+          },
+          {
+            "type": "discord",
+            "value": "https://discord.com/invite/waterxapp"
+          }
+        ],
+        "statusUpdateAt": 1784897665332,
+        "createdAt": 1781040345175
+      },
+      {
+        "airdropId": "6a1f0d7da905aa5c737e3ab4",
+        "projectName": "Clasho",
+        "projectLogo": "https://images.cryptorank.io/coins/60x60.clasho1780415570903.png",
+        "tokenSymbol": "<redacted>",
+        "rating": 17,
+        "moniScore": 577,
+        "activityTypes": [
+          "Bounty Platforms",
+          "Social",
+          "Fill The Form"
+        ],
+        "status": "CONFIRMED",
+        "rewardType": "Whitelist/Waitlist",
+        "cost": 0,
+        "time": 15,
+        "moniScoreChange": 0,
+        "taskStats": {
+          "totalCount": 1,
+          "openCount": 1,
+          "closedCount": 0
+        },
+        "linkToClaim": "",
+        "checkLink": "",
+        "socialLinks": [
+          {
+            "type": "web",
+            "value": "https://clasho.com/"
+          },
+          {
+            "type": "twitter",
+            "value": "https://x.com/clashoAi?hzet=dszqupsbol",
+            "bio": "A new economy where influence, attention, and culture become assets. Turn your followers into dollars, likes into cash, and get paid to post.",
+            "backgroundImage": "https://web3-announcements.aicoinstorge.com/cryptorank/bg/clasho-activity1206-a1200174409e9bcf.jpg"
+          }
+        ],
+        "statusUpdateAt": 1784833562777,
+        "createdAt": 1780418817251
+      }
+    ],
+    "count": 1127,
+    "page": 1,
+    "pageSize": 5,
+    "totalPages": 226
+  }
+}
