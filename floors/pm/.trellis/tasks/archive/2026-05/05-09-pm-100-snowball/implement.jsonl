@@ -1,0 +1,9 @@
+{"file": "pm_bot/backtest/engine.py", "startLine": 1, "endLine": 120, "snippet": "BacktestEngine with _run_portfolio, equity curve, Kelly sizing"}
+{"file": "pm_bot/backtest/metrics.py", "startLine": 1, "endLine": 120, "snippet": "BacktestTrade, BacktestResult dataclasses with all metrics"}
+{"file": "pm_bot/backtest/costs.py", "startLine": 1, "endLine": 120, "snippet": "DEFAULT_FEE_CONFIG with constant_maker + three-tier taker"}
+{"file": "pm_bot/core/kelly.py", "startLine": 1, "endLine": 120, "snippet": "kelly_fraction with half-Kelly guardrail"}
+{"file": "pm_bot/strategies/base.py", "startLine": 1, "endLine": 341, "snippet": "Gopfan2Strategy with mid15 $0.15, bucket2 mid-NO edge"}
+{"file": "pm_bot/models/config.py", "startLine": 1, "endLine": 120, "snippet": "TradingConfig with bankroll=100.0 defaults"}
+{"file": "pm_bot/models/market.py", "startLine": 1, "endLine": 120, "snippet": "ForecastResult with members list"}
+{"file": "pm_bot/backtest/real_data.py", "startLine": 1, "endLine": 200, "snippet": "RealDataFetcher with Gamma/CLOB/Open-Meteo integration"}
+{"file": ".trellis/spec/backend/100-dollar-aggressive.md", "startLine": 1, "endLine": 200, "snippet": "$100 aggressive mode spec with Kelly 0.40-0.80"}

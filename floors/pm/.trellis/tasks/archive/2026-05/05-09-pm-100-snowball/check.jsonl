@@ -1,0 +1,8 @@
+{"file": "pm_bot/backtest/monte_carlo.py", "startLine": 1, "endLine": 100, "snippet": "MonteCarloSimulator with run, survival_rate, snowball_metrics"}
+{"file": "pm_bot/backtest/snowball_metrics.py", "startLine": 1, "endLine": 100, "snippet": "SnowballMetrics with drawdown_series, bankruptcy_risk"}
+{"file": "pm_bot/strategies/laddering.py", "startLine": 1, "endLine": 100, "snippet": "LadderingStrategy with multi-bucket dense orders"}
+{"file": "pm_bot/strategies/tail_no_barbell.py", "startLine": 1, "endLine": 100, "snippet": "TailNoBarbellStrategy with high-prob low-payout"}
+{"file": "pm_bot/strategies/forecast_arb.py", "startLine": 1, "endLine": 100, "snippet": "ForecastArbStrategy with model vs market mispricing"}
+{"file": "pm_bot/strategies/resolution_delay.py", "startLine": 1, "endLine": 100, "snippet": "ResolutionDelayStrategy with settlement timing edge"}
+{"file": "tests/test_monte_carlo.py", "startLine": 1, "endLine": 50, "snippet": "Monte Carlo simulator tests"}
+{"file": "tests/test_strategies_100.py", "startLine": 1, "endLine": 50, "snippet": "$100 strategy integration tests"}
