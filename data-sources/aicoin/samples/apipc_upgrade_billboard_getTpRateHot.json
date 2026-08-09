@@ -1,0 +1,358 @@
+{
+  "host": "apipc",
+  "path": "upgrade/billboard/getTpRateHot",
+  "body": {
+    "size": 20,
+    "page": 1,
+    "currency": "cny"
+  },
+  "r": {
+    "success": true,
+    "message": "",
+    "status": 200,
+    "data": {
+      "list": [
+        {
+          "basis": "-0.00045934",
+          "basisRate": "-0.488",
+          "coinShow": "ACE",
+          "currStr": "USDT",
+          "dbKey": "aceswapusdt:binance",
+          "degree24H": "15.22",
+          "feeRate": "-0.231833",
+          "fundingTime": "1784980800",
+          "marketName": "币安USDT永续",
+          "price": "0.633758422",
+          "trade": "803819528.634067",
+          "precision": {
+            "amount": "2",
+            "price": "5"
+          }
+        },
+        {
+          "basis": "-0.0058",
+          "basisRate": "-0.29",
+          "coinShow": "MORPHO",
+          "currStr": "USDT",
+          "dbKey": "morphoswapusdt:okcoinfutures",
+          "degree24H": "1.66",
+          "feeRate": "-0.149210",
+          "fundingTime": "1784980800",
+          "marketName": "欧易OKX USDT永续",
+          "price": "13.4693129",
+          "trade": "47769170.91005",
+          "precision": {
+            "amount": "0",
+            "price": "4"
+          }
+        },
+        {
+          "basis": "-2.1E-7",
+          "basisRate": "-0.257",
+          "coinShow": "SPELL",
+          "currStr": "USDT",
+          "dbKey": "spellswapusdt:binance",
+          "degree24H": "-0.73",
+          "feeRate": "-0.143037",
+          "fundingTime": "1784995200",
+          "marketName": "币安USDT永续",
+          "price": "0.00055244832",
+          "trade": "12561811.901067",
+          "precision": {
+            "amount": "0",
+            "price": "7"
+          }
+        },
+        {
+          "basis": "-0.00020171",
+          "basisRate": "-0.607",
+          "coinShow": "TNSR",
+          "currStr": "USDT",
+          "dbKey": "tnsrswapusdt:binance",
+          "degree24H": "2.48",
+          "feeRate": "-0.141966",
+          "fundingTime": "1784980800",
+          "marketName": "币安USDT永续",
+          "price": "0.22341660000000002",
+          "trade": "82592596.92882",
+          "precision": {
+            "amount": "1",
+            "price": "5"
+          }
+        },
+        {
+          "basis": "-0.004",
+          "basisRate": "-0.191",
+          "coinShow": "SSV",
+          "currStr": "USDT",
+          "dbKey": "ssvswapusdt:okcoinfutures",
+          "degree24H": "1.41",
+          "feeRate": "-0.073316",
+          "fundingTime": "1784995200",
+          "marketName": "欧易OKX USDT永续",
+          "price": "14.1429478",
+          "trade": "1894793.643632",
+          "precision": {
+            "amount": "0",
+            "price": "3"
+          }
+        },
+        {
+          "basis": "-0.0007",
+          "basisRate": "-0.508",
+          "coinShow": "STX",
+          "currStr": "USDT",
+          "dbKey": "stxswapusdt:binance",
+          "degree24H": "-5.65",
+          "feeRate": "-0.060290",
+          "fundingTime": "1784995200",
+          "marketName": "币安USDT永续",
+          "price": "0.92819442",
+          "trade": "113540537.4323",
+          "precision": {
+            "amount": "0",
+            "price": "4"
+          }
+        },
+        {
+          "basis": "-0.00000466",
+          "basisRate": "-0.187",
+          "coinShow": "ZIL",
+          "currStr": "USDT",
+          "dbKey": "zilswapusdt:binance",
+          "degree24H": "1.64",
+          "feeRate": "-0.057782",
+          "fundingTime": "1784980800",
+          "marketName": "币安USDT永续",
+          "price": "0.0168374874",
+          "trade": "45488800.556208",
+          "precision": {
+            "amount": "0",
+            "price": "6"
+          }
+        },
+        {
+          "basis": "0.004475",
+          "basisRate": "0.08800000000000001",
+          "coinShow": "DEXE",
+          "currStr": "USDT",
+          "dbKey": "dexeswapusdt:binance",
+          "degree24H": "85.95",
+          "feeRate": "-0.052383",
+          "fundingTime": "1784977200",
+          "marketName": "币安USDT永续",
+          "price": "34.6566538",
+          "trade": "8669582729.809123",
+          "precision": {
+            "amount": "2",
+            "price": "3"
+          }
+        },
+        {
+          "basis": "-0.000005",
+          "basisRate": "-0.134",
+          "coinShow": "RVN",
+          "currStr": "USDT",
+          "dbKey": "rvnswapusdt:okcoinfutures",
+          "degree24H": "-1.82",
+          "feeRate": "-0.051806",
+          "fundingTime": "1784995200",
+          "marketName": "欧易OKX USDT永续",
+          "price": "0.0251377526",
+          "trade": "814416.840255",
+          "precision": {
+            "amount": "0",
+            "price": "6"
+          }
+        },
+        {
+          "basis": "-0.00080398",
+          "basisRate": "-0.23500000000000001",
+          "coinShow": "WLD",
+          "currStr": "USDT",
+          "dbKey": "wldswapusdt:binance",
+          "degree24H": "-8.95",
+          "feeRate": "-0.039310",
+          "fundingTime": "1784995200",
+          "marketName": "币安USDT永续",
+          "price": "2.3154084000000004",
+          "trade": "1053016224.959102",
+          "precision": {
+            "amount": "0",
+            "price": "4"
+          }
+        },
+        {
+          "basis": "-0.0002",
+          "basisRate": "-0.146",
+          "coinShow": "STX",
+          "currStr": "USDT",
+          "dbKey": "stxswapusdt:okcoinfutures",
+          "degree24H": "-5.58",
+          "feeRate": "-0.033875",
+          "fundingTime": "1784995200",
+          "marketName": "欧易OKX USDT永续",
+          "price": "0.9275174",
+          "trade": "30650549.418905",
+          "precision": {
+            "amount": "1",
+            "price": "4"
+          }
+        },
+        {
+          "basis": "-0.00001787",
+          "basisRate": "-0.485",
+          "coinShow": "T",
+          "currStr": "USDT",
+          "dbKey": "tswapusdt:binance",
+          "degree24H": "0.08",
+          "feeRate": "-0.033410",
+          "fundingTime": "1784980800",
+          "marketName": "币安USDT永续",
+          "price": "0.0247992426",
+          "trade": "26316984.927816",
+          "precision": {
+            "amount": "0",
+            "price": "6"
+          }
+        },
+        {
+          "basis": "-7E-7",
+          "basisRate": "-0.109",
+          "coinShow": "IOST",
+          "currStr": "USDT",
+          "dbKey": "iostswapusdt:okcoinfutures",
+          "degree24H": "-1.95",
+          "feeRate": "-0.029998",
+          "fundingTime": "1784995200",
+          "marketName": "欧易OKX USDT永续",
+          "price": "0.00432412674",
+          "trade": "422096.216398",
+          "precision": {
+            "amount": "0",
+            "price": "7"
+          }
+        },
+        {
+          "basis": "-0.00028846",
+          "basisRate": "-0.134",
+          "coinShow": "SFP",
+          "currStr": "USDT",
+          "dbKey": "sfpswapusdt:binance",
+          "degree24H": "-0.92",
+          "feeRate": "-0.027452",
+          "fundingTime": "1784995200",
+          "marketName": "币安USDT永续",
+          "price": "1.45694704",
+          "trade": "2087560.861979",
+          "precision": {
+            "amount": "0",
+            "price": "4"
+          }
+        },
+        {
+          "basis": "-0.00001732",
+          "basisRate": "-0.359",
+          "coinShow": "VANRY",
+          "currStr": "USDT",
+          "dbKey": "vanryswapusdt:binance",
+          "degree24H": "6.18",
+          "feeRate": "-0.025165",
+          "fundingTime": "1784980800",
+          "marketName": "币安USDT永续",
+          "price": "0.0325714322",
+          "trade": "120033128.226487",
+          "precision": {
+            "amount": "0",
+            "price": "6"
+          }
+        },
+        {
+          "basis": "-0.00003778",
+          "basisRate": "-0.24",
+          "coinShow": "GRT",
+          "currStr": "USDT",
+          "dbKey": "grtswapusdt:binance",
+          "degree24H": "-1.75",
+          "feeRate": "-0.023539",
+          "fundingTime": "1784995200",
+          "marketName": "币安USDT永续",
+          "price": "0.10622443799999999",
+          "trade": "13510358.992036",
+          "precision": {
+            "amount": "0",
+            "price": "5"
+          }
+        },
+        {
+          "basis": "-0.00063206",
+          "basisRate": "-0.196",
+          "coinShow": "CYBER",
+          "currStr": "USDT",
+          "dbKey": "cyberswapusdt:binance",
+          "degree24H": "-1.80",
+          "feeRate": "-0.021699",
+          "fundingTime": "1784980800",
+          "marketName": "币安USDT永续",
+          "price": "2.1833895",
+          "trade": "5744629.516101",
+          "precision": {
+            "amount": "1",
+            "price": "4"
+          }
+        },
+        {
+          "basis": "0.000065",
+          "basisRate": "0.244",
+          "coinShow": "MAVIA",
+          "currStr": "USDT",
+          "dbKey": "maviaswapusdt:binance",
+          "degree24H": "0.08",
+          "feeRate": "0.021652",
+          "fundingTime": "1784980800",
+          "marketName": "币安USDT永续",
+          "price": "0.18049353199999998",
+          "trade": "3132770.895537",
+          "precision": {
+            "amount": "0",
+            "price": "5"
+          }
+        },
+        {
+          "basis": "-0.0018",
+          "basisRate": "-0.28800000000000003",
+          "coinShow": "RAY",
+          "currStr": "USDT",
+          "dbKey": "rayswapusdt:okcoinfutures",
+          "degree24H": "-2.47",
+          "feeRate": "-0.021058",
+          "fundingTime": "1784995200",
+          "marketName": "欧易OKX USDT永续",
+          "price": "4.220542679999999",
+          "trade": "2449391.338994",
+          "precision": {
+            "amount": "0",
+            "price": "4"
+          }
+        },
+        {
+          "basis": "-0.00003",
+          "basisRate": "-0.152",
+          "coinShow": "CORE",
+          "currStr": "USDT",
+          "dbKey": "coreswapusdt:okcoinfutures",
+          "degree24H": "3.09",
+          "feeRate": "-0.020626",
+          "fundingTime": "1784995200",
+          "marketName": "欧易OKX USDT永续",
+          "price": "0.133576046",
+          "trade": "82106290.756589",
+          "precision": {
+            "amount": "0",
+            "price": "5"
+          }
+        }
+      ]
+    }
+  }
+}

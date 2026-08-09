@@ -1,0 +1,62 @@
+[project]
+name = "meme-monitor"
+version = "0.1.0"
+description = "Multi-chain meme coin early discovery monitor with Telegram alerts"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [
+    {name = "xeron"}
+]
+keywords = ["meme", "crypto", "solana", "dexscreener", "telegram", "monitor"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Office/Business :: Financial :: Investment",
+]
+
+dependencies = [
+    "aiohttp>=3.9.0",
+    "python-telegram-bot>=21.0",
+    "pyyaml>=6.0",
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.1.0",
+    "python-dotenv>=1.0.0",
+    "structlog>=24.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "ruff>=0.2.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/Xeron2000/meme-monitor"
+Repository = "https://github.com/Xeron2000/meme-monitor"
+
+[project.scripts]
+meme-monitor = "src.main:cli"
+meme-monitor-setup = "src.cli:setup"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

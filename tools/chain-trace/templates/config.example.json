@@ -1,0 +1,28 @@
+{
+  "cache": {
+    "enabled": true,
+    "ttl": 300,
+    "max_size_mb": 100,
+    "directory": "~/.chain-trace/cache"
+  },
+  "monitoring": {
+    "enabled": false,
+    "interval": 300,
+    "alert_on_bnb_deposit": true,
+    "alert_on_first_tx": true,
+    "alert_on_balance_drop_pct": 20.0,
+    "webhook_url": null
+  },
+  "api_keys": {
+    "bscscan_api_key": null,
+    "etherscan_api_key": null,
+    "basescan_api_key": null,
+    "solscan_api_key": null
+  },
+  "rpc": {
+    "rate_limit_strategy": "aggressive",
+    "max_retries": 3,
+    "timeout": 12,
+    "probe_on_init": false
+  }
+}

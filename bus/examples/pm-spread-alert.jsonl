@@ -1,0 +1,1 @@
+{"ts":"2026-08-09T15:04:05Z","event_type":"spread_alert","severity":"HIGH","key":"fed-rate-sep-poly-kalshi","symbol":"FED-RATE-SEP","title":"Polymarket/Kalshi 同事件价差 12¢","message":"价差 12¢ > 阈值 8¢","data":{"spread":0.12,"threshold":0.08}}

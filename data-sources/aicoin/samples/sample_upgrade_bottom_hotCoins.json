@@ -1,0 +1,44 @@
+{
+  "success": true,
+  "message": "",
+  "status": 200,
+  "data": {
+    "list": [
+      {
+        "coinKey": "hype",
+        "coinShow": "HYPE",
+        "degree24H": "-2.53",
+        "price": "387.06",
+        "defaultTpKey": "hypeusdt:gate"
+      },
+      {
+        "coinKey": "dexe",
+        "coinShow": "DEXE",
+        "degree24H": "178.70",
+        "price": "40.83",
+        "defaultTpKey": "dexeusdt:binance"
+      },
+      {
+        "coinKey": "lorenzoprotocol",
+        "coinShow": "BANK",
+        "degree24H": "17.58",
+        "price": "2.14",
+        "defaultTpKey": "bankspblusdt:bitget"
+      },
+      {
+        "coinKey": "bitcoin",
+        "coinShow": "BTC",
+        "degree24H": "-2.26",
+        "price": "433309.97",
+        "defaultTpKey": "btcswapusdt:binance"
+      },
+      {
+        "coinKey": "ake",
+        "coinShow": "AKE",
+        "degree24H": "27.49",
+        "price": "0.02180",
+        "defaultTpKey": "akeswapusdt:binance"
+      }
+    ]
+  }
+}

@@ -235,6 +235,23 @@ type Config struct {
 	Storage         StorageConfig         `mapstructure:"storage" json:"storage" yaml:"storage"`
 	Charts          ChartConfig           `mapstructure:"charts" json:"charts" yaml:"charts"`
 	MarketPulse     MarketPulseConfig     `mapstructure:"marketPulse" json:"marketPulse" yaml:"marketPulse"`
+	Opportunity     OpportunityConfig     `mapstructure:"opportunity" json:"opportunity" yaml:"opportunity"`
+}
+
+// OpportunityConfig gates the decision-desk path off MarketPulse.
+type OpportunityConfig struct {
+	Enabled              bool `mapstructure:"enabled" json:"enabled" yaml:"enabled"`
+	ShadowMode           bool `mapstructure:"shadowMode" json:"shadowMode" yaml:"shadowMode"`
+	MaxTicketsPerSession int  `mapstructure:"maxTicketsPerSession" json:"maxTicketsPerSession" yaml:"maxTicketsPerSession"`
+	// AssumeSpreadOK allows tickets without L2 spread (shadow only; default false).
+	AssumeSpreadOK bool `mapstructure:"assumeSpreadOK" json:"assumeSpreadOK" yaml:"assumeSpreadOK"`
+	// OutcomeMaxAgeHours caps forward tracking (default 6).
+	OutcomeMaxAgeHours float64 `mapstructure:"outcomeMaxAgeHours" json:"outcomeMaxAgeHours" yaml:"outcomeMaxAgeHours"`
+	// RiskBudgets maps risk template (camelCase key) → risk_budget_pct of
+	// equity. Canonical §9: numeric pct lives in config, not code constants.
+	RiskBudgets map[string]float64 `mapstructure:"riskBudgets" json:"riskBudgets" yaml:"riskBudgets"`
+	// MaxLeverage caps leverage on decision tickets (0 → 5 fallback).
+	MaxLeverage float64 `mapstructure:"maxLeverage" json:"maxLeverage" yaml:"maxLeverage"`
 }
 
 // TelegramConfig holds Telegram delivery settings.

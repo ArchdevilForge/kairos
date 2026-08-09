@@ -1,0 +1,19 @@
+{
+  "path": "v3/kline/indicator-data",
+  "body": {
+    "indicator_key": [
+      "ma"
+    ],
+    "currency": "usd",
+    "period": 15,
+    "symbol": "btcusdt:binance"
+  },
+  "r": {
+    "success": true,
+    "message": "",
+    "status": 200,
+    "data": {
+      "list": {}
+    }
+  }
+}

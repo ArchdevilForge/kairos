@@ -331,3 +331,60 @@ func TestLoad_ExampleConfigAlignsWithTypes(t *testing.T) {
 		t.Fatal("example marketPulse.shadowMode should be true")
 	}
 }
+
+func TestOpportunity_RiskBudgetDefaults(t *testing.T) {
+	cfg, err := LoadString("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]float64{
+		"alignedSpring": 0.75,
+		"alignedSummer": 0.75,
+		"alignedAutumn": 0.40,
+		"counterTrend":  0.25,
+		"mixedContext":  0.0,
+		"noTrade":       0.0,
+	}
+	for k, v := range want {
+		if got := cfg.Opportunity.RiskBudgets[k]; got != v {
+			t.Fatalf("opportunity.riskBudgets.%s: got %v want %v", k, got, v)
+		}
+	}
+	if cfg.Opportunity.MaxLeverage != 5 {
+		t.Fatalf("opportunity.maxLeverage: got %v want 5", cfg.Opportunity.MaxLeverage)
+	}
+}
+
+func TestOpportunity_RiskBudgetOverride(t *testing.T) {
+	yaml := `
+opportunity:
+  riskBudgets:
+    counterTrend: 0.10
+    alignedAutumn: 0.30
+  maxLeverage: 3
+`
+	cfg, err := LoadString(yaml)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Opportunity.RiskBudgets["counterTrend"]; got != 0.10 {
+		t.Fatalf("counterTrend: got %v want 0.10", got)
+	}
+	if got := cfg.Opportunity.RiskBudgets["alignedAutumn"]; got != 0.30 {
+		t.Fatalf("alignedAutumn: got %v want 0.30", got)
+	}
+	// Unset keys keep the viper default (merge, not replace).
+	if got := cfg.Opportunity.RiskBudgets["alignedSpring"]; got != 0.75 {
+		t.Fatalf("alignedSpring: got %v want default 0.75", got)
+	}
+	if cfg.Opportunity.MaxLeverage != 3 {
+		t.Fatalf("maxLeverage: got %v want 3", cfg.Opportunity.MaxLeverage)
+	}
+}
+
+func TestValidate_RejectsNegativeRiskBudget(t *testing.T) {
+	_, err := LoadString("opportunity:\n  riskBudgets:\n    counterTrend: -0.1\n")
+	if err == nil {
+		t.Fatal("negative risk budget must fail validation")
+	}
+}

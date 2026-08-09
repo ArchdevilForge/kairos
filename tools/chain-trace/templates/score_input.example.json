@@ -1,0 +1,15 @@
+{
+  "co_funder": 0.9,
+  "co_time": 0.8,
+  "co_amount": 0.6,
+  "co_exit": 0.7,
+  "shared_sink": 0.8,
+  "pre_pump_accumulation": 0.9,
+  "early_cluster_share": 0.7,
+  "synchronized_exit": 0.6,
+  "shared_funder": 0.9,
+  "shared_sink_insider": 0.8,
+  "deterministic_strength": 0.8,
+  "cross_source_agreement": 0.7,
+  "temporal_stability": 0.9
+}
