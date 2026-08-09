@@ -1,0 +1,26 @@
+[Unit]
+Description=Meme Coin Early Discovery Monitor
+After=network.target
+
+[Service]
+Type=simple
+User=meme
+WorkingDirectory=/opt/meme-monitor
+EnvironmentFile=/opt/meme-monitor/.env
+ExecStart=/usr/bin/uv run python -m src.main
+Restart=always
+RestartSec=10
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=meme-monitor
+
+# Security
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/meme-monitor
+
+[Install]
+WantedBy=multi-user.target
