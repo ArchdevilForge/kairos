@@ -2,10 +2,12 @@ package storage
 
 import (
 	"bufio"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -33,6 +35,18 @@ func JournalPath(cfg types.StorageConfig) string {
 type Journal struct {
 	path string
 	mu   sync.Mutex
+	meta ResearchMeta
+}
+
+// SetMetadata attaches reproducibility metadata to all subsequently appended
+// lines. Call once at startup (engine wires git_sha/config_hash/strategy).
+func (j *Journal) SetMetadata(m ResearchMeta) {
+	if j == nil {
+		return
+	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.meta = m
 }
 
 // NewJournal opens or creates the trading journal.
@@ -57,6 +71,22 @@ type journalLine struct {
 	ID      string          `json:"id,omitempty"`
 	At      time.Time       `json:"at"`
 	Payload json.RawMessage `json:"payload"`
+
+	// Research metadata (P1): 保证半年后能复现"哪个版本的策略产生了这行记录"。
+	GitSHA          string `json:"git_sha,omitempty"`
+	ConfigHash      string `json:"config_hash,omitempty"`
+	StrategyVersion string `json:"strategy_version,omitempty"`
+	ExperimentID    string `json:"experiment_id,omitempty"`
+	Mode            string `json:"mode,omitempty"` // shadow | paper | live
+}
+
+// ResearchMeta is the reproducibility metadata attached to every journal line.
+type ResearchMeta struct {
+	GitSHA          string
+	ConfigHash      string
+	StrategyVersion string
+	ExperimentID    string
+	Mode            string
 }
 
 func (j *Journal) append(kind, id string, payload any) error {
@@ -67,7 +97,12 @@ func (j *Journal) append(kind, id string, payload any) error {
 	if err != nil {
 		return err
 	}
-	rec := journalLine{Kind: kind, ID: id, At: time.Now().UTC(), Payload: raw}
+	rec := journalLine{
+		Kind: kind, ID: id, At: time.Now().UTC(), Payload: raw,
+		GitSHA: j.meta.GitSHA, ConfigHash: j.meta.ConfigHash,
+		StrategyVersion: j.meta.StrategyVersion,
+		ExperimentID:    j.meta.ExperimentID, Mode: j.meta.Mode,
+	}
 	line, err := json.Marshal(rec)
 	if err != nil {
 		return err
@@ -380,4 +415,41 @@ func (j *Journal) ListOutcomes() ([]CounterfactualOutcome, error) {
 		out = append(out, latest[order[i]])
 	}
 	return out, nil
+}
+
+// DetectGitSHA returns the current commit revision: build-info vcs.revision
+// (release builds) or .git/HEAD (dev checkout). Empty when undetectable.
+func DetectGitSHA() string {
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		for _, s := range bi.Settings {
+			if s.Key == "vcs.revision" && s.Value != "" {
+				return s.Value
+			}
+		}
+	}
+	// Dev fallback: read .git/HEAD one level up from the working dir.
+	raw, err := os.ReadFile(filepath.Join("..", ".git", "HEAD"))
+	if err != nil {
+		return ""
+	}
+	ref := strings.TrimSpace(string(raw))
+	if !strings.HasPrefix(ref, "ref: ") {
+		return ref[:min(len(ref), 12)]
+	}
+	b, err := os.ReadFile(filepath.Join("..", ".git", strings.TrimPrefix(ref, "ref: ")))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))[:12]
+}
+
+// ConfigHashOf returns a short sha256 fingerprint of the marshaled config —
+// enough to distinguish "which config ran this session".
+func ConfigHashOf(v any) string {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(b)
+	return fmt.Sprintf("%x", sum[:6])
 }

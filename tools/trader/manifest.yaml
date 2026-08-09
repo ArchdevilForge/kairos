@@ -1,0 +1,9 @@
+# trader — 币安现货挂单脚本(执行层)
+name: trader
+role: Execute / Manual helper     # 与 kairos 人控边界分离
+status: experimental
+data_sources: [binance spot API]
+events: []
+execution_permissions: manual     # 人工确认后执行;绝不自动接入 playbook
+entrypoint: python trader.py --help
+owner_notes: 安全边界:playbook → Decision Ticket → Risk Guard → Human authorization → Execution Adapter,禁止直连

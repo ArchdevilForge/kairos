@@ -66,6 +66,7 @@ func run(args []string) error {
 		fmt.Printf("rejected:   n=%d complete=%d mean_net_r=%.4f win=%.2f\n", rep.Rejected.N, rep.Rejected.NComplete, rep.Rejected.MeanNetR, rep.Rejected.WinRate)
 		fmt.Printf("all:        n=%d complete=%d mean_net_r=%.4f\n", rep.AllQualified.N, rep.AllQualified.NComplete, rep.AllQualified.MeanNetR)
 		fmt.Printf("selection_alpha(net_r)=%.4f  rejection_mean_net_r=%.4f\n", rep.SelectionAlpha, rep.RejectionMeanR)
+		fmt.Printf("human_alpha(net-mech)=%.4f  (人工入场+退出 vs 机械规则; 正=干预加分 负=拖后腿)\n", rep.HumanAlpha)
 		return nil
 
 	case "decisions":

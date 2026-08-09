@@ -50,11 +50,11 @@ Observe  →  Interpret  →  Select  →  Decide  →  Execute  →  Learn
 
 ## 路线图（待办，非权威）
 
-- [ ] P0: schemas/event.v1.json（已建）→ 各 floor 统一契约
-- [ ] P0: make check-all + Python CI matrix（已建）
-- [ ] P1: Journal metadata（git_sha/config_hash/strategy_version/experiment_id/mode）
-- [ ] P1: Alpha Attribution 报告（Attention/Context/Selection/Entry/Exit 五段）
+- [x] P0: schemas/event.v1.json → 各 floor 统一契约（bus Event + oiscan 已对齐）
+- [x] P0: make check-all + Python CI matrix（9 个 Python 子项目）
+- [x] P1: Journal metadata（git_sha/config_hash/strategy_version/experiment_id/mode）
+- [x] P1: Alpha Attribution（SelectionAlpha + HumanAlpha；Entry/Exit 拆分待数据积累）
+- [x] P2: JSONL → DuckDB research layer（tools/research/）
+- [x] P2: 每个 floor 加 manifest.yaml（状态/数据源/事件/执行权限）
 - [ ] P1: 首个 playbook 积累数据后扩展第二/第三 playbook
-- [ ] P2: JSONL → Parquet/DuckDB research layer
-- [ ] P2: 每个 floor 加 manifest.yaml（状态/数据源/事件/执行权限）
 - [ ] P3: Rust / ML（暂无必要）

@@ -242,6 +242,13 @@ func NewPipeline(cfg *types.Config, tg *notify.TelegramClient) *Pipeline {
 		if journal, err := storage.NewJournal(cfg.Storage); err != nil {
 			log.Warn("trading journal disabled", "error", err)
 		} else {
+			// Reproducibility metadata on every journal line (P1).
+			journal.SetMetadata(storage.ResearchMeta{
+				GitSHA:          storage.DetectGitSHA(),
+				ConfigHash:      storage.ConfigHashOf(cfg),
+				StrategyVersion: "canonical-freeze-pr1",
+				Mode:            "live",
+			})
 			// Ticket sizing (riskBudgets/maxLeverage) comes from config
 			// (Canonical §9), never code constants.
 			ocfg := opportunity.ConfigFromTypes(cfg.Opportunity)

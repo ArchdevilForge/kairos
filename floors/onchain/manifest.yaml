@@ -1,0 +1,14 @@
+# meme-monitor — Dexscreener 多链新币发现
+name: onchain
+role: Observe                      # 新币早期发现
+status: active
+data_sources:
+  - dexscreener
+events:
+  - event_type: new_pair
+    severity: LOW
+    schema: kairos.event.v1
+execution_permissions: none
+entrypoint: uv run meme-monitor
+outbound: bus/inbound/onchain/*.jsonl
+owner_notes: 自带 Telegram Bot 推送,可改走 bus 统一门控

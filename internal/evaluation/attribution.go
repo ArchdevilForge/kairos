@@ -35,6 +35,11 @@ type SummaryReport struct {
 	SelectionAlpha float64 `json:"selection_alpha"`
 	RejectionMeanR float64 `json:"rejection_mean_net_r"`
 
+	// HumanAlpha = accepted.MeanNetR - accepted.MeanMechR:
+	// 人工入场+退出 vs 机械规则(Entry+Exit 合并)。正 = 人工干预加分,负 = 拖后腿。
+	// 拆分为 EntryAlpha/ExitAlpha 需要按人工 vs 机械入场点分别记账,留待数据积累。
+	HumanAlpha float64 `json:"human_alpha"`
+
 	ByTradeClass map[string]GroupStats `json:"by_trade_class,omitempty"`
 	ByGrade      map[string]GroupStats `json:"by_grade,omitempty"`
 	ByPlaybook   map[string]GroupStats `json:"by_playbook,omitempty"`
@@ -137,6 +142,7 @@ func Summarize(rows []TicketRow) SummaryReport {
 	rep.Missed = statsOf(miss)
 	rep.SelectionAlpha = round4(rep.Accepted.MeanNetR - rep.AllQualified.MeanNetR)
 	rep.RejectionMeanR = rep.Rejected.MeanNetR
+	rep.HumanAlpha = round4(rep.Accepted.MeanNetR - rep.Accepted.MeanMechR)
 	return rep
 }
 

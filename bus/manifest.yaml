@@ -1,0 +1,10 @@
+# kairos-bus — 事件总线(门控/去重/冷却/推送/聚合)
+name: bus
+role: 基础设施(全楼层共用)          # 不属于六步任何一步,是管道
+status: active
+data_sources: [inbound JSONL]
+events: []                         # 消费所有 floor 事件,不生产
+execution_permissions: none
+entrypoint: uv run kairos-bus run --config config.toml
+outbound: out/YYYY-MM-DD.jsonl + Telegram
+owner_notes: 告警纪律 1:1 复制自 kairos internal/engine/pipeline.go

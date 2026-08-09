@@ -1,0 +1,15 @@
+# pm-bot — Polymarket 天气策略机器人
+name: pm
+role: Observe + Decide             # 数据感知 + 策略评分(纸面)
+status: active                     # 纸面交易运行中
+data_sources:
+  - polymarket CLOB
+  - EMOS 气象模型
+events:
+  - event_type: spread_alert       # 价差监控(对应 pm-floor 职责)
+  - event_type: edge_alert
+    schema: kairos.event.v1
+execution_permissions: paper       # 仅纸面,无真实下单
+entrypoint: bash start.sh
+outbound: bus/inbound/pm/*.jsonl
+owner_notes: config.toml 不入库,用 config.template.toml 复制

@@ -55,3 +55,36 @@ func TestJournal_SessionTicketDecisionRoundTrip(t *testing.T) {
 		t.Fatalf("outs=%v err=%v", outs, err)
 	}
 }
+
+func TestJournalMetadataAttached(t *testing.T) {
+	dir := t.TempDir()
+	j, err := NewJournal(types.StorageConfig{DatabasePath: filepath.Join(dir, "k.db")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	j.SetMetadata(ResearchMeta{
+		GitSHA: "abc123", ConfigHash: "feedbeef",
+		StrategyVersion: "v1", ExperimentID: "exp-1", Mode: "shadow",
+	})
+	if err := j.SaveTicket(types.DecisionTicket{ID: "t1"}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := j.readAll()
+	if err != nil || len(rows) == 0 {
+		t.Fatalf("readAll: %v rows=%d", err, len(rows))
+	}
+	line := rows[0]
+	if line.GitSHA != "abc123" || line.ConfigHash != "feedbeef" ||
+		line.StrategyVersion != "v1" || line.ExperimentID != "exp-1" || line.Mode != "shadow" {
+		t.Fatalf("metadata missing: %+v", line)
+	}
+}
+
+func TestConfigHashOfStable(t *testing.T) {
+	h1 := ConfigHashOf(map[string]any{"a": 1, "b": "x"})
+	h2 := ConfigHashOf(map[string]any{"a": 1, "b": "x"})
+	h3 := ConfigHashOf(map[string]any{"a": 1, "b": "y"})
+	if h1 == "" || h1 != h2 || h1 == h3 {
+		t.Fatalf("hash unstable: %q %q %q", h1, h2, h3)
+	}
+}
