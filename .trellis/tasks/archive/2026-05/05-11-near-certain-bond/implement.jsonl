@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend coding standards, pre-development checklist"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Quality standards for strategy code"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Error handling patterns for async code"}
+{"file": ".trellis/spec/backend/trading-config.md", "reason": "Trading configuration patterns"}
+{"file": ".trellis/tasks/05-11-near-certain-bond/research/weather-strategies.md", "reason": "Research on near-certain bond, staged entry, cost constraint strategies"}
