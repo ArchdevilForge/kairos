@@ -35,3 +35,14 @@ jobs:
         run: go install golang.org/x/vuln/cmd/govulncheck@latest
 
       - run: make vuln
+
+  python-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+
+      # Monorepo Python 子项目(bus/floors/data-sources/coinglass/tools):
+      # 每个 uv sync(含 dev 组) + pytest。无测试项目容忍 exit 5。
+      - run: make check-python

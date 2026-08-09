@@ -1,4 +1,7 @@
-.PHONY: build vet test test-race lint fmt-check mod-check vuln check cover cover-check cross-check
+.PHONY: build vet test test-race lint fmt-check mod-check vuln check check-python check-all cover cover-check cross-check
+
+# Python 子项目(monorepo): 每个有 pyproject.toml 的目录
+PYTHON_PROJECTS := bus coinglass floors/meme floors/pm floors/solana floors/onchain data-sources/aicoin tools/chain-trace
 
 # Platforms the release workflow ships. Keep in sync with the matrix in
 # .github/workflows/release.yml.
@@ -60,5 +63,14 @@ cover-check: cover
 	@pct=$$(go tool cover -func=coverage.out | awk '/^total:/ {gsub(/%/,""); print $$3}'); \
 	echo "internal coverage: $$pct% (min $(COVERAGE_MIN)%)"; \
 	awk -v p="$$pct" -v m="$(COVERAGE_MIN)" 'BEGIN { if (p+0 < m+0) { exit 1 } }'
+
+# 每个 Python 子项目: uv sync(含 dev 组) + pytest。CI 与本地共用。
+check-python:
+	@set -e; for d in $(PYTHON_PROJECTS); do \
+		echo "== $$d"; \
+		(cd $$d && uv sync --quiet && (uv run pytest -q || test $$? -eq 5)); \
+	done
+
+check-all: check check-python
 
 check: build vet fmt-check mod-check lint test-race

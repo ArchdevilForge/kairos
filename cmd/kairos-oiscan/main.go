@@ -297,15 +297,33 @@ func classifyQuadrant(oiPct, pricePct float64) (string, string) {
 // ---------------------------------------------------------------------------
 
 type event struct {
-	Ts        string `json:"ts"`
-	Floor     string `json:"floor"`
-	EventType string `json:"event_type"`
-	Severity  string `json:"severity"`
-	Key       string `json:"key"`
-	Symbol    string `json:"symbol"`
-	Title     string `json:"title"`
-	Message   string `json:"message"`
-	Data      any    `json:"data"`
+	Ts            string `json:"ts"`
+	Floor         string `json:"floor"`
+	EventType     string `json:"event_type"`
+	Severity      string `json:"severity"`
+	Key           string `json:"key"`
+	Symbol        string `json:"symbol"`
+	Title         string `json:"title"`
+	Message       string `json:"message"`
+	Data          any    `json:"data"`
+	SchemaVersion string `json:"schema_version,omitempty"`
+	StrategyID    string `json:"strategy_id,omitempty"`
+	ExperimentID  string `json:"experiment_id,omitempty"`
+	Mode          string `json:"mode,omitempty"`
+	Venue         string `json:"venue,omitempty"`
+	Direction     string `json:"direction,omitempty"`
+	ParentEventID string `json:"parent_event_id,omitempty"`
+}
+
+func directionOf(pricePct float64) string {
+	switch {
+	case pricePct > 0.5:
+		return "up"
+	case pricePct < -0.5:
+		return "down"
+	default:
+		return "neutral"
+	}
 }
 
 func writeEvents(outDir string, evs []event) (int, error) {
@@ -383,9 +401,15 @@ func scanOnce(ctx context.Context, cfg config) error {
 		oiSurge := event{
 			Ts: time.Now().UTC().Format("2006-01-02T15:04:05Z"), Floor: "futures",
 			EventType: "oi_surge", Severity: "LOW",
-			Key:    sym + "-" + roundKey,
-			Symbol: sym,
-			Title:  fmt.Sprintf("全市场 OI 异动: %s h1OI %+.1f%%", r.Symbol, r.H1OIChangePercent),
+			SchemaVersion: "kairos.event.v1",
+			Key:           sym + "-" + roundKey,
+			Symbol:        sym,
+			StrategyID:    "oi_launch_v1",
+			ExperimentID:  "exp-" + roundKey[:8],
+			Mode:          "shadow",
+			Venue:         "binance",
+			Direction:     directionOf(bc.PriceH1Pct),
+			Title:         fmt.Sprintf("全市场 OI 异动: %s h1OI %+.1f%%", r.Symbol, r.H1OIChangePercent),
 			Message: fmt.Sprintf("h1OI %+.1f%% h4OI %+.1f%% OI24h %+.1f%% | OI $%.0fM | quadrant=%s",
 				r.H1OIChangePercent, r.H4OIChangePercent, r.OIChangePercent,
 				r.OpenInterest/1e6, bc.Quadrant),
@@ -398,9 +422,16 @@ func scanOnce(ctx context.Context, cfg config) error {
 			evs = append(evs, event{
 				Ts: time.Now().UTC().Format("2006-01-02T15:04:05Z"), Floor: "futures",
 				EventType: "launch_confirmed", Severity: "HIGH",
-				Key:    sym + "-" + roundKey,
-				Symbol: sym,
-				Title:  fmt.Sprintf("合约启动确认: %s (大户多头 %.0f%%)", r.Symbol, bc.TopLongPct),
+				SchemaVersion: "kairos.event.v1",
+				StrategyID:    "oi_launch_v1",
+				ExperimentID:  "exp-" + roundKey[:8],
+				Mode:          "shadow",
+				Venue:         "binance",
+				Direction:     directionOf(bc.PriceH1Pct),
+				ParentEventID: sym + "-" + roundKey + "-oi_surge",
+				Key:           sym + "-" + roundKey,
+				Symbol:        sym,
+				Title:         fmt.Sprintf("合约启动确认: %s (大户多头 %.0f%%)", r.Symbol, bc.TopLongPct),
 				Message: fmt.Sprintf("%s | OI5m %+.1f%% 价1h %+.1f%% 大户多 %.1f%% funding %.4f%%",
 					bc.QuadrantExplain, bc.OI5mTrendPct, bc.PriceH1Pct, bc.TopLongPct, bc.FundingRate),
 				Data: map[string]any{"market": r, "confirm": bc},
@@ -411,9 +442,16 @@ func scanOnce(ctx context.Context, cfg config) error {
 			evs = append(evs, event{
 				Ts: time.Now().UTC().Format("2006-01-02T15:04:05Z"), Floor: "futures",
 				EventType: "launch_fading", Severity: "HIGH",
-				Key:    sym + "-" + roundKey,
-				Symbol: sym,
-				Title:  fmt.Sprintf("启动衰减: %s OI 回落", r.Symbol),
+				SchemaVersion: "kairos.event.v1",
+				StrategyID:    "oi_launch_v1",
+				ExperimentID:  "exp-" + roundKey[:8],
+				Mode:          "shadow",
+				Venue:         "binance",
+				Direction:     directionOf(bc.PriceH1Pct),
+				ParentEventID: sym + "-" + roundKey + "-oi_surge",
+				Key:           sym + "-" + roundKey,
+				Symbol:        sym,
+				Title:         fmt.Sprintf("启动衰减: %s OI 回落", r.Symbol),
 				Message: fmt.Sprintf("%s | OI5m %+.1f%% 价1h %+.1f%%",
 					bc.QuadrantExplain, bc.OI5mTrendPct, bc.PriceH1Pct),
 				Data: map[string]any{"market": r, "confirm": bc},

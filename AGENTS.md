@@ -19,8 +19,10 @@ It scans futures markets, detects hard-data anomalies, scores deterministic setu
 
 | Task type | Read first | Trigger |
 | --- | --- | --- |
-| Architecture changes | `docs/architecture.md` | Runtime boundary, alert delivery, risk output |
-| Strategy changes | `docs/trading-system.md` | Trading philosophy, setup logic, risk discipline |
+| 文档地图 | `docs/INDEX.md` | 权威链 + 六步主干 + 知识目录 |
+| 教义/策略 | `docs/10-doctrine/KAIROS_DOCTRINE.md` | canonical freeze: 工作流 + 硬规则(唯一权威) |
+| 模型 | `docs/20-models/` | MarketPulse / CycleModel |
+| 工程架构 | `docs/90-engineering/adr/` | 架构决策记录 |
 | Config changes | `config/config.yaml.example` | Detector thresholds, scanner limits, Telegram settings |
 
 ## Trading System Boundary

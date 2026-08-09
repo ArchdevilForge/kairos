@@ -16,3 +16,6 @@ dependencies = [
 
 [tool.setuptools.packages.find]
 include = ["aicoin_api*"]
+
+[dependency-groups]
+dev = ["pytest>=8.0"]

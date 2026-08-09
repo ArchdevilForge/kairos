@@ -19,3 +19,6 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["rh_sniper"]
+
+[dependency-groups]
+dev = ["pytest>=8.0"]

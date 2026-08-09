@@ -1,5 +1,10 @@
 # Bit浪浪完整交易系统
 
+> **Status: Source 层(交易思想来源),非权威规则。**
+> 未经 `Source → Hypothesis → Finding → Canonical` 生命周期验证前,
+> 任何内容不进入 KAIROS_DOCTRINE 或 playbook。
+# Bit浪浪完整交易系统
+
 ---
 
 ## 一、核心交易哲学

@@ -1,6 +1,8 @@
 # Kairos Architecture Baseline
 
-> Status: authoritative baseline as of 2026-06-27.
+> Status: **DEPRECATED — archived 2026-08-09。非权威,不参与裁决。**
+> 权威架构见 `docs/INDEX.md` authority chain(doctrine > models > code)。
+> 保留仅供追溯旧 scanner/candidate_score/setup_score 模型。
 
 Kairos is a human-controlled cryptocurrency futures alert system.
 

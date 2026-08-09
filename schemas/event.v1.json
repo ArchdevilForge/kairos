@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "kairos.event.v1",
+  "title": "Kairos Event v1",
+  "description": "所有 floor → kairos-bus 的统一事件契约。必填字段与 kairos-bus Event 对齐;研究元数据(实验/策略/模式)为可选但强烈建议,缺则无法做 Alpha attribution。",
+  "type": "object",
+  "required": [
+    "event_type",
+    "severity",
+    "symbol",
+    "title",
+    "message"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "kairos.event.v1",
+      "description": "契约版本。生产端不写时,总线默认补 kairos.event.v1。"
+    },
+    "event_id": {
+      "type": "string",
+      "description": "全局唯一事件 id(建议 <floor>-<ts>-<hash>)。"
+    },
+    "parent_event_id": {
+      "type": "string",
+      "description": "上游事件 id(如 launch_confirmed 的父事件 oi_surge),用于归因链。"
+    },
+    "floor": {
+      "type": "string",
+      "description": "楼层: futures | meme | pm | solana | onchain ..."
+    },
+    "strategy_id": {
+      "type": "string",
+      "description": "策略标识,如 oi_launch_v1。研究 EV 的关键分组键。"
+    },
+    "experiment_id": {
+      "type": "string",
+      "description": "实验标识,如 exp-20260809-001。同一策略不同版本用实验区分。"
+    },
+    "mode": {
+      "enum": [
+        "shadow",
+        "paper",
+        "live"
+      ],
+      "description": "运行模式。shadow 不推送/不产生 outcome;paper 纸面;live 真实。"
+    },
+    "venue": {
+      "type": "string",
+      "description": "交易所/场所: binance | polymarket | dexscreener ..."
+    },
+    "symbol": {
+      "type": "string",
+      "description": "标的,如 TUTUSDT。cooldown 键。"
+    },
+    "observed_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "市场现象发生时间(数据时间)。"
+    },
+    "produced_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "事件产生时间(总线 ts)。"
+    },
+    "event_type": {
+      "type": "string",
+      "description": "事件类型,如 launch_confirmed / sniper_signal / spread_alert。楼层 allow-list 依据。"
+    },
+    "direction": {
+      "enum": [
+        "up",
+        "down",
+        "neutral"
+      ],
+      "description": "方向。calibrate 的方向基线依赖它。"
+    },
+    "severity": {
+      "enum": [
+        "LOW",
+        "MEDIUM",
+        "HIGH"
+      ],
+      "description": "门控依据。"
+    },
+    "key": {
+      "type": "string",
+      "description": "去重键(event_type 内)。"
+    },
+    "title": {
+      "type": "string"
+    },
+    "message": {
+      "type": "string"
+    },
+    "data": {
+      "type": "object",
+      "description": "自由扩展负载。未知顶层字段自动进 data,不丢弃。"
+    }
+  },
+  "additionalProperties": true
+}

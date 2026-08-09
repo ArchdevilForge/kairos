@@ -1,24 +1,47 @@
-# kairos
+# kairos — Personal Trading Research & Decision OS
 
 > καιρός — 关键时刻，恰当时机
 
-Crypto futures **market attention** alert system. 确定性的链上门槛数据监控；不自动下单。
+**Kairos = 你的个人交易研究、市场感知、主观决策、策略实验、执行辅助、复盘与 Alpha 验证的统一仓库。**
 
-主产品：MarketPulse 判断「整个市场何时值得打开盘面」。单币检测器解释「谁在动」；scanner 仅作告警后的可选解释层，不默认定时推送入场/止损。
+它不是"一堆交易 bot"，而是一个**可执行知识库**：每个交易观点都有路径变成可验证的规则
+（`Source → Hypothesis → Experiment → Finding → Canonical`）。
 
-Go 单体仓库：`cmd/` 入口 + `internal/` 实现；monorepo 子目录：
+## 六步主干
 
-- `bus/` — kairos-bus（Python 事件总线：楼层 JSONL → 门控 → Telegram → 聚合输出）
-- `coinglass/` — coinglass-decrypt（Python 参考实现，Go 原生解密在 `internal/data/coinglass.go`）
-- `floors/meme/` — rh-sniper（Robinhood 链 meme sniper → bus meme floor `sniper_signal`）
-- `floors/pm/` — pm-bot（Polymarket 天气策略机器人 + 纸面交易 → bus pm floor）
-- `floors/solana/` — smartalpha（Solana pump.fun smart-money 分析 → 链上楼层）
-- `floors/onchain/` — meme-monitor（Dexscreener 多链 meme 早发现 → 链上楼层）
-- `data-sources/aicoin/` — aicoin-api（AiCoin 行情/资金流 wrapper）
-- `tools/chain-trace/` — chain-trace（零 key 链上取证）
-- `tools/trader/` — trader（币安现货挂单脚本；执行层，与 kairos 人控边界无关，使用需自行确认）
+```text
+Observe → Interpret → Select → Decide → Execute → Learn
+```
 
-## Architecture
+| 步骤 | 组件 | 位置 |
+|---|---|---|
+| Observe | MarketPulse / 检测器 / kairos-oiscan / floors(meme·pm·solana·onchain) / data-sources | `internal/detector` `cmd/kairos-oiscan` `floors/` |
+| Interpret | CycleMap（Context 1d+4h / Setup 1h+15m / Trigger 5m） | `internal/cycle` |
+| Select | Directional Ranker | `internal/ranker` |
+| Decide | Playbook → Decision Ticket | `internal/playbook` `internal/opportunity` |
+| Execute | Human decision + manual execution（trader 仅执行辅助） | `tools/trader` |
+| Learn | Journal → Counterfactual → EV Attribution | `internal/storage` `internal/evaluation` `cmd/kairos-eval` |
+
+> 加任何东西先问：它属于哪一步？回答不出来就先别加。
+
+## Monorepo 布局
+
+```text
+cmd/ internal/ config/     Go 主引擎(检测器/MarketPulse/CycleMap/ranker/playbook/ticket/journal)
+bus/                       Python 事件总线(JSONL → 门控 → Telegram → 聚合输出)
+floors/meme/               rh-sniper      Robinhood 链 meme sniper
+floors/pm/                 pm-bot         Polymarket 天气策略 + 纸面交易
+floors/solana/             smartalpha     pump.fun smart-money 分析
+floors/onchain/            meme-monitor   Dexscreener 多链新币发现
+data-sources/aicoin/       AiCoin 行情/资金流 wrapper
+coinglass/                 CoinGlass 解密参考实现(Go 原生在 internal/data/coinglass.go)
+tools/chain-trace/         零 key 链上取证
+tools/trader/              币安现货挂单脚本(执行层, 与 kairos 人控边界无关)
+schemas/                   事件契约(所有 floor 统一语言)
+docs/                      权威链 + 知识目录, 入口 docs/INDEX.md
+```
+
+## 架构
 
 ```text
 Exchange WebSocket  ──→  单币检测器（价格/成交量/OI/资金费率）
@@ -31,7 +54,10 @@ kairos-oiscan ──→  全市场 OI 异动(发现+确认)  ──→  bus/inbo
 floors/*(pm/meme/solana) ──→  bus/inbound/<floor>/*.jsonl
 ```
 
-详见 `docs/GOAL_MARKET_PULSE.md`。90 天主 KPI：告警后 5m 延续 vs **non-alert directional baseline** 的 `experimental_lift_5m`（小样本仅 exploratory）。
+## 文档与权威
+
+权威链唯一，冲突裁决见 `docs/00-system/AUTHORITY.md`；完整地图见 `docs/INDEX.md`。
+90 天主 KPI：告警后 5m 延续 vs **non-alert directional baseline** 的 `experimental_lift_5m`（小样本仅 exploratory）。
 
 ## Build & Commands
 
