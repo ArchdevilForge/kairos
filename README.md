@@ -13,8 +13,10 @@ Go 单体仓库：`cmd/` 入口 + `internal/` 实现；monorepo 子目录：
 - `floors/meme/` — rh-sniper（Robinhood 链 meme sniper → bus meme floor `sniper_signal`）
 - `floors/pm/` — pm-bot（Polymarket 天气策略机器人 + 纸面交易 → bus pm floor）
 - `floors/solana/` — smartalpha（Solana pump.fun smart-money 分析 → 链上楼层）
+- `floors/onchain/` — meme-monitor（Dexscreener 多链 meme 早发现 → 链上楼层）
 - `data-sources/aicoin/` — aicoin-api（AiCoin 行情/资金流 wrapper）
 - `tools/chain-trace/` — chain-trace（零 key 链上取证）
+- `tools/trader/` — trader（币安现货挂单脚本；执行层，与 kairos 人控边界无关，使用需自行确认）
 
 ## Architecture
 
