@@ -1,0 +1,58 @@
+{
+  "path": "v3/newsflash/top-flash",
+  "body": {},
+  "r": {
+    "success": true,
+    "message": "",
+    "status": 200,
+    "data": {
+      "top_list": [
+        {
+          "id": 3000474,
+          "title": "贝莱德向 Coinbase Prime 转移 3126 枚 BTC，价值约 2.03 亿美元",
+          "content": "据 Onchain Lens 监测，贝莱德从 IBIT 比特币 ETF 钱包向 Coinbase Prime 转移 3126 枚 BTC，价值约 2.03 亿美元，该转移包含数笔 300 枚 BTC 的转账和一笔 126.168 枚 BTC 的转账。",
+          "timestamp": 1784895895,
+          "source": "AiCoin",
+          "up_count": 12,
+          "down_count": 62,
+          "sentiment": "down",
+          "person_opinion": "null",
+          "is_important": 1,
+          "link": "",
+          "pic_link": "",
+          "type": "1"
+        },
+        {
+          "id": 3000829,
+          "title": "Nic Carter 称美国政府将利用量子技术破解 Bitcoin",
+          "content": "Nic Carter 在 Galaxy Digital Brains 播客中表示，美国政府将利用量子计算机破解 Bitcoin 并将其存入信托，原持有者可在之后申请取回。（Bitcoin Archive）",
+          "timestamp": 1784907500,
+          "source": "AiCoin",
+          "up_count": 10,
+          "down_count": 48,
+          "sentiment": "down",
+          "person_opinion": "null",
+          "is_important": 1,
+          "link": "https://www.twitter.com//status/2080678636152119438",
+          "pic_link": "",
+          "type": "1"
+        },
+        {
+          "id": 3000696,
+          "title": "以色列总理内塔尼亚胡下周二将会见美国总统特朗普",
+          "content": "以色列方面表示，总理内塔尼亚胡下周二将会见美国总统特朗普。",
+          "timestamp": 1784903342,
+          "source": "AiCoin",
+          "up_count": 32,
+          "down_count": 9,
+          "sentiment": "up",
+          "person_opinion": "null",
+          "is_important": 1,
+          "link": "",
+          "pic_link": "",
+          "type": "1"
+        }
+      ]
+    }
+  }
+}
