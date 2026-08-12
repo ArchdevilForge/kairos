@@ -92,6 +92,85 @@ def sql(db, query):
     con.close()
 
 
+# ── H-005: Launch Demand → Aftermarket(docs/40-research/hypotheses/H-005) ────
+
+H005_SQL = """
+WITH closed AS (
+    SELECT key AS auction,
+           CAST(data.unique_bidders AS INT)    AS unique_bidders,
+           CAST(data.bid_count AS INT)         AS bid_count,
+           TRY_CAST(data.amount_total AS DOUBLE) AS amount_total,
+           CAST(data.top1_share AS DOUBLE)     AS top1_share,
+           CAST(data.top5_share AS DOUBLE)     AS top5_share,
+           COALESCE(CAST(data.auction_state.isGraduated AS INT), 0) AS graduated
+    FROM launch_events
+    WHERE event_type = 'launch_auction_closed'
+),
+bucketed AS (
+    SELECT *, NTILE(4) OVER (ORDER BY unique_bidders) AS demand_q
+    FROM closed
+)
+SELECT demand_q,
+       count(*)                    AS n,
+       median(unique_bidders)      AS med_bidders,
+       median(bid_count)           AS med_bids,
+       round(avg(top5_share), 3)   AS avg_top5_share,
+       round(avg(graduated), 3)    AS graduation_rate
+FROM bucketed
+GROUP BY demand_q
+ORDER BY demand_q
+"""
+
+
+def h005(launch_dir: str, out: str | None):
+    """H-005 判定: demand 分位 × graduation 率(价格采样上线前的 v0 结果变量)。
+
+    kill test(docs/GOAL_LAUNCH_DATA_AND_RISK_GATE.md §5): 样本 ≥100 且
+    top 分位与全体无可辨别差异 → 假设 reject。样本不足时只报告进度,不下结论。
+    """
+    d = Path(launch_dir)
+    files = sorted(d.glob("*.jsonl")) if d.is_dir() else []
+    if not files:
+        print(f"无数据: {launch_dir} 下没有 JSONL(采集器还没跑?)")
+        return 1
+    con = duckdb.connect()
+    flist = ", ".join(f"'{f}'" for f in files)
+    con.execute(
+        f"CREATE VIEW launch_events AS SELECT * FROM read_json_auto([{flist}], union_by_name=true)"
+    )
+    total, closed = con.execute(
+        "SELECT count(*), count(*) FILTER (event_type = 'launch_auction_closed') FROM launch_events"
+    ).fetchone()
+
+    lines = [
+        f"# H-005 判定报告({__import__('datetime').date.today().isoformat()})",
+        "",
+        f"- launch 事件总数: {total}({len(files)} 个文件)",
+        f"- 已收盘 CCA auction 样本: {closed}",
+        "",
+    ]
+    if closed < 20:
+        lines.append(f"**样本不足**(n={closed} < 20): 继续采集,不下结论。")
+    else:
+        lines.append("| demand 分位 | n | 中位 bidders | 中位 bids | 平均 top5 集中度 | graduation 率 |")
+        lines.append("|---|---|---|---|---|---|")
+        for row in con.execute(H005_SQL).fetchall():
+            lines.append("| " + " | ".join(str(v) for v in row) + " |")
+        lines.append("")
+        lines.append("> 判定口径: top 分位 graduation 率显著高于 Q1 → demand 信号有值;")
+        lines.append("> 无差异且 n≥100 → kill test 触发,H-005 reject。")
+        lines.append("> 价格 return_1h/4h 结果变量待 outcome 采样上线后并入。")
+    con.close()
+
+    text = "\n".join(lines)
+    print(text)
+    if out:
+        Path(out).parent.mkdir(parents=True, exist_ok=True)
+        Path(out).write_text(text + "\n")
+        print(f"\n已写入: {out}")
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(description="kairos research layer (JSONL → DuckDB)")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -105,6 +184,9 @@ def main():
     p_sql = sub.add_parser("sql")
     p_sql.add_argument("--db", default="research.duckdb")
     p_sql.add_argument("query")
+    p_h5 = sub.add_parser("h005", help="H-005 launch demand 判定(读 bus/inbound/launch)")
+    p_h5.add_argument("--launch-dir", default="../../bus/inbound/launch")
+    p_h5.add_argument("--out", help="可选: 输出 markdown 到 docs/40-research/experiments/")
     args = ap.parse_args()
 
     if args.cmd == "load":
@@ -113,6 +195,8 @@ def main():
         report(args.db, args.which)
     elif args.cmd == "sql":
         sql(args.db, args.query)
+    elif args.cmd == "h005":
+        return h005(args.launch_dir, args.out)
 
 
 if __name__ == "__main__":

@@ -30,6 +30,10 @@ uv run python research.py report --which launch_events --db research.duckdb
 
 # 任意 SQL(ad-hoc 归因)
 uv run python research.py sql "SELECT event_type, count(*) FROM events GROUP BY 1" --db research.duckdb
+
+# H-005 launch demand 判定(读 bus/inbound/launch,样本<20 只报进度)
+uv run python research.py h005 --launch-dir ../../bus/inbound/launch \
+  --out ../../docs/40-research/experiments/H-005-report.md
 ```
 
 ## 常用分析方向

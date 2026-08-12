@@ -8,12 +8,21 @@ data_sources:
   - uniswap LiquidityLauncher 0x00cCa200BF124dBfA848937c553864f4B4CE0632
   - uniswap LBPStrategy 0x00004c4ccc709Ef590F7C81102C0689F0263D4e9
 events:
-  - event_type: launch_auction_created
+  - event_type: launch_token_created      # curve/instant launch(双入口合约)
     severity: LOW
     schema: kairos.event.v1
-  - event_type: launch_auction_update     # clearing price / bid 快照
+  - event_type: launch_auction_created    # CCA crowd launch 拍卖创建
+    severity: LOW
+  - event_type: launch_auction_update     # demand 快照(bidders/top5/clearing)
+    severity: LOW
+  - event_type: launch_auction_closed     # 收盘 demand 特征 + graduation
+    severity: LOW
+  - event_type: launch_scan_gap           # RPC 不可达留下的数据缺口(不伪造)
     severity: LOW
 execution_permissions: none
 entrypoint: uv run python launch_collector.py watch --out ../../bus/inbound/launch
 outbound: bus/inbound/launch/*.jsonl
-owner_notes: 只采集不交易;pools.trade 非 Uniswap 官方前端,以合约地址为准。
+owner_notes: >-
+  只采集不交易;两个入口合约都监听(漏一个 = 漏 ~40% launch)。公共 RPC 限流,
+  生产建议设 ROBINHOOD_RPC_URL(Alchemy 免费层/blockmachine)。
+  H-005 判定: tools/research `uv run python research.py h005`。
