@@ -266,6 +266,38 @@ Trigger beauty cannot override Context risk limits.
 
 ---
 
+## 9b. 行为 Risk Gate（2026-08-09 加入，来自真实交易画像）
+
+> 依据：2026-02→08 共 70 笔已关闭仓位（WR 42.9%、PF 0.76、-67.32 USDT）+
+> 2026-06 独立样本 25 笔（WR 44%、PF 0.90）。两份数据共同结论：负 EV 的主要来源
+> 是**单币反复交易 + 逆势 + 超短持仓**，不是胜率本身。
+
+硬规则（违反 = 该笔不算合格交易，不产生 ticket）：
+
+```text
+1. Isolated only            — 实验账户一律逐仓;Cross 共享保证金 = 一笔爆全爆。
+2. no <5m discretionary     — 禁止 5 分钟内人工剥头皮(6 笔 0 胜 -29.76)。
+3. loss → 同币 cooldown     — 亏损平仓后同币 30–60min 冷却,除非产生新 Setup ID。
+4. direction from CycleMap  — 禁止"涨多了感觉该空";空头必须有 DOWN context + 弱势币 rank。
+5. evening live window     — 18:00–01:00(UTC+8) 才允许 live_eligible;
+                              其他时间只 Observe/Shadow/Counterfactual。
+6. risk sizing             — 单笔预设最大损失 $2–4(挑战账户 $100 口径)。
+7. liquidation ≠ stop      — 爆仓永远不是止损;止损在进入前设定。
+```
+
+双向引擎（$100 → $1000 挑战，2026-08 起）：
+
+```text
+Engine A — Binance(约 $40): 吃 2R–5R 的系统化机会,晚上窗口,Isolated。
+Engine B — Meme Launchpad(约 $40): 只做 Spot,凸性下注,单笔 $5–10 probe,允许归零。
+Reserve — $20: gas/测试/补充 bankroll,不交易。
+```
+
+Meme 退出逻辑不截断右尾：1.5x 观察 / 2x 回收本金 / 3–5x 分批 / 剩余 runner
+（具体阶梯等 Launch 数据回测后定，不拍脑袋）。
+
+---
+
 ## 10. Stage-1 success criteria
 
 Engineering:
