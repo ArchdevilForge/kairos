@@ -1,6 +1,6 @@
 # Goal: Launch 数据管道 + 行为 Risk Gate 机械化
 
-> 状态：Draft / 可直接执行
+> 状态：Completed（2026-08-12 全部 5 个 PR 交付：collector v2 / demand 特征 / BehaviorGate / desk+eval 集成 / H-005 报告）
 > 目标仓库：`ArchdevilForge/kairos`
 > 建议路径：`docs/GOAL_LAUNCH_DATA_AND_RISK_GATE.md`
 > 核心原则：数据窗口期优先（Pools.trade 2026-08-05 才公开，叙事第 1 个月）；教义只在被代码执行时才有价值。

@@ -31,6 +31,8 @@ It scans futures markets, detects hard-data anomalies, scores deterministic setu
 
 - **kairosd** (`cmd/kairosd`): realtime WebSocket anomaly watcher → Telegram
 - **kairos-alert** (`cmd/kairos-alert`): one-shot deterministic scanner summary → Telegram
+- **kairos-desk** (`cmd/kairos-desk`): human decision CLI; accept 前经 BehaviorGate（教义 9b 行为红线）机械判定
+- **kairos-eval** (`cmd/kairos-eval`): journal EV attribution + gate 合规报告
 - **human**: final chart review, trade selection, sizing, entries, exits
 
 ### CLI Commands
@@ -43,7 +45,10 @@ go build -o kairos-oiscan ./cmd/kairos-oiscan   # 全市场 OI 异动扫描 → 
 ./kairosd --config config/config.yaml               # Realtime hard-data Telegram alerts
 ./kairos-alert --config config/config.yaml --dry-run
 ./kairos-backtest --symbol BTC/USDT --start 2024-01-01 --end 2024-06-01
+go run ./cmd/kairos-desk gate <ticket-id>           # BehaviorGate dry-run 判定
+go run ./cmd/kairos-eval gate                       # gate 合规报告
 make check                                          # build + vet + lint + test -race
+make check-python                                   # 10 个 Python 子项目 uv sync + pytest
 ```
 
 ### Risk Constraints

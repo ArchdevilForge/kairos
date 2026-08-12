@@ -24,12 +24,12 @@ Observe  →  Interpret  →  Select  →  Decide  →  Execute  →  Learn
 
 | 步骤 | 组件 | 仓库位置 |
 |---|---|---|
-| Observe | MarketPulse / kairos-oiscan / floors(meme,pm,solana,onchain) / data-sources | `internal/detector`, `cmd/kairos-oiscan`, `floors/`, `data-sources/` |
+| Observe | MarketPulse / kairos-oiscan / floors(meme,pm,solana,onchain,launch) / data-sources | `internal/detector`, `cmd/kairos-oiscan`, `floors/`, `data-sources/` |
 | Interpret | CycleMap | `internal/cycle` |
 | Select | Directional Ranker | `internal/ranker` |
-| Decide | Playbook → Decision Ticket | `internal/playbook`, `internal/opportunity` |
-| Execute | Human（manual）；trader 仅执行辅助 | `tools/trader` |
-| Learn | Journal → Counterfactual → EV Attribution | `internal/storage`, `internal/evaluation`, `cmd/kairos-eval` |
+| Decide | Playbook → Decision Ticket → BehaviorGate（教义 9b 机械执行） | `internal/playbook`, `internal/opportunity`, `internal/decision` |
+| Execute | Human（manual，经 kairos-desk 记录决策）；trader 仅执行辅助 | `cmd/kairos-desk`, `tools/trader` |
+| Learn | Journal → Counterfactual → EV Attribution → Gate 合规报告 | `internal/storage`, `internal/evaluation`, `cmd/kairos-eval` |
 
 ## 交易知识目录
 
@@ -50,12 +50,25 @@ Observe  →  Interpret  →  Select  →  Decide  →  Execute  →  Learn
 
 ## 路线图（待办，非权威）
 
+> 第一性原理：仓库的价值 = 闭环转速（观点 → 数据 → EV → canonical → ticket → 复盘）。
+> 采集器已经够多，当前瓶颈不是写更多代码，而是**让闭环真正跑起来**：
+> 数据常驻落盘、每笔交易过 gate、假设按样本量出判定。
+> 新增任何 floor/工具前先回答两个问题：它属于六步哪一步？现有 floor 的数据被消费了吗？
+
+已完成：
+
 - [x] P0: schemas/event.v1.json → 各 floor 统一契约（bus Event + oiscan 已对齐）
-- [x] P0: make check-all + Python CI matrix（9 个 Python 子项目）
+- [x] P0: make check-all + Python CI matrix（10 个 Python 子项目）
 - [x] P1: Journal metadata（git_sha/config_hash/strategy_version/experiment_id/mode）
 - [x] P1: Alpha Attribution（SelectionAlpha + HumanAlpha；Entry/Exit 拆分待数据积累）
 - [x] P2: JSONL → DuckDB research layer（tools/research/）
 - [x] P2: 每个 floor 加 manifest.yaml（状态/数据源/事件/执行权限）
-- [ ] P0: Launch 数据管道 + 行为 Risk Gate 机械化 → `GOAL_LAUNCH_DATA_AND_RISK_GATE.md`
+- [x] P0: Launch 数据管道 + 行为 Risk Gate 机械化（2026-08-12 交付）→ `GOAL_LAUNCH_DATA_AND_RISK_GATE.md`
+
+进行中（运营闭环，不是写新代码）：
+
+- [ ] P0: launch collector 常驻运行（deploy/ 或 tmux/systemd），监控 `launch_scan_gap` 数据缺口
+- [ ] P0: 每笔真实交易走 `kairos-desk` 决策（BehaviorGate 机械执法），复盘进 `50-reviews/`
+- [ ] P1: H-005 拍卖样本 ≥100 场后跑 `tools/research h005` 出判定（promote/reject）；H-006/H-007 同理
 - [ ] P1: 首个 playbook 积累数据后扩展第二/第三 playbook
 - [ ] P3: Rust / ML（暂无必要）

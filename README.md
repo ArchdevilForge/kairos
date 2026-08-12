@@ -15,12 +15,12 @@ Observe → Interpret → Select → Decide → Execute → Learn
 
 | 步骤 | 组件 | 位置 |
 |---|---|---|
-| Observe | MarketPulse / 检测器 / kairos-oiscan / floors(meme·pm·solana·onchain) / data-sources | `internal/detector` `cmd/kairos-oiscan` `floors/` |
+| Observe | MarketPulse / 检测器 / kairos-oiscan / floors(meme·pm·solana·onchain·launch) / data-sources | `internal/detector` `cmd/kairos-oiscan` `floors/` |
 | Interpret | CycleMap（Context 1d+4h / Setup 1h+15m / Trigger 5m） | `internal/cycle` |
 | Select | Directional Ranker | `internal/ranker` |
-| Decide | Playbook → Decision Ticket | `internal/playbook` `internal/opportunity` |
-| Execute | Human decision + manual execution（trader 仅执行辅助） | `tools/trader` |
-| Learn | Journal → Counterfactual → EV Attribution | `internal/storage` `internal/evaluation` `cmd/kairos-eval` |
+| Decide | Playbook → Decision Ticket → BehaviorGate（教义 9b 行为红线机械执法） | `internal/playbook` `internal/opportunity` `internal/decision` |
+| Execute | Human decision（经 kairos-desk 记录 + gate 判定）+ manual execution（trader 仅执行辅助） | `cmd/kairos-desk` `tools/trader` |
+| Learn | Journal → Counterfactual → EV Attribution → Gate 合规报告 | `internal/storage` `internal/evaluation` `cmd/kairos-eval` |
 
 > 加任何东西先问：它属于哪一步？回答不出来就先别加。
 
@@ -33,9 +33,11 @@ floors/meme/               rh-sniper      Robinhood 链 meme sniper
 floors/pm/                 pm-bot         Polymarket 天气策略 + 纸面交易
 floors/solana/             smartalpha     pump.fun smart-money 分析
 floors/onchain/            meme-monitor   Dexscreener 多链新币发现
+floors/launch/             launch-collector  Robinhood Chain CCA launchpad 数据管道(H-005/006/007)
 data-sources/aicoin/       AiCoin 行情/资金流 wrapper
 coinglass/                 CoinGlass 解密参考实现(Go 原生在 internal/data/coinglass.go)
 tools/chain-trace/         零 key 链上取证
+tools/research/            JSONL → DuckDB 研究层(H-005 等假设判定报告)
 tools/trader/              币安现货挂单脚本(执行层, 与 kairos 人控边界无关)
 schemas/                   事件契约(所有 floor 统一语言)
 docs/                      权威链 + 知识目录, 入口 docs/INDEX.md
@@ -51,7 +53,7 @@ Exchange WebSocket  ──→  单币检测器（价格/成交量/OI/资金费�
                              ↓
 CoinGlass API  ──→  多空比/爆仓（可选）  ──→  Telegram / DingTalk
 kairos-oiscan ──→  全市场 OI 异动(发现+确认)  ──→  bus/inbound/futures/*.jsonl
-floors/*(pm/meme/solana) ──→  bus/inbound/<floor>/*.jsonl
+floors/*(pm/meme/solana/onchain/launch) ──→  bus/inbound/<floor>/*.jsonl
 ```
 
 ## 文档与权威

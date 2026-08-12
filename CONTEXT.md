@@ -20,6 +20,10 @@ _Avoid_: buy/sell recommendation, conviction
 A delivery filter (event type, severity, liquidity weight, type-specific thresholds, dedup, cooldown) applied once before channel fan-out. Rejects must be observable.
 _Avoid_: silent drop, blacklist (blacklist is separate)
 
+**Behavior Gate**:
+Mechanical enforcement of doctrine §9b personal behavior red lines (isolated-only, cooldown after loss, live window, max loss, stop required) at decision time in kairos-desk. Rejects and overrides are journaled as annotations; it judges the trader's behavior, not the market.
+_Avoid_: Alert Gate (that filters alerts), risk manager, auto stop-loss
+
 **Delivery Channel**:
 An outbound sink for gated alerts (Telegram, DingTalk custom-robot webhook). Channels are optional and independent; one failure does not block another.
 _Avoid_: notifier bus, message queue, multi-tenant routing
