@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/ArchdevilForge/kairos/internal/config"
 	"github.com/ArchdevilForge/kairos/internal/decision"
@@ -36,7 +37,7 @@ func run(args []string) error {
 	}
 	rest := fs.Args()
 	if len(rest) < 1 {
-		return fmt.Errorf("usage: kairos-desk [-config] <sessions|tickets|candidates|show|accept|wait|reject|missed|close>")
+		return fmt.Errorf("usage: kairos-desk [-config] <sessions|tickets|candidates|show|gate|accept|wait|reject|missed|close>")
 	}
 	cmd := rest[0]
 	cmdArgs := rest[1:]
@@ -145,6 +146,12 @@ func run(args []string) error {
 		dfs.SetOutput(os.Stderr)
 		reason := dfs.String("reason", "", "reason code (comma-separated)")
 		note := dfs.String("note", "", "free-text note")
+		// Behavior gate inputs (doctrine §9b) — accept only.
+		margin := dfs.String("margin", "", "margin mode (isolated required for live)")
+		maxLoss := dfs.Float64("max-loss", 0, "predefined max loss USD for this trade")
+		newSetup := dfs.String("new-setup", "", "new setup id (exempts same-symbol cooldown)")
+		liq := dfs.Float64("liq", 0, "liquidation price (optional; stop近强平价则拒)")
+		override := dfs.Bool("override", false, "override gate rejection (leaves annotation)")
 		if err := dfs.Parse(cmdArgs); err != nil {
 			return err
 		}
@@ -172,10 +179,61 @@ func run(args []string) error {
 		if len(codes) == 0 {
 			return fmt.Errorf("%s requires --reason <code> (e.g. too_extended)", cmd)
 		}
+		if cmd == "accept" {
+			res, gateCodes, err := runGate(journal, *cfgPath, ticketID, gateFlags{
+				Margin: *margin, MaxLoss: *maxLoss, NewSetup: *newSetup, Liq: *liq,
+			})
+			if err != nil {
+				return err
+			}
+			if !res.LiveEligible {
+				ann := storage.GateAnnotation{
+					TicketID: ticketID, Codes: gateCodes,
+					Override: *override, Note: *note, At: time.Now().Unix(),
+				}
+				if err := journal.SaveAnnotation(ann); err != nil {
+					return err
+				}
+				if !*override {
+					return fmt.Errorf("behavior gate rejected (%s) — 该笔不算合格交易;确要执行加 --override(留痕)",
+						strings.Join(gateCodes, ","))
+				}
+				fmt.Printf("⚠ gate override recorded: %s\n", strings.Join(gateCodes, ","))
+			}
+		}
 		if err := svc.ApplyHumanDecision(ticketID, d, codes, *note); err != nil {
 			return err
 		}
 		fmt.Printf("ok %s %s\n", ticketID, d)
+		return nil
+
+	case "gate":
+		gfs := flag.NewFlagSet("gate", flag.ContinueOnError)
+		gfs.SetOutput(os.Stderr)
+		margin := gfs.String("margin", "", "margin mode")
+		maxLoss := gfs.Float64("max-loss", 0, "predefined max loss USD")
+		newSetup := gfs.String("new-setup", "", "new setup id")
+		liq := gfs.Float64("liq", 0, "liquidation price")
+		if err := gfs.Parse(cmdArgs); err != nil {
+			return err
+		}
+		if gfs.NArg() < 1 {
+			return fmt.Errorf("usage: kairos-desk gate --margin isolated --max-loss 3 <ticket-id>")
+		}
+		res, gateCodes, err := runGate(journal, *cfgPath, gfs.Arg(0), gateFlags{
+			Margin: *margin, MaxLoss: *maxLoss, NewSetup: *newSetup, Liq: *liq,
+		})
+		if err != nil {
+			return err
+		}
+		if *asJSON {
+			return encode(res)
+		}
+		if res.LiveEligible {
+			fmt.Println("PASS live_eligible=true")
+		} else {
+			fmt.Printf("REJECT %s\n", strings.Join(gateCodes, ","))
+		}
 		return nil
 
 	case "close":
@@ -199,6 +257,48 @@ func run(args []string) error {
 	default:
 		return fmt.Errorf("unknown command %q", cmd)
 	}
+}
+
+type gateFlags struct {
+	Margin   string
+	MaxLoss  float64
+	NewSetup string
+	Liq      float64
+}
+
+// runGate evaluates the §9b behavior gate for a ticket at decision time.
+// journal 注入 cooldown 历史;config 缺失时用 doctrine 默认值(gate 常开)。
+func runGate(journal *storage.Journal, cfgPath, ticketID string, f gateFlags) (decision.GateResult, []string, error) {
+	t, ok, err := journal.GetTicket(ticketID)
+	if err != nil {
+		return decision.GateResult{}, nil, err
+	}
+	if !ok {
+		return decision.GateResult{}, nil, fmt.Errorf("ticket not found: %s", ticketID)
+	}
+	gcfg := decision.DefaultBehaviorGateConfig()
+	if cfg, err := config.Load(cfgPath); err == nil {
+		gcfg = decision.BehaviorGateConfigFrom(cfg.RiskGate)
+	}
+	lastLoss, err := journal.LastLossAt(t.Symbol)
+	if err != nil {
+		return decision.GateResult{}, nil, err
+	}
+	in := decision.GateInput{
+		Now:                  time.Now(),
+		Symbol:               t.Symbol,
+		Direction:            t.Direction,
+		MarginMode:           f.Margin,
+		StopPrice:            t.RiskPlan.StopPrice,
+		LiquidationPrice:     f.Liq,
+		MaxLossUSD:           f.MaxLoss,
+		ContextDirection:     t.MarketCycle.PrimaryDirection,
+		RankSupported:        t.PlaybookID != "" && t.Grade != types.TicketGradeD,
+		LastLossSameSymbolAt: lastLoss,
+		NewSetupID:           f.NewSetup,
+	}
+	res := decision.EvaluateBehaviorGate(gcfg, in)
+	return res, res.Rejections, nil
 }
 
 func openJournal(cfgPath, override string) (*storage.Journal, error) {

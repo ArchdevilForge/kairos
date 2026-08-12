@@ -13,8 +13,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/ArchdevilForge/kairos/internal/config"
+	"github.com/ArchdevilForge/kairos/internal/decision"
 	"github.com/ArchdevilForge/kairos/internal/evaluation"
 	"github.com/ArchdevilForge/kairos/internal/storage"
 	"github.com/ArchdevilForge/kairos/internal/types"
@@ -47,8 +49,11 @@ func run(args []string) error {
 		return err
 	}
 	if cmd == "help" || cmd == "-h" {
-		fmt.Println("kairos-eval summary|decisions|playbook|long|short|countertrend|outcomes")
+		fmt.Println("kairos-eval summary|decisions|playbook|long|short|countertrend|outcomes|gate")
 		return nil
+	}
+	if cmd == "gate" {
+		return gateReport(j, *asJSON)
 	}
 	rows, err := evaluation.BuildRows(j)
 	if err != nil {
@@ -145,6 +150,72 @@ func run(args []string) error {
 	default:
 		return fmt.Errorf("unknown command %q (summary|decisions|playbook|long|short|countertrend)", cmd)
 	}
+}
+
+// gateReport is the §9b compliance report: gate annotations (entry-time
+// verdicts) + rule-2 post-hoc scalp audit (<5m holds cannot be judged at
+// entry). Process compliance is separated from P&L on purpose — grade the
+// process, not the outcome.
+func gateReport(j *storage.Journal, asJSON bool) error {
+	anns, err := j.ListAnnotations()
+	if err != nil {
+		return err
+	}
+	rows, err := evaluation.BuildRows(j)
+	if err != nil {
+		return err
+	}
+
+	byCode := map[string]int{}
+	overrides := 0
+	for _, a := range anns {
+		for _, c := range a.Codes {
+			byCode[c]++
+		}
+		if a.Override {
+			overrides++
+		}
+	}
+
+	// 事后审计: <5m 人工持仓(EntryTriggeredAt → PathEnd)。
+	type scalp struct {
+		TicketID string  `json:"ticket_id"`
+		Symbol   string  `json:"symbol"`
+		HoldSecs int64   `json:"hold_secs"`
+		NetR     float64 `json:"net_r"`
+	}
+	var scalps []scalp
+	for _, r := range rows {
+		if r.Decision != types.DecisionAccepted || !r.HasOut {
+			continue
+		}
+		open, end := r.Ticket.EntryTriggeredAt, r.Outcome.PathEndUnix
+		if open == 0 || end == 0 {
+			continue
+		}
+		if code := decision.AuditHoldingDuration(time.Unix(open, 0), time.Unix(end, 0)); code != "" {
+			scalps = append(scalps, scalp{r.Ticket.ID, r.Ticket.Symbol, end - open, r.Outcome.NetR})
+		}
+	}
+
+	if asJSON {
+		return encode(map[string]any{
+			"annotations": anns, "rejections_by_code": byCode,
+			"overrides": overrides, "scalp_violations": scalps,
+		})
+	}
+	fmt.Printf("gate annotations=%d overrides=%d\n", len(anns), overrides)
+	for code, n := range byCode {
+		fmt.Printf("  %-22s %d\n", code, n)
+	}
+	fmt.Printf("scalp (<5m) violations=%d\n", len(scalps))
+	for _, s := range scalps {
+		fmt.Printf("  %s  %s  hold=%ds netR=%.2f\n", s.TicketID, s.Symbol, s.HoldSecs, s.NetR)
+	}
+	if len(anns) == 0 && len(scalps) == 0 {
+		fmt.Println("(no gate activity)")
+	}
+	return nil
 }
 
 func openJournal(cfgPath, override string) (*storage.Journal, error) {

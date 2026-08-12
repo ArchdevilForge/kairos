@@ -188,6 +188,79 @@ func (j *Journal) SaveOutcome(o CounterfactualOutcome) error {
 	return j.append(JournalKindOutcome, o.TicketID, o)
 }
 
+// GateAnnotation records a behavior-gate verdict on a ticket (doctrine §9b):
+// rejected tickets stay as shadow/counterfactual records; overrides must leave
+// a trace with the violated codes.
+type GateAnnotation struct {
+	SchemaVersion string `json:"schema_version"`
+
+	TicketID string   `json:"ticket_id"`
+	Codes    []string `json:"codes"` // GATE_* reason codes
+	Override bool     `json:"override"`
+	Note     string   `json:"note,omitempty"`
+	At       int64    `json:"at"`
+}
+
+// GateAnnotationSchemaVersion is the annotation contract version.
+const GateAnnotationSchemaVersion = "gate_annotation.v1"
+
+// SaveAnnotation persists a gate annotation.
+func (j *Journal) SaveAnnotation(a GateAnnotation) error {
+	if a.SchemaVersion == "" {
+		a.SchemaVersion = GateAnnotationSchemaVersion
+	}
+	return j.append(JournalKindAnnotation, a.TicketID, a)
+}
+
+// ListAnnotations returns all gate annotations in append order.
+func (j *Journal) ListAnnotations() ([]GateAnnotation, error) {
+	lines, err := j.readAll()
+	if err != nil {
+		return nil, err
+	}
+	var out []GateAnnotation
+	for _, ln := range lines {
+		if ln.Kind != JournalKindAnnotation {
+			continue
+		}
+		var a GateAnnotation
+		if err := json.Unmarshal(ln.Payload, &a); err != nil || a.TicketID == "" {
+			continue
+		}
+		out = append(out, a)
+	}
+	return out, nil
+}
+
+// LastLossAt returns the end time of the most recent finalized losing outcome
+// for symbol (accepted trades only — gate cooldown input). Zero time = none.
+func (j *Journal) LastLossAt(symbol string) (time.Time, error) {
+	outs, err := j.ListOutcomes()
+	if err != nil {
+		return time.Time{}, err
+	}
+	var latest int64
+	for _, o := range outs {
+		if o.Symbol != symbol || o.Decision != types.DecisionAccepted || !o.Finalized {
+			continue
+		}
+		if o.NetR >= 0 {
+			continue
+		}
+		end := o.PathEndUnix
+		if end == 0 {
+			end = o.AsOfUnix
+		}
+		if end > latest {
+			latest = end
+		}
+	}
+	if latest == 0 {
+		return time.Time{}, nil
+	}
+	return time.Unix(latest, 0), nil
+}
+
 // SessionCandidates is the ranked board attached to a session (may have 0 tickets).
 type SessionCandidates struct {
 	SessionID  string                       `json:"session_id"`
