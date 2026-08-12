@@ -86,6 +86,7 @@ AUCTION_VIEWS = {
 # 忙区间靠失败折半自适应收窄。若 RPC 换成按跨度限制的提供商需调回小窗。
 STEP_MAX = 400_000
 STEP_MIN = 500
+TARGET_LOGS = 1_500  # 每窗目标匹配日志数,控制单个响应体积(getLogs 上限 1 万条)
 
 
 class RPCError(Exception):
@@ -401,23 +402,26 @@ def fetch_auction(chain: Chain, auction_addr: str) -> dict:
 # ── 扫描 ─────────────────────────────────────────────────────────────────────
 
 def scan_segment(chain: Chain, from_block: int, to_block: int, out_dir: Path,
-                 with_creator: bool = True, state: dict | None = None) -> int:
-    """扫单个区块段(调用方负责窗口大小),返回写入事件数。
+                 with_creator: bool = True, state: dict | None = None) -> tuple[int, int]:
+    """扫单个区块段(调用方负责窗口大小),返回 (写入事件数, 原始日志条数)。
 
+    日志条数供调用方按响应体积调窗。
     state 非空时把新发现的 CCA auction 注册进 state["auctions"](watch 模式)。
     """
     written = 0
+    nlogs = 0
 
     logs = chain.get_logs(ENTRY_CONTRACTS, TOPIC_TOKEN_CREATED, from_block, to_block)
+    nlogs += len(logs)
     logs.sort(key=lambda l: int(l["blockNumber"], 16))
     for log in logs:
         creator = chain.get_tx_sender(log["transactionHash"]) if with_creator else None
         ev = token_created_event(log, creator)
         write_event(out_dir, ev)
         written += 1
-        print(f"  [{ev['data']['block']}] token={ev['key']} creator={creator}")
 
     logs = chain.get_logs(FACTORIES, TOPIC_AUCTION_CREATED, from_block, to_block)
+    nlogs += len(logs)
     logs.sort(key=lambda l: int(l["blockNumber"], 16))
     for log in logs:
         auction = decode_addr(log["topics"][1])
@@ -427,35 +431,43 @@ def scan_segment(chain: Chain, from_block: int, to_block: int, out_dir: Path,
         written += 1
         if state is not None:
             register_auction(state, auction, snap, ev["data"]["block"])
-        print(f"  [{ev['data']['block']}] auction={auction} token={ev['symbol']}")
+        print(f"  [{ev['data']['block']}] auction={auction} token={ev['symbol']}", flush=True)
 
-    return written
+    return written, nlogs
 
 
 def scan_range(chain: Chain, from_block: int, to_block: int, out_dir: Path,
                with_creator: bool = True, state_path: Path | None = None,
                state: dict | None = None) -> int:
-    """扫 [from_block, to_block],自适应窗口: 失败折半,成功回升。"""
+    """扫 [from_block, to_block],自适应窗口: 失败折半,成功后按响应体积调窗。"""
     written = 0
     step = STEP_MAX
     cur = from_block
     while cur <= to_block:
         end = min(to_block, cur + step - 1)
         try:
-            written += scan_segment(chain, cur, end, out_dir, with_creator, state)
+            w, nlogs = scan_segment(chain, cur, end, out_dir, with_creator, state)
+            written += w
+            print(f"  [{cur}..{end}] {nlogs} logs, step={step}", flush=True)
         except RPCError as e:
             if step > STEP_MIN:
                 step = max(STEP_MIN, step // 2)
-                print(f"  getLogs [{cur},{end}] ERR: {e} -> 窗口降到 {step}")
+                print(f"  getLogs [{cur},{end}] ERR: {e} -> 窗口降到 {step}", flush=True)
                 continue  # 同段折半重试
-            print(f"  getLogs [{cur},{end}] ERR at min window, skip: {e}")
+            print(f"  getLogs [{cur},{end}] ERR at min window, skip: {e}", flush=True)
             # ponytail: 最小窗口仍失败则跳过并记录 gap,不伪造数据
             write_event(out_dir, base_event(
                 "launch_scan_gap", f"launch-gap-{cur}-{end}", str(cur), "",
                 f"scan gap {cur}-{end}", str(e), {"from_block": cur, "to_block": end},
             ))
+            nlogs = 0
         cur = end + 1
-        step = min(STEP_MAX, step * 2)
+        # 按响应体积调窗: 被限速的公共 RPC 上大响应下载极慢(实测 ~10min/窗),
+        # 盲目翻倍会在活跃区间退化;向 TARGET_LOGS 收敛让每个响应保持 MB 级以内
+        if nlogs > TARGET_LOGS:
+            step = max(STEP_MIN, step * TARGET_LOGS // nlogs)
+        else:
+            step = min(STEP_MAX, step * 2)
         if state_path is not None:
             st = state if state is not None else {}
             st["last_scanned_block"] = end

@@ -92,6 +92,33 @@ def test_scan_range_adaptive_window(tmp_path: Path, monkeypatch):
     assert chain.calls > 2  # 折半后重试过
 
 
+def test_scan_range_shrinks_window_on_big_response(tmp_path: Path, monkeypatch):
+    """首段响应超 TARGET_LOGS 时,下一窗按比例收窄(避免公共 RPC 上的巨型响应)。"""
+    monkeypatch.setattr(lc.time, "sleep", lambda *_: None)
+    spans = []
+
+    class BusyThenQuietChain:
+        def get_logs(self, addresses, topic0, from_block, to_block):
+            if topic0 != lc.TOPIC_TOKEN_CREATED:
+                return []
+            spans.append(to_block - from_block + 1)
+            if len(spans) == 1:  # 仅首段"忙",之后安静,避免测试写百万事件
+                return [{"blockNumber": hex(from_block), "transactionHash": "0x0",
+                         "address": lc.ENTRY_CONTRACTS[0], "topics": [topic0, "0x" + "0" * 64],
+                         "data": "0x"}] * (lc.TARGET_LOGS * 4)
+            return []
+
+        def get_tx_sender(self, tx_hash):
+            return None
+
+    monkeypatch.setattr(lc, "token_created_event", lambda log, creator: lc.base_event(
+        "launch_token_created", "t", "k", "s", "h", "d", {"block": 1}))
+    lc.scan_range(BusyThenQuietChain(), 1, lc.STEP_MAX * 2, tmp_path, with_creator=False)
+    assert len(spans) >= 2
+    assert spans[0] == lc.STEP_MAX
+    assert spans[1] == lc.STEP_MAX * lc.TARGET_LOGS // (lc.TARGET_LOGS * 4)  # 收窄到 1/4
+
+
 # ── PR2: CCA demand ──────────────────────────────────────────────────────────
 
 # 链上真实事件(2026-08-12 采样)作 fixture
