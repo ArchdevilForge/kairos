@@ -51,8 +51,9 @@ Observe  →  Interpret  →  Select  →  Decide  →  Execute  →  Learn
 ## 路线图（待办，非权威）
 
 > 第一性原理：仓库的价值 = 闭环转速（观点 → 数据 → EV → canonical → ticket → 复盘）。
-> 采集器已经够多，当前瓶颈不是写更多代码，而是**让闭环真正跑起来**：
-> 数据常驻落盘、每笔交易过 gate、假设按样本量出判定。
+> 采集器已经够多，当前瓶颈不是写更多代码，而是**让闭环真正跑起来**：假设按样本量出判定、每笔交易过 gate。
+> 数据分两类：**链上事件永久可重放**（launch/bid/graduation → 按需回填，不需要常驻 daemon）；
+> **链下时序易逝**（交易所细粒度 OI 只保留 ~30 天、订单簿、社交热度 → 只有这类才值得持续落盘）。
 > 新增任何 floor/工具前先回答两个问题：它属于六步哪一步？现有 floor 的数据被消费了吗？
 
 已完成：
@@ -67,7 +68,7 @@ Observe  →  Interpret  →  Select  →  Decide  →  Execute  →  Learn
 
 进行中（运营闭环，不是写新代码）：
 
-- [ ] P0: launch collector 常驻运行（deploy/ 或 tmux/systemd），监控 `launch_scan_gap` 数据缺口
+- [ ] P0: launch 历史回填 + 研究前增量补扫（`watch --once` 断点续扫，本地按需跑；监控 `launch_scan_gap` 缺口）
 - [ ] P0: 每笔真实交易走 `kairos-desk` 决策（BehaviorGate 机械执法），复盘进 `50-reviews/`
 - [ ] P1: H-005 拍卖样本 ≥100 场后跑 `tools/research h005` 出判定（promote/reject）；H-006/H-007 同理
 - [ ] P1: 首个 playbook 积累数据后扩展第二/第三 playbook

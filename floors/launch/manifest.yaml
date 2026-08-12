@@ -20,9 +20,13 @@ events:
   - event_type: launch_scan_gap           # RPC 不可达留下的数据缺口(不伪造)
     severity: LOW
 execution_permissions: none
-entrypoint: uv run python launch_collector.py watch --out ../../bus/inbound/launch
+# 回填优先:链上日志永久可得,研究前跑一次 --once 增量补扫即可,无需常驻 daemon
+entrypoint: uv run python launch_collector.py watch --once --no-creator --out ../../bus/inbound/launch
 outbound: bus/inbound/launch/*.jsonl
 owner_notes: >-
-  只采集不交易;两个入口合约都监听(漏一个 = 漏 ~40% launch)。公共 RPC 限流,
-  生产建议设 ROBINHOOD_RPC_URL(Alchemy 免费层/blockmachine)。
+  只采集不交易;两个入口合约都监听(漏一个 = 漏 ~40% launch)。
+  数据获取模式 = 按需回填:公共 RPC getLogs 只限匹配日志数(≤1001 块窗 5 万条,
+  更宽 1 万条)不限跨度,历史从 factory 部署块 31556(2026-06-03)起全部可查,
+  watch --once + state.json 断点续扫,poll_auctions 对已结束拍卖一次拉全 bid 历史。
+  需要低延迟实时狙击时才用常驻 watch,并建议设 ROBINHOOD_RPC_URL(Alchemy 免费层)。
   H-005 判定: tools/research `uv run python research.py h005`。

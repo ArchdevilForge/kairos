@@ -6,4 +6,5 @@ __pycache__/
 .mypy_cache/
 .coverage
 out/
-inbound/*/!*.jsonl
+# 数据不入库(采集器 JSONL 落盘目录,可随时用链上历史重建)
+inbound/
