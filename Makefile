@@ -1,7 +1,7 @@
 .PHONY: build vet test test-race lint fmt-check mod-check vuln check check-python check-all cover cover-check cross-check
 
 # Python 子项目(monorepo): 每个有 pyproject.toml 的目录
-PYTHON_PROJECTS := bus coinglass floors/meme floors/pm floors/solana floors/onchain data-sources/aicoin tools/chain-trace tools/research
+PYTHON_PROJECTS := bus coinglass floors/meme floors/pm floors/solana floors/onchain floors/launch data-sources/aicoin tools/chain-trace tools/research
 
 # Platforms the release workflow ships. Keep in sync with the matrix in
 # .github/workflows/release.yml.

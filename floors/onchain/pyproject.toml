@@ -29,7 +29,8 @@ dependencies = [
     "structlog>=24.1.0",
 ]
 
-[project.optional-dependencies]
+# dev tooling 用 dependency-groups(uv sync 默认安装),不是发布 extras。
+[dependency-groups]
 dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
