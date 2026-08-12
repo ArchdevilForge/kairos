@@ -231,7 +231,9 @@ def auction_created_event(log: dict, snap: dict) -> dict:
     block = int(log["blockNumber"], 16)
     auction = decode_addr(log["topics"][1])
     token = decode_addr(log["topics"][2])
-    amount = decode_uint256(log["data"]) if len(log.get("data", "")) >= 66 else 0
+    # data 是 struct(amount 在第一个 32 字节字);整段当 uint 解析是错的
+    data = log.get("data", "0x")[2:]
+    amount = int(data[0:64], 16) if len(data) >= 64 else 0
     return base_event(
         "launch_auction_created",
         f"launch-{block}-{auction[:10]}",
@@ -246,6 +248,136 @@ def auction_created_event(log: dict, snap: dict) -> dict:
             "auction_state": snap,
         },
     )
+
+
+def parse_bid(log: dict) -> dict:
+    """BidSubmitted(uint256 indexed tick, address indexed bidder, uint256 amount, uint128 limit).
+
+    布局从链上真实事件核实(2026-08-12, auction 0x18ba60ae…):
+    topics[1]=tick topics[2]=bidder data[0]=amount data[1]=limit price。
+    """
+    data = log.get("data", "0x")[2:]
+    return {
+        "block": int(log["blockNumber"], 16),
+        "tick": int(log["topics"][1], 16),
+        "bidder": decode_addr(log["topics"][2]),
+        "amount": int(data[0:64], 16) if len(data) >= 64 else 0,
+        "limit": int(data[64:128], 16) if len(data) >= 128 else 0,
+    }
+
+
+def parse_clearing(log: dict) -> dict:
+    """ClearingPriceUpdated(uint256 checkpointBlock, uint256 price) — 无 indexed 参数。"""
+    data = log.get("data", "0x")[2:]
+    return {
+        "block": int(log["blockNumber"], 16),
+        "checkpoint_block": int(data[0:64], 16) if len(data) >= 64 else 0,
+        "price": int(data[64:128], 16) if len(data) >= 128 else 0,
+    }
+
+
+def aggregate_bids(agg: dict, bids: list[dict]) -> dict:
+    """把新 bid 累加进 auction 聚合状态(bidder→amount 累计)。可重入、纯数据。"""
+    bidders = agg.setdefault("bidders", {})
+    for b in bids:
+        bidders[b["bidder"]] = bidders.get(b["bidder"], 0) + b["amount"]
+        agg["bid_count"] = agg.get("bid_count", 0) + 1
+        agg["amount_total"] = agg.get("amount_total", 0) + b["amount"]
+    return agg
+
+
+def demand_features(agg: dict) -> dict:
+    """H-005 demand 特征: unique_bidders / top1_share / top5_share。"""
+    bidders = agg.get("bidders", {})
+    total = agg.get("amount_total", 0)
+    amounts = sorted(bidders.values(), reverse=True)
+    top1 = amounts[0] / total if amounts and total else 0.0
+    top5 = sum(amounts[:5]) / total if amounts and total else 0.0
+    return {
+        "unique_bidders": len(bidders),
+        "bid_count": agg.get("bid_count", 0),
+        "amount_total": str(total),  # uint256 超 JSON 安全整数,序列化为字符串
+        "top1_share": round(top1, 4),
+        "top5_share": round(top5, 4),
+    }
+
+
+def auction_update_event(auction: str, meta: dict, head_block: int) -> dict:
+    """每轮询周期一条 demand 快照(仅当有新 bid 或 clearing 变化时发)。"""
+    feats = demand_features(meta)
+    end_block = meta.get("end_block") or 0
+    # 块时间 ~100ms → 剩余分钟 = 剩余块数/600
+    mins_left = round(max(0, end_block - head_block) / 600.0, 1) if end_block else None
+    clearing = meta.get("clearing_price")
+    return base_event(
+        "launch_auction_update",
+        f"launch-au-{head_block}-{auction[:10]}",
+        auction, meta.get("token", ""),
+        f"CCA demand: {auction[:10]}… bidders={feats['unique_bidders']}",
+        f"bids={feats['bid_count']} top5={feats['top5_share']}",
+        {
+            "block": head_block,
+            "auction": auction,
+            **feats,
+            "clearing_price": str(clearing) if clearing is not None else None,
+            "minutes_remaining": mins_left,
+        },
+    )
+
+
+AUCTION_GRACE_BLOCKS = 6_000  # 结束后再跟 ~10min,收尾 clearing/graduation
+
+
+def poll_auctions(chain: Chain, state: dict, out_dir: Path, head: int) -> int:
+    """轮询活跃 CCA auction 的 bid/clearing 事件,聚合 demand 快照。"""
+    auctions: dict = state.setdefault("auctions", {})
+    written = 0
+    for addr in list(auctions):
+        meta = auctions[addr]
+        frm = meta.get("last_bid_block", meta.get("created_block", head)) + 1
+        if frm > head:
+            continue
+        try:
+            bid_logs = chain.get_logs([addr], TOPIC_BID_SUBMITTED, frm, head)
+            clr_logs = chain.get_logs([addr], TOPIC_CLEARING_PRICE_UPDATED, frm, head)
+        except RPCError as e:
+            print(f"  auction {addr[:10]}… poll ERR: {e}")
+            continue
+        bids = [parse_bid(l) for l in bid_logs]
+        aggregate_bids(meta, bids)
+        changed = bool(bids)
+        if clr_logs:
+            meta["clearing_price"] = parse_clearing(clr_logs[-1])["price"]
+            changed = True
+        meta["last_bid_block"] = head
+        if changed:
+            write_event(out_dir, auction_update_event(addr, meta, head))
+            written += 1
+        end_block = meta.get("end_block") or 0
+        if end_block and head > end_block + AUCTION_GRACE_BLOCKS:
+            # 收盘快照: 最终 demand 特征 + graduation 状态
+            snap = fetch_auction(chain, addr)
+            ev = auction_update_event(addr, meta, head)
+            ev["event_type"] = "launch_auction_closed"
+            ev["event_id"] = f"launch-ac-{end_block}-{addr[:10]}"
+            ev["data"]["auction_state"] = snap
+            write_event(out_dir, ev)
+            written += 1
+            del auctions[addr]
+    return written
+
+
+def register_auction(state: dict, auction: str, snap: dict, created_block: int) -> None:
+    state.setdefault("auctions", {})[auction] = {
+        "token": snap.get("token") or "",
+        "created_block": created_block,
+        "start_block": snap.get("startBlock"),
+        "end_block": snap.get("endBlock"),
+        "last_bid_block": created_block,
+        "bidders": {},
+        "bid_count": 0,
+        "amount_total": 0,
+    }
 
 
 def fetch_auction(chain: Chain, auction_addr: str) -> dict:
@@ -266,8 +398,11 @@ def fetch_auction(chain: Chain, auction_addr: str) -> dict:
 # ── 扫描 ─────────────────────────────────────────────────────────────────────
 
 def scan_segment(chain: Chain, from_block: int, to_block: int, out_dir: Path,
-                 with_creator: bool = True) -> int:
-    """扫单个区块段(调用方负责窗口大小),返回写入事件数。"""
+                 with_creator: bool = True, state: dict | None = None) -> int:
+    """扫单个区块段(调用方负责窗口大小),返回写入事件数。
+
+    state 非空时把新发现的 CCA auction 注册进 state["auctions"](watch 模式)。
+    """
     written = 0
 
     logs = chain.get_logs(ENTRY_CONTRACTS, TOPIC_TOKEN_CREATED, from_block, to_block)
@@ -287,13 +422,16 @@ def scan_segment(chain: Chain, from_block: int, to_block: int, out_dir: Path,
         ev = auction_created_event(log, snap)
         write_event(out_dir, ev)
         written += 1
+        if state is not None:
+            register_auction(state, auction, snap, ev["data"]["block"])
         print(f"  [{ev['data']['block']}] auction={auction} token={ev['symbol']}")
 
     return written
 
 
 def scan_range(chain: Chain, from_block: int, to_block: int, out_dir: Path,
-               with_creator: bool = True, state_path: Path | None = None) -> int:
+               with_creator: bool = True, state_path: Path | None = None,
+               state: dict | None = None) -> int:
     """扫 [from_block, to_block],自适应窗口: 失败折半,成功回升。"""
     written = 0
     step = STEP_MAX
@@ -301,7 +439,7 @@ def scan_range(chain: Chain, from_block: int, to_block: int, out_dir: Path,
     while cur <= to_block:
         end = min(to_block, cur + step - 1)
         try:
-            written += scan_segment(chain, cur, end, out_dir, with_creator)
+            written += scan_segment(chain, cur, end, out_dir, with_creator, state)
         except RPCError as e:
             if step > STEP_MIN:
                 step = max(STEP_MIN, step // 2)
@@ -316,7 +454,9 @@ def scan_range(chain: Chain, from_block: int, to_block: int, out_dir: Path,
         cur = end + 1
         step = min(STEP_MAX, step * 2)
         if state_path is not None:
-            save_state(state_path, {"last_scanned_block": end})
+            st = state if state is not None else {}
+            st["last_scanned_block"] = end
+            save_state(state_path, st)
         time.sleep(0.2)  # 公共 RPC 限流,段间小憩
     return written
 
@@ -390,8 +530,11 @@ def main() -> int:
             try:
                 head = chain.block_number()
                 if head >= cur:
-                    n = scan_range(chain, cur, head, out, with_creator, state_path)
-                    print(f"[{now_iso()}] blocks {cur}..{head}: {n} events")
+                    n = scan_range(chain, cur, head, out, with_creator, state_path, state)
+                    n += poll_auctions(chain, state, out, head)
+                    save_state(state_path, state)
+                    print(f"[{now_iso()}] blocks {cur}..{head}: {n} events, "
+                          f"{len(state.get('auctions', {}))} active auctions")
                     cur = head + 1
             except RPCError as e:
                 print(f"[{now_iso()}] rpc error, retrying next cycle: {e}")
