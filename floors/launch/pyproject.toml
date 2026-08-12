@@ -1,0 +1,15 @@
+[project]
+name = "kairos-launch-collector"
+version = "0.1.0"
+description = "Robinhood Chain / Uniswap CCA Launchpad 事件采集(Launch Intelligence 数据层)"
+requires-python = ">=3.10"
+dependencies = [
+  "requests>=2.31",
+  "pycryptodome>=3.20",
+]
+
+[dependency-groups]
+dev = ["pytest>=8.0"]
+
+[tool.uv]
+package = false

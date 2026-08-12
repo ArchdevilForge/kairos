@@ -1,0 +1,19 @@
+# launch-collector — Robinhood Chain Uniswap CCA Launchpad 采集
+name: launch
+role: Observe                      # 链上 launch 原始事件采集
+status: active                     # 数据采集先行(H-005 依赖)
+data_sources:
+  - robinhood chain RPC (https://rpc.mainnet.chain.robinhood.com, chain 4663)
+  - uniswap CCA factory 0x0000000085E102724e78eCd2F45DC9cA239Affad
+  - uniswap LiquidityLauncher 0x00cCa200BF124dBfA848937c553864f4B4CE0632
+  - uniswap LBPStrategy 0x00004c4ccc709Ef590F7C81102C0689F0263D4e9
+events:
+  - event_type: launch_auction_created
+    severity: LOW
+    schema: kairos.event.v1
+  - event_type: launch_auction_update     # clearing price / bid 快照
+    severity: LOW
+execution_permissions: none
+entrypoint: uv run python launch_collector.py watch --out ../../bus/inbound/launch
+outbound: bus/inbound/launch/*.jsonl
+owner_notes: 只采集不交易;pools.trade 非 Uniswap 官方前端,以合约地址为准。
