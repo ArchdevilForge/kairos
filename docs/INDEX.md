@@ -56,5 +56,6 @@ Observe  →  Interpret  →  Select  →  Decide  →  Execute  →  Learn
 - [x] P1: Alpha Attribution（SelectionAlpha + HumanAlpha；Entry/Exit 拆分待数据积累）
 - [x] P2: JSONL → DuckDB research layer（tools/research/）
 - [x] P2: 每个 floor 加 manifest.yaml（状态/数据源/事件/执行权限）
+- [ ] P0: Launch 数据管道 + 行为 Risk Gate 机械化 → `GOAL_LAUNCH_DATA_AND_RISK_GATE.md`
 - [ ] P1: 首个 playbook 积累数据后扩展第二/第三 playbook
 - [ ] P3: Rust / ML（暂无必要）
