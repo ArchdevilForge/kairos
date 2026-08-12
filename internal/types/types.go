@@ -236,6 +236,20 @@ type Config struct {
 	Charts          ChartConfig           `mapstructure:"charts" json:"charts" yaml:"charts"`
 	MarketPulse     MarketPulseConfig     `mapstructure:"marketPulse" json:"marketPulse" yaml:"marketPulse"`
 	Opportunity     OpportunityConfig     `mapstructure:"opportunity" json:"opportunity" yaml:"opportunity"`
+	RiskGate        RiskGateConfig        `mapstructure:"riskGate" json:"riskGate" yaml:"riskGate"`
+}
+
+// RiskGateConfig mechanizes KAIROS_DOCTRINE §9b behavior rules
+// (evaluated in internal/decision; numbers config-owned per Canonical §9).
+type RiskGateConfig struct {
+	Enabled bool `mapstructure:"enabled" json:"enabled" yaml:"enabled"`
+	// CooldownMinutes: 同币亏损平仓后的再入冷却(§9b 规则 3, 30–60)。
+	CooldownMinutes int `mapstructure:"cooldownMinutes" json:"cooldownMinutes" yaml:"cooldownMinutes"`
+	// WindowStartHour/WindowEndHour: live 窗口(本地时区小时,跨午夜;§9b 规则 5)。
+	WindowStartHour int `mapstructure:"windowStartHour" json:"windowStartHour" yaml:"windowStartHour"`
+	WindowEndHour   int `mapstructure:"windowEndHour" json:"windowEndHour" yaml:"windowEndHour"`
+	// MaxLossUSD: 单笔预设最大损失上限(§9b 规则 6, 挑战账户 $100 口径)。
+	MaxLossUSD float64 `mapstructure:"maxLossUSD" json:"maxLossUSD" yaml:"maxLossUSD"`
 }
 
 // OpportunityConfig gates the decision-desk path off MarketPulse.

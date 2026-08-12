@@ -267,6 +267,13 @@ func setDefaults(v *viper.Viper) {
 		"multiTimeframeScoreThreshold": 8.0,
 	})
 
+	v.SetDefault("riskGate", map[string]any{
+		"enabled":         true,
+		"cooldownMinutes": 45,
+		"windowStartHour": 18,
+		"windowEndHour":   1,
+		"maxLossUSD":      4,
+	})
 	v.SetDefault("opportunity", map[string]any{
 		"enabled":              false,
 		"shadowMode":           true,

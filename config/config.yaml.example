@@ -276,6 +276,17 @@ charts:
   multiTimeframeScoreThreshold: 8.0
 
 # Decision desk / OpportunitySession (off by default — fail closed).
+# Behavior Risk Gate (KAIROS_DOCTRINE §9b, from 2026-08 trading-profile audit).
+# Blocks live eligibility on: cross margin, same-symbol loss cooldown,
+# counter-cycle direction, outside evening window, oversized risk, missing stop.
+# Rejected tickets stay in the journal as shadow/counterfactual records.
+riskGate:
+  enabled: true
+  cooldownMinutes: 45     # same-symbol reentry cooldown after a loss (30-60)
+  windowStartHour: 18     # live window start, local hour (UTC+8)
+  windowEndHour: 1        # live window end (wraps past midnight)
+  maxLossUSD: 4           # per-trade max predefined loss ($100 challenge scale)
+
 # Shadow: sessions+rank board+journal; tickets only when enrich passes real gates.
 # assumeSpreadOK: only for shadow without L2; production must leave false.
 opportunity:

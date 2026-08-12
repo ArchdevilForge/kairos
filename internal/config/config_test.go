@@ -261,6 +261,26 @@ func TestLoadString_DefaultsMarketPulse(t *testing.T) {
 	}
 }
 
+func TestLoadString_DefaultsRiskGate(t *testing.T) {
+	cfg, err := LoadString("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rg := cfg.RiskGate
+	if !rg.Enabled {
+		t.Fatal("riskGate.enabled default should be true")
+	}
+	if rg.CooldownMinutes != 45 {
+		t.Fatalf("cooldownMinutes=%d", rg.CooldownMinutes)
+	}
+	if rg.WindowStartHour != 18 || rg.WindowEndHour != 1 {
+		t.Fatalf("window=%d..%d", rg.WindowStartHour, rg.WindowEndHour)
+	}
+	if rg.MaxLossUSD != 4 {
+		t.Fatalf("maxLossUSD=%v", rg.MaxLossUSD)
+	}
+}
+
 func TestLoadString_MarketPulseOverride(t *testing.T) {
 	yaml := `
 marketPulse:
