@@ -21,8 +21,8 @@ events:
     severity: LOW
 execution_permissions: none
 # 回填优先:链上日志永久可得,研究前跑一次 --once 增量补扫即可,无需常驻 daemon
-entrypoint: uv run python launch_collector.py watch --once --no-creator --out ../../bus/inbound/launch
-outbound: bus/inbound/launch/*.jsonl
+entrypoint: uv run python launch_collector.py watch --once --no-creator --out ../../data/inbound/launch
+outbound: data/inbound/launch/*.jsonl
 owner_notes: >-
   只采集不交易;两个入口合约都监听(漏一个 = 漏 ~40% launch)。
   数据获取模式 = 按需回填:公共 RPC getLogs 只限匹配日志数(≤1001 块窗 5 万条,

@@ -22,7 +22,7 @@ research report / ad-hoc SQL
 uv sync
 
 # 装载(可重复,幂等;视图重建)
-uv run python research.py load --events ../bus/out --journal ../../data/trading-journal.jsonl --db research.duckdb
+uv run python research.py load --events ../../data/inbound --journal ../../data/trading-journal.jsonl --db research.duckdb
 
 # 内置报告
 uv run python research.py report --db research.duckdb
@@ -31,8 +31,8 @@ uv run python research.py report --which launch_events --db research.duckdb
 # 任意 SQL(ad-hoc 归因)
 uv run python research.py sql "SELECT event_type, count(*) FROM events GROUP BY 1" --db research.duckdb
 
-# H-005 launch demand 判定(读 bus/inbound/launch,样本<20 只报进度)
-uv run python research.py h005 --launch-dir ../../bus/inbound/launch \
+# H-005 launch demand 判定(读 data/inbound/launch,样本<20 只报进度)
+uv run python research.py h005 --launch-dir ../../data/inbound/launch \
   --out ../../docs/40-research/experiments/H-005-report.md
 ```
 

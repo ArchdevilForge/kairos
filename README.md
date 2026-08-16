@@ -1,11 +1,10 @@
-# kairos — Personal Trading Research & Decision OS
+# kairos — 人控合约决策闭环
 
 > καιρός — 关键时刻，恰当时机
 
-**Kairos = 你的个人交易研究、市场感知、主观决策、策略实验、执行辅助、复盘与 Alpha 验证的统一仓库。**
+**Kairos = 人控合约：异动 → 一张票 → 过 gate → 记账复盘。**
 
-它不是"一堆交易 bot"，而是一个**可执行知识库**：每个交易观点都有路径变成可验证的规则
-（`Source → Hypothesis → Experiment → Finding → Canonical`）。
+它不是一堆交易 bot 的合集。采集器、取证、现货挂单各自独立仓库；本仓只留会进 ticket / journal 的主线，外加 launch 研究采集（H-005，没有原仓）。
 
 ## 六步主干
 
@@ -15,33 +14,27 @@ Observe → Interpret → Select → Decide → Execute → Learn
 
 | 步骤 | 组件 | 位置 |
 |---|---|---|
-| Observe | MarketPulse / 检测器 / kairos-oiscan / floors(meme·pm·solana·onchain·launch) / data-sources | `internal/detector` `cmd/kairos-oiscan` `floors/` |
+| Observe | MarketPulse / 检测器 / kairos-oiscan / launch 采集 | `internal/detector` `cmd/kairos-oiscan` `floors/launch` |
 | Interpret | CycleMap（Context 1d+4h / Setup 1h+15m / Trigger 5m） | `internal/cycle` |
 | Select | Directional Ranker | `internal/ranker` |
 | Decide | Playbook → Decision Ticket → BehaviorGate（教义 9b 行为红线机械执法） | `internal/playbook` `internal/opportunity` `internal/decision` |
-| Execute | Human decision（经 kairos-desk 记录 + gate 判定）+ manual execution（trader 仅执行辅助） | `cmd/kairos-desk` `tools/trader` |
-| Learn | Journal → Counterfactual → EV Attribution → Gate 合规报告 | `internal/storage` `internal/evaluation` `cmd/kairos-eval` |
+| Execute | Human decision（经 kairos-desk 记录 + gate 判定） | `cmd/kairos-desk` |
+| Learn | Journal → Counterfactual → EV Attribution → Gate 合规报告 | `internal/storage` `internal/evaluation` `cmd/kairos-eval` `tools/research` |
 
-> 加任何东西先问：它属于哪一步？回答不出来就先别加。
+> 加任何东西先问：它属于哪一步？回答不出来就先别加。独立工具不要搬进本仓。
 
-## Monorepo 布局
+## 布局
 
 ```text
 cmd/ internal/ config/     Go 主引擎(检测器/MarketPulse/CycleMap/ranker/playbook/ticket/journal)
-bus/                       Python 事件总线(JSONL → 门控 → Telegram → 聚合输出)
-floors/meme/               rh-sniper      Robinhood 链 meme sniper
-floors/pm/                 pm-bot         Polymarket 天气策略 + 纸面交易
-floors/solana/             smartalpha     pump.fun smart-money 分析
-floors/onchain/            meme-monitor   Dexscreener 多链新币发现
-floors/launch/             launch-collector  Robinhood Chain CCA launchpad 数据管道(H-005/006/007)
-data-sources/aicoin/       AiCoin 行情/资金流 wrapper
-coinglass/                 CoinGlass 解密参考实现(Go 原生在 internal/data/coinglass.go)
-tools/chain-trace/         零 key 链上取证
-tools/research/            JSONL → DuckDB 研究层(H-005 等假设判定报告)
-tools/trader/              币安现货挂单脚本(执行层, 与 kairos 人控边界无关)
-schemas/                   事件契约(所有 floor 统一语言)
+floors/launch/             Robinhood Chain CCA launchpad 采集(H-005/006/007)
+tools/research/            JSONL → DuckDB 研究层
+schemas/                   事件契约(oiscan / launch / 外部 bus 共用)
 docs/                      权威链 + 知识目录, 入口 docs/INDEX.md
 ```
+
+独立仓（不再放在本树里）：
+`kairos-bus` `pm-bot` `rh-sniper` `smartalpha` `meme-monitor` `aicoin-api` `chain-trace` `trader` `coinglass-decrypt`
 
 ## 架构
 
@@ -52,8 +45,8 @@ Exchange WebSocket  ──→  单币检测器（价格/成交量/OI/资金费�
                      events + 60s snapshots JSONL  ──→  kairos-calibrate（lift_5m）
                              ↓
 CoinGlass API  ──→  多空比/爆仓（可选）  ──→  Telegram / DingTalk
-kairos-oiscan ──→  全市场 OI 异动(发现+确认)  ──→  bus/inbound/futures/*.jsonl
-floors/*(pm/meme/solana/onchain/launch) ──→  bus/inbound/<floor>/*.jsonl
+kairos-oiscan ──→  全市场 OI 异动(发现+确认)  ──→  data/inbound/futures/*.jsonl
+floors/launch ──→  launch 原始事件                     ──→  data/inbound/launch/*.jsonl
 ```
 
 ## 文档与权威

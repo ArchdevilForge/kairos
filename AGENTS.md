@@ -40,7 +40,7 @@ It scans futures markets, detects hard-data anomalies, scores deterministic setu
 go build -o kairosd ./cmd/kairosd
 go build -o kairos-alert ./cmd/kairos-alert
 go build -o kairos-backtest ./cmd/kairos-backtest
-go build -o kairos-oiscan ./cmd/kairos-oiscan   # 全市场 OI 异动扫描 → bus/inbound/futures
+go build -o kairos-oiscan ./cmd/kairos-oiscan   # 全市场 OI 异动扫描 → data/inbound/futures
 
 ./kairosd --config config/config.yaml               # Realtime hard-data Telegram alerts
 ./kairos-alert --config config/config.yaml --dry-run
@@ -48,7 +48,7 @@ go build -o kairos-oiscan ./cmd/kairos-oiscan   # 全市场 OI 异动扫描 → 
 go run ./cmd/kairos-desk gate <ticket-id>           # BehaviorGate dry-run 判定
 go run ./cmd/kairos-eval gate                       # gate 合规报告
 make check                                          # build + vet + lint + test -race
-make check-python                                   # 10 个 Python 子项目 uv sync + pytest
+make check-python                                   # floors/launch + tools/research
 ```
 
 ### Risk Constraints

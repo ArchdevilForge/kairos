@@ -184,8 +184,8 @@ def main():
     p_sql = sub.add_parser("sql")
     p_sql.add_argument("--db", default="research.duckdb")
     p_sql.add_argument("query")
-    p_h5 = sub.add_parser("h005", help="H-005 launch demand 判定(读 bus/inbound/launch)")
-    p_h5.add_argument("--launch-dir", default="../../bus/inbound/launch")
+    p_h5 = sub.add_parser("h005", help="H-005 launch demand 判定(读 data/inbound/launch)")
+    p_h5.add_argument("--launch-dir", default="../../data/inbound/launch")
     p_h5.add_argument("--out", help="可选: 输出 markdown 到 docs/40-research/experiments/")
     args = ap.parse_args()
 

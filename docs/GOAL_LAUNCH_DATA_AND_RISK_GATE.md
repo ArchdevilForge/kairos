@@ -92,7 +92,7 @@
    对已毕业 token 采样 v4 池价格 1m/5m/15m/1h/4h → `launch_outcome` 事件。
    第一版可只记 graduation 时间戳与初始价，价格采样允许后补。
 
-输出统一到 `bus/inbound/launch/YYYY-MM-DD.jsonl`（已有约定），按日轮转。
+输出统一到 `data/inbound/launch/YYYY-MM-DD.jsonl`（已有约定），按日轮转。
 
 ### Workstream B：行为 Risk Gate（P1）
 

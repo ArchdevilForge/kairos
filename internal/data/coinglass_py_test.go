@@ -33,7 +33,7 @@ func TestFetchSpotRSIMap_LivePython(t *testing.T) {
 	}
 	decrypt := os.Getenv(envCoinGlassDecrypt)
 	if decrypt == "" {
-		decrypt = filepath.Clean(filepath.Join(findKairosRoot(), "coinglass"))
+		decrypt = filepath.Clean(filepath.Join(findKairosRoot(), "..", "coinglass-decrypt"))
 	}
 	if _, err := os.Stat(filepath.Join(decrypt, "decrypt.py")); err != nil {
 		t.Skip("coinglass-decrypt not available; set KAIROS_COINGLASS_DECRYPT")

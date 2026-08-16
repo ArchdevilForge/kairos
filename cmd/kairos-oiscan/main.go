@@ -80,7 +80,7 @@ const (
 	marketsPath   = "/api/futures/v2/coins/markets"
 	pageSize      = 200
 	maxPages      = 8 // 200/page → covers ~1600 symbols
-	defaultOutDir = "bus/inbound/futures"
+	defaultOutDir = "data/inbound/futures"
 )
 
 // ---------------------------------------------------------------------------
@@ -103,7 +103,7 @@ func parseFlags() config {
 	var (
 		once       = flag.Bool("once", false, "run a single scan and exit")
 		interval   = flag.Duration("interval", 10*time.Minute, "scan interval in watch mode")
-		outDir     = flag.String("out", defaultOutDir, "output dir for kairos-bus JSONL (relative to kairos root)")
+		outDir     = flag.String("out", defaultOutDir, "output dir for JSONL events (relative to kairos root)")
 		minOIUsd   = flag.Float64("min-oi-usd", 5e6, "minimum OI dollar value (CoinGlass All-exchange aggregate) to consider")
 		minH1OI    = flag.Float64("min-h1oi", 10.0, "minimum absolute 1h OI change percent for stage-1 candidates")
 		maxCand    = flag.Int("max-candidates", 20, "max candidates confirmed per scan")

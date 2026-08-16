@@ -24,11 +24,11 @@ Observe  →  Interpret  →  Select  →  Decide  →  Execute  →  Learn
 
 | 步骤 | 组件 | 仓库位置 |
 |---|---|---|
-| Observe | MarketPulse / kairos-oiscan / floors(meme,pm,solana,onchain,launch) / data-sources | `internal/detector`, `cmd/kairos-oiscan`, `floors/`, `data-sources/` |
+| Observe | MarketPulse / kairos-oiscan / launch 采集 | `internal/detector`, `cmd/kairos-oiscan`, `floors/launch` |
 | Interpret | CycleMap | `internal/cycle` |
 | Select | Directional Ranker | `internal/ranker` |
 | Decide | Playbook → Decision Ticket → BehaviorGate（教义 9b 机械执行） | `internal/playbook`, `internal/opportunity`, `internal/decision` |
-| Execute | Human（manual，经 kairos-desk 记录决策）；trader 仅执行辅助 | `cmd/kairos-desk`, `tools/trader` |
+| Execute | Human（manual，经 kairos-desk 记录决策） | `cmd/kairos-desk` |
 | Learn | Journal → Counterfactual → EV Attribution → Gate 合规报告 | `internal/storage`, `internal/evaluation`, `cmd/kairos-eval` |
 
 ## 交易知识目录
@@ -59,7 +59,7 @@ Observe  →  Interpret  →  Select  →  Decide  →  Execute  →  Learn
 已完成：
 
 - [x] P0: schemas/event.v1.json → 各 floor 统一契约（bus Event + oiscan 已对齐）
-- [x] P0: make check-all + Python CI matrix（10 个 Python 子项目）
+- [x] P0: make check-all + Python CI（本仓仅 launch + research）
 - [x] P1: Journal metadata（git_sha/config_hash/strategy_version/experiment_id/mode）
 - [x] P1: Alpha Attribution（SelectionAlpha + HumanAlpha；Entry/Exit 拆分待数据积累）
 - [x] P2: JSONL → DuckDB research layer（tools/research/）

@@ -43,6 +43,5 @@ jobs:
 
       - uses: astral-sh/setup-uv@v5
 
-      # Monorepo Python 子项目(bus/floors/data-sources/coinglass/tools):
-      # 每个 uv sync(含 dev 组) + pytest。无测试项目容忍 exit 5。
+      # 本仓仅剩 launch 采集 + research 判定。
       - run: make check-python

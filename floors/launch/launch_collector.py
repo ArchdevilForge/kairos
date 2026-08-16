@@ -2,7 +2,7 @@
 """Robinhood Chain / Uniswap launchpad 事件采集器。
 
 数据层: 每个新 launch(curve/instant + CCA crowd)的事件 + 状态快照落 JSONL
-(bus/inbound/launch)。H-005/H-006/H-007 的样本都从这份原始数据出。只采集,不交易。
+(data/inbound/launch)。H-005/H-006/H-007 的样本都从这份原始数据出。只采集,不交易。
 
 覆盖(见 docs/GOAL_LAUNCH_DATA_AND_RISK_GATE.md §1.2):
   - TokenCreated(address)        两个入口合约(现行+原始, 只监听一个会漏 ~40%)
