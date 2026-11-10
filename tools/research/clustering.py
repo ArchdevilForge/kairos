@@ -67,6 +67,21 @@ class ClusterMeanStat:
     ci95_high: float
 
 
+@dataclass(frozen=True)
+class ClusterDiffStat:
+    """Cluster-robust two-group difference-in-means statistic (`mean_a - mean_b`)."""
+
+    stat_a: ClusterMeanStat
+    stat_b: ClusterMeanStat
+    n_clusters_total: int
+    diff_mean: float
+    diff_cluster_se: float
+    t_stat: float
+    one_sided_p: float
+    ci95_low: float
+    ci95_high: float
+
+
 def build_wave_clusters(
     wake_events: Sequence[tuple[str, float]],
     merge_gap_sec: float = WAVE_MERGE_GAP_SEC,
@@ -245,6 +260,114 @@ def cluster_robust_mean(
         t_stat=t_stat,
         ci95_low=ci_low,
         ci95_high=ci_high,
+    )
+
+
+def student_t_one_sided_p(t_stat: float, df: int) -> float:
+    """Compute upper-tail one-sided p-value `P(T_df >= t_stat)` for Student-t."""
+    if math.isnan(t_stat) or df <= 0:
+        return math.nan
+    if math.isinf(t_stat):
+        return 0.0 if t_stat > 0 else 1.0
+    if t_stat == 0.0:
+        return 0.5
+
+    # Integrate Student-t PDF on [0, |t|] via composite Simpson's rule inatan-mapped u in [0, theta]
+    # where x = sqrt(df) * tan(u), dx = sqrt(df) * sec^2(u) du:
+    # PDF(x) dx = c_df * (1 + tan^2(u))^(-(df+1)/2) * sec^2(u) du = c_df * cos^(df-1)(u) du.
+    # This transformation is bounded on [0, pi/2) and exact for all t_stat and df >= 1!
+    theta = math.atan(abs(t_stat) / math.sqrt(float(df)))
+    n_steps = 200  # even number for Simpson's rule
+    h = theta / n_steps
+    log_norm = (
+        math.lgamma(0.5 * (df + 1.0))
+        - 0.5 * math.log(math.pi)
+        - math.lgamma(0.5 * float(df))
+    )
+    norm_c = math.exp(log_norm)
+
+    def _integrand(u: float) -> float:
+        c = math.cos(u)
+        if c <= 0.0:
+            return 0.0
+        return c ** (df - 1)
+
+    s = _integrand(0.0) + _integrand(theta)
+    for idx in range(1, n_steps):
+        weight = 4.0 if (idx % 2 == 1) else 2.0
+        s += weight * _integrand(idx * h)
+    prob_0_to_t = min(0.5, max(0.0, norm_c * (h / 3.0) * s))
+    if t_stat > 0:
+        return max(0.0, 0.5 - prob_0_to_t)
+    return min(1.0, 0.5 + prob_0_to_t)
+
+
+def cluster_robust_diff(
+    values_a: Sequence[float],
+    clusters_a: Sequence[str],
+    values_b: Sequence[float],
+    clusters_b: Sequence[str],
+) -> ClusterDiffStat:
+    """Compute CR1 cluster-robust difference in means `mean(A) - mean(B)` grouped by `wave_cluster_id`.
+
+    Estimates the OLS two-group difference `y_gi = beta_0 + delta * D_gi + u_gi`
+    with cluster-robust sandwich variance across all unique `wave_cluster_id`s `G`.
+    """
+    stat_a = cluster_robust_mean(values_a, clusters_a)
+    stat_b = cluster_robust_mean(values_b, clusters_b)
+    n_a = len(values_a)
+    n_b = len(values_b)
+    all_clusters = set(str(c) for c in clusters_a) | set(str(c) for c in clusters_b)
+    g_total = len(all_clusters)
+
+    if n_a == 0 or n_b == 0 or g_total < 2:
+        return ClusterDiffStat(
+            stat_a=stat_a,
+            stat_b=stat_b,
+            n_clusters_total=g_total,
+            diff_mean=(stat_a.mean - stat_b.mean) if (n_a > 0 and n_b > 0) else math.nan,
+            diff_cluster_se=math.nan,
+            t_stat=math.nan,
+            one_sided_p=math.nan,
+            ci95_low=math.nan,
+            ci95_high=math.nan,
+        )
+
+    diff = stat_a.mean - stat_b.mean
+    by_cluster: dict[str, float] = {}
+    for val, cid in zip(values_a, clusters_a):
+        key = str(cid)
+        by_cluster[key] = by_cluster.get(key, 0.0) + (float(val) - stat_a.mean) / n_a
+    for val, cid in zip(values_b, clusters_b):
+        key = str(cid)
+        by_cluster[key] = by_cluster.get(key, 0.0) - (float(val) - stat_b.mean) / n_b
+
+    meat = math.fsum(score * score for score in by_cluster.values())
+    var_cr1 = (g_total / (g_total - 1.0)) * meat
+
+    # Guard degenerate single-cluster-per-group edge case where within-group cluster sum is zero
+    if stat_a.n_clusters < 2 and n_a > 1:
+        var_a_iid = math.fsum((float(v) - stat_a.mean) ** 2 for v in values_a) / (n_a * (n_a - 1))
+        var_cr1 += var_a_iid
+    if stat_b.n_clusters < 2 and n_b > 1:
+        var_b_iid = math.fsum((float(v) - stat_b.mean) ** 2 for v in values_b) / (n_b * (n_b - 1))
+        var_cr1 += var_b_iid
+
+    se = math.sqrt(max(0.0, var_cr1))
+    t_val = diff / se if se > 0 else (math.copysign(math.inf, diff) if diff != 0 else 0.0)
+    df = max(1, g_total - 1)
+    p_one = student_t_one_sided_p(t_val, df)
+    t_crit = _t_crit_95(df)
+    return ClusterDiffStat(
+        stat_a=stat_a,
+        stat_b=stat_b,
+        n_clusters_total=g_total,
+        diff_mean=diff,
+        diff_cluster_se=se,
+        t_stat=t_val,
+        one_sided_p=p_one,
+        ci95_low=diff - t_crit * se,
+        ci95_high=diff + t_crit * se,
     )
 
 
