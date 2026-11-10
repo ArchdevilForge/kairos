@@ -316,4 +316,50 @@ func TestPhase1AuditExitMatrix(t *testing.T) {
 	if !seq[2].IsViolation || seq[2].Code != GateChurnFlipLt5m {
 		t.Fatalf("2nd direction flip within <5m without structural reset must be churn violation: %+v", seq[2])
 	}
+
+	// 4. BehaviorGateConfigFrom mapping + short preset stop price touch + >0.5R structural exit + unexcused <5m loss
+	on := true
+	mapped := BehaviorGateConfigFrom(types.RiskGateConfig{
+		Enabled:            true,
+		CooldownMinutes:    30,
+		WindowStartHour:    19,
+		WindowEndHour:      2,
+		MaxLossUSD:         10,
+		EnforceLeverageCap: &on,
+		MaxMajorLeverage:   10,
+		MaxAltLeverage:     5,
+		TrancheBaseUSD:     10_000,
+	})
+	if !mapped.LeverageCapEnabled() || mapped.MaxMajorLeverage != 10 || mapped.MaxAltLeverage != 5 {
+		t.Fatalf("BehaviorGateConfigFrom=%+v", mapped)
+	}
+
+	resShortPriceStop := AuditExit(ExitAuditInput{
+		TicketID:        "t-short-stop",
+		HasValidTicket:  true,
+		Symbol:          "ETH/USDT:USDT",
+		Direction:       types.CycleDirectionDown,
+		OpenedAt:        open,
+		ClosedAt:        open.Add(2 * time.Minute),
+		PresetStopPrice: 102.0,
+		ExitPrice:       102.1,
+		RealizedR:       -1.05,
+	})
+	if resShortPriceStop.IsViolation || resShortPriceStop.Verdict != VerdictProtectiveStopExempt {
+		t.Fatalf("short exit >= preset stop price must be protective stop exempt: %+v", resShortPriceStop)
+	}
+
+	resTargetFast := AuditExit(ExitAuditInput{
+		TicketID:       "t-target-fast",
+		HasValidTicket: true,
+		Symbol:         "ETH/USDT:USDT",
+		Direction:      types.CycleDirectionUp,
+		OpenedAt:       open,
+		ClosedAt:       open.Add(3 * time.Minute),
+		ExitReason:     types.ExitReasonTargetPartial,
+		RealizedR:      0.85,
+	})
+	if resTargetFast.IsViolation || resTargetFast.Verdict != VerdictCompliant {
+		t.Fatalf(">0.5R target exit <5m must be compliant: %+v", resTargetFast)
+	}
 }
