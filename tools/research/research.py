@@ -310,6 +310,27 @@ def run_h2_cli(
     return 0
 
 
+def run_h3_cli(
+    db: str,
+    confirm_lag: int,
+    out: str | None,
+) -> int:
+    """Run Experiment H3 (Box Maturity & Second Wave Lifecycle + Kill Rule)."""
+    from h3_experiment import format_h3_markdown, run_h3_experiment
+
+    con = duckdb.connect(db)
+    rep = run_h3_experiment(con, confirm_lag_bars=confirm_lag)
+    con.close()
+
+    md = format_h3_markdown(rep)
+    print(md)
+    if out:
+        Path(out).parent.mkdir(parents=True, exist_ok=True)
+        Path(out).write_text(md + "\n")
+        print(f"\n已写入 H3: {out}")
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(description="kairos research layer (JSONL → DuckDB)")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -347,6 +368,10 @@ def main():
     p_h2.add_argument("--db", default="p0.duckdb")
     p_h2.add_argument("--min-vol", type=float, default=10_000_000.0)
     p_h2.add_argument("--out", help="可选: 输出 H2 报告 Markdown")
+    p_h3 = sub.add_parser("h3", help="Experiment H3 箱体成熟度与二波结构验证")
+    p_h3.add_argument("--db", default="p0.duckdb")
+    p_h3.add_argument("--confirm-lag", type=int, default=3)
+    p_h3.add_argument("--out", help="可选: 输出 H3 报告 Markdown")
     args = ap.parse_args()
 
     if args.cmd == "load":
@@ -367,6 +392,8 @@ def main():
         return run_h1_cli(args.db, args.min_vol, args.out_h1a, args.out_h1b)
     elif args.cmd == "h2":
         return run_h2_cli(args.db, args.min_vol, args.out)
+    elif args.cmd == "h3":
+        return run_h3_cli(args.db, args.confirm_lag, args.out)
 
 
 if __name__ == "__main__":

@@ -131,3 +131,69 @@ def test_h2_ranker_factors_and_cixin_age_classification():
     assert compute_liquidity_tier_discount(150_000_000.0, 500_000.0) > compute_liquidity_tier_discount(
         3_000_000.0, 20_000.0
     )
+
+
+def test_h3_swing_pivot_confirmation_lag_and_box_touches():
+    from h3_experiment import (
+        _cluster_boundary_touches,
+        _compute_causal_room_to_resistance_r,
+        extract_causal_swing_pivots,
+    )
+
+    # Zero-lag must be rejected
+    with pytest.raises(ValueError, match="confirm_lag_bars must be >= 1"):
+        extract_causal_swing_pivots([], confirm_lag_bars=0)
+
+    # Build 20 five-minute bars with a peak at index 5 and second peak at index 13
+    bars_5m: list[tuple[int, float, float, float, float, float]] = []
+    highs = [
+        100.0,
+        101.0,
+        102.0,
+        103.0,
+        104.0,
+        110.0,  # idx 5: swing high #1
+        104.0,
+        102.0,
+        98.0,   # idx 8: swing low #1
+        102.0,
+        104.0,
+        105.0,
+        106.0,
+        110.2,  # idx 13: swing high #2
+        105.0,
+        103.0,
+        98.1,   # idx 16: swing low #2
+        102.0,
+        104.0,
+        105.0,
+    ]
+    for i, hi in enumerate(highs):
+        ts = 1_700_000_300 + i * 300
+        lo = hi - 4.0
+        bars_5m.append((ts, hi - 2.0, hi, lo, hi - 1.5, 100_000.0))
+
+    # At index 7 (only 2 bars after index 5), with k=3 lag, pivot at index 5 is NOT yet confirmed!
+    pivs_at_7 = extract_causal_swing_pivots(bars_5m, confirm_lag_bars=3, up_to_idx=7)
+    assert all(p.pivot_idx != 5 for p in pivs_at_7)
+
+    # At index 8 (3 bars after index 5), pivot at index 5 IS confirmed with confirm_idx == 8
+    pivs_at_8 = extract_causal_swing_pivots(bars_5m, confirm_lag_bars=3, up_to_idx=8)
+    high_pivs_8 = [p for p in pivs_at_8 if p.kind == "HIGH" and p.pivot_idx == 5]
+    assert len(high_pivs_8) == 1
+    assert high_pivs_8[0].confirm_idx == 8
+    assert high_pivs_8[0].confirm_ts == bars_5m[8][0]
+
+    # At index 19, both upper probes (idx 5 & 13) and both lower probes (idx 8 & 16) are confirmed
+    pivs_all = extract_causal_swing_pivots(bars_5m, confirm_lag_bars=3, up_to_idx=19)
+    up_lvl, up_touches, _ = _cluster_boundary_touches(pivs_all, "HIGH", tol_frac=0.0085)
+    lo_lvl, lo_touches, _ = _cluster_boundary_touches(pivs_all, "LOW", tol_frac=0.0085)
+    assert up_touches >= 2 and math.isclose(up_lvl, 110.2, rel_tol=1e-4)
+    assert lo_touches >= 2 and math.isclose(lo_lvl, 94.0, rel_tol=1e-4)
+
+    # RoomToResistanceR calculation
+    htf = [(1_700_000_000, 100.0, 120.0, 90.0, 108.0)]
+    room_r = _compute_causal_room_to_resistance_r(
+        "UP", 111.0, 108.0, 1_700_006_000, htf, bars_5m
+    )
+    assert math.isclose(room_r, (120.0 - 111.0) / (111.0 - 108.0), rel_tol=1e-4)
