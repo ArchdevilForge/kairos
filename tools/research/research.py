@@ -289,6 +289,27 @@ def run_h1_cli(
     return 0
 
 
+def run_h2_cli(
+    db: str,
+    min_vol: float,
+    out: str | None,
+) -> int:
+    """Run Experiment H2 (Dynamic Leader Scoring & 次新 Kill Rule)."""
+    from h2_experiment import format_h2_markdown, run_h2_experiment
+
+    con = duckdb.connect(db)
+    rep = run_h2_experiment(con, min_quote_vol_24h=min_vol)
+    con.close()
+
+    md = format_h2_markdown(rep)
+    print(md)
+    if out:
+        Path(out).parent.mkdir(parents=True, exist_ok=True)
+        Path(out).write_text(md + "\n")
+        print(f"\n已写入 H2: {out}")
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(description="kairos research layer (JSONL → DuckDB)")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -322,6 +343,10 @@ def main():
     p_h1.add_argument("--min-vol", type=float, default=30_000_000.0)
     p_h1.add_argument("--out-h1a", help="可选: 输出 H1a 报告 Markdown")
     p_h1.add_argument("--out-h1b", help="可选: 输出 H1b 报告 Markdown")
+    p_h2 = sub.add_parser("h2", help="Experiment H2 动态龙头打分与次新因子验证")
+    p_h2.add_argument("--db", default="p0.duckdb")
+    p_h2.add_argument("--min-vol", type=float, default=10_000_000.0)
+    p_h2.add_argument("--out", help="可选: 输出 H2 报告 Markdown")
     args = ap.parse_args()
 
     if args.cmd == "load":
@@ -340,6 +365,8 @@ def main():
         )
     elif args.cmd == "h1":
         return run_h1_cli(args.db, args.min_vol, args.out_h1a, args.out_h1b)
+    elif args.cmd == "h2":
+        return run_h2_cli(args.db, args.min_vol, args.out)
 
 
 if __name__ == "__main__":
