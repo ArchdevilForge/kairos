@@ -22,7 +22,9 @@ import (
 	"strings"
 
 	"github.com/ArchdevilForge/kairos/internal/config"
+	"github.com/ArchdevilForge/kairos/internal/evaluation"
 	"github.com/ArchdevilForge/kairos/internal/storage"
+	"github.com/ArchdevilForge/kairos/internal/types"
 )
 
 type eventRecord struct {
@@ -139,6 +141,7 @@ func main() {
 	reportOutcomes(outcomes, pairs)
 	reportBuckets(pairs)
 	reportLift(outcomes, events, snaps, *noisePct)
+	reportPolicyNetR(outcomes, events)
 }
 
 func loadEvents(path string) ([]eventRecord, error) {
@@ -815,4 +818,199 @@ func sortedKeys(m map[string]int) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// reportPolicyNetR outputs multi-horizon PolicyNetR (from Work Item 5's wave policy
+// and benchmark horizons) ALONGSIDE experimental_lift_5m (Work Item 14).
+// All NetR statistics use full-friction cost modeling and CR1 cluster-robust
+// standard errors grouped by wave_cluster_id (<24h MarketPulse wake merge rule).
+func reportPolicyNetR(outcomes []outcomeRecord, events []eventRecord) {
+	fmt.Println("\n── PolicyNetR 多期持仓标尺（full-friction, wave_cluster_id CR1 SE）──")
+	if len(outcomes) == 0 {
+		fmt.Println("  PolicyNetR: n/a (无 outcome 样本)")
+		return
+	}
+
+	var wakeEvents []evaluation.WakeEventTimestamp
+	seenIDs := map[string]bool{}
+	for i, e := range events {
+		if e.Timestamp > 0 {
+			id := fmt.Sprintf("ev_%d_%.0f", i, math.Round(e.Timestamp))
+			wakeEvents = append(wakeEvents, evaluation.WakeEventTimestamp{
+				ID:        id,
+				Timestamp: int64(math.Round(e.Timestamp)),
+			})
+			seenIDs[fmt.Sprintf("%.0f", math.Round(e.Timestamp))] = true
+		}
+	}
+	for i, o := range outcomes {
+		tsKey := fmt.Sprintf("%.0f", math.Round(o.EventTS))
+		if o.EventTS > 0 && !seenIDs[tsKey] {
+			wakeEvents = append(wakeEvents, evaluation.WakeEventTimestamp{
+				ID:        fmt.Sprintf("out_%d_%s", i, tsKey),
+				Timestamp: int64(math.Round(o.EventTS)),
+			})
+			seenIDs[tsKey] = true
+		}
+	}
+	clusterByID := evaluation.BuildWaveClusters(wakeEvents)
+	clusterByTS := map[int64]string{}
+	for _, we := range wakeEvents {
+		clusterByTS[we.Timestamp] = clusterByID[we.ID]
+	}
+
+	type policySpec struct {
+		label  string
+		kind   evaluation.PolicyKind
+		kbe    float64
+		target float64
+	}
+	specs := []policySpec{
+		{label: "fixed_5m", kind: evaluation.PolicyFixed5m},
+		{label: "fixed_30m", kind: evaluation.PolicyFixed30m},
+		{label: "fixed_+1.5R/-1.0R", kind: evaluation.PolicyFixedBracket, target: 1.5},
+		{label: "wave_k_be=0.8", kind: evaluation.PolicyWave, kbe: evaluation.DefaultWaveKBE},
+	}
+
+	valsByPolicy := make(map[string][]float64, len(specs))
+	var clusterIDs []string
+
+	for i, o := range outcomes {
+		bars := buildOutcomeMinuteBars(o)
+		if len(bars) == 0 {
+			continue
+		}
+		dir := types.CycleDirectionUp
+		stopPrice := 99.0
+		if o.Direction == "down" {
+			dir = types.CycleDirectionDown
+			stopPrice = 101.0
+		}
+		tsInt := int64(math.Round(o.EventTS))
+		cid := clusterByTS[tsInt]
+		if cid == "" {
+			cid = "wave_cluster_0001"
+		}
+		clusterIDs = append(clusterIDs, cid)
+
+		for _, sp := range specs {
+			res := evaluation.SimulateHoldingPolicy(evaluation.PolicySimInput{
+				SignalID:      fmt.Sprintf("cal_%d", i),
+				WaveClusterID: cid,
+				Symbol:        "ALT/USDT:USDT",
+				Direction:     dir,
+				EntryUnix:     tsInt,
+				EntryPrice:    100.0,
+				StopPrice:     stopPrice,
+				TickSize:      0.01,
+				ATR1mEntry:    0.18,
+				ADV5mEntryUSD: 2_500_000.0,
+				NotionalUSD:   10_000.0,
+				Bars:          bars,
+				BarPeriodSec:  60,
+				Policy:        sp.kind,
+				KBE:           sp.kbe,
+				TargetR:       sp.target,
+			})
+			valsByPolicy[sp.label] = append(valsByPolicy[sp.label], res.NetR())
+		}
+	}
+
+	if len(clusterIDs) == 0 {
+		fmt.Println("  PolicyNetR: n/a (无可用轨迹样本)")
+		return
+	}
+
+	for _, sp := range specs {
+		st := evaluation.ClusterRobustMean(valsByPolicy[sp.label], clusterIDs)
+		fmt.Printf("  PolicyNetR (%s): mean=%+.4fR  cluster_se=%.4f  t=%+.2f  n=%d  clusters=%d\n",
+			sp.label, st.Mean, st.ClusterSE, st.TStat, st.N, st.NClusters)
+	}
+}
+
+// buildOutcomeMinuteBars constructs a deterministic 30m 1m bar path from an outcomeRecord's
+// recorded 1m / 5m / 15m returns and MFE / MAE excursions around entry price 100.0.
+func buildOutcomeMinuteBars(o outcomeRecord) []evaluation.Bar {
+	if o.MedianReturn1m == nil && o.MedianReturn5m == nil && o.MedianReturn15m == nil && o.MFE == 0 && o.MAE == 0 {
+		return nil
+	}
+	sgn := 1.0
+	if o.Direction == "down" {
+		sgn = -1.0
+	}
+	ret1m := 0.0
+	if o.MedianReturn1m != nil {
+		ret1m = *o.MedianReturn1m
+	}
+	ret5m := ret1m
+	if o.MedianReturn5m != nil {
+		ret5m = *o.MedianReturn5m
+	}
+	ret15m := ret5m
+	if o.MedianReturn15m != nil {
+		ret15m = *o.MedianReturn15m
+	}
+	mfe := math.Abs(o.MFE)
+	if mfe == 0 {
+		mfe = math.Max(0, sgn*ret15m)
+	}
+	mae := math.Abs(o.MAE)
+	if mae == 0 {
+		mae = math.Max(0, -sgn*ret5m)
+	}
+
+	t0 := int64(math.Round(o.EventTS))
+	if t0 <= 0 {
+		t0 = 1_700_000_000
+	}
+	bars := make([]evaluation.Bar, 0, 30)
+	prevClose := 100.0
+	for m := 1; m <= 30; m++ {
+		var pctMove float64
+		switch {
+		case m == 1:
+			pctMove = ret1m
+		case m <= 5:
+			frac := float64(m-1) / 4.0
+			pctMove = ret1m + frac*(ret5m-ret1m)
+		case m <= 15:
+			frac := float64(m-5) / 10.0
+			pctMove = ret5m + frac*(ret15m-ret5m)
+		default:
+			frac := float64(m-15) / 15.0
+			endFav := sgn * mfe
+			if o.Reversed {
+				endFav = -sgn * mae
+			}
+			pctMove = ret15m + frac*(endFav-ret15m)
+		}
+		closePx := 100.0 * (1.0 + pctMove/100.0)
+		highPx := math.Max(prevClose, closePx)
+		lowPx := math.Min(prevClose, closePx)
+		if m == 3 && mae > 0 {
+			advPx := 100.0 * (1.0 - sgn*(mae/100.0))
+			if sgn > 0 {
+				lowPx = math.Min(lowPx, advPx)
+			} else {
+				highPx = math.Max(highPx, advPx)
+			}
+		}
+		if m == 12 && mfe > 0 {
+			favPx := 100.0 * (1.0 + sgn*(mfe/100.0))
+			if sgn > 0 {
+				highPx = math.Max(highPx, favPx)
+			} else {
+				lowPx = math.Min(lowPx, favPx)
+			}
+		}
+		bars = append(bars, evaluation.Bar{
+			TS:    t0 + int64(m)*60,
+			Open:  prevClose,
+			High:  highPx,
+			Low:   lowPx,
+			Close: closePx,
+		})
+		prevClose = closePx
+	}
+	return bars
 }

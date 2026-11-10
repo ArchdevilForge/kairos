@@ -286,6 +286,10 @@ riskGate:
   windowStartHour: 18     # live window start, local hour (UTC+8)
   windowEndHour: 1        # live window end (wraps past midnight)
   maxLossUSD: 4           # per-trade max predefined loss ($100 challenge scale)
+  enforceLeverageCap: true # mechanical leverage caps (BTC/ETH <=10x, alts <=5x)
+  maxMajorLeverage: 10.0
+  maxAltLeverage: 5.0
+  trancheBaseUSD: 10000.0 # fixed tranche base for leverage/notional bound
 
 # Shadow: sessions+rank board+journal; tickets only when enrich passes real gates.
 # assumeSpreadOK: only for shadow without L2; production must leave false.
@@ -298,6 +302,7 @@ opportunity:
   # Risk sizing (Canonical §9: numeric pct from config, not code constants).
   # riskBudgets values are % of equity at risk per template (0.75 = 0.75%).
   # maxLeverage caps the ticket risk plan (0 keeps the code fallback of 5).
+  # Single-ticket sizing: Notional = min(trancheBaseUSD * MaxAssetLev, RiskBudgetUSD / EffectiveStopPct).
   riskBudgets:
     alignedSpring: 0.75
     alignedSummer: 0.75
@@ -306,3 +311,6 @@ opportunity:
     mixedContext: 0.0
     noTrade: 0.0
   maxLeverage: 5
+  maxMajorLeverage: 10.0
+  maxAltLeverage: 5.0
+  trancheBaseUSD: 10000.0

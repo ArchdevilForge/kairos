@@ -250,6 +250,11 @@ type RiskGateConfig struct {
 	WindowEndHour   int `mapstructure:"windowEndHour" json:"windowEndHour" yaml:"windowEndHour"`
 	// MaxLossUSD: 单笔预设最大损失上限(§9b 规则 6, 挑战账户 $100 口径)。
 	MaxLossUSD float64 `mapstructure:"maxLossUSD" json:"maxLossUSD" yaml:"maxLossUSD"`
+	// EnforceLeverageCap: 机械执行杠杆硬上限(默认 true: BTC/ETH <=10x, 山寨 <=5x)。
+	EnforceLeverageCap *bool   `mapstructure:"enforceLeverageCap" json:"enforceLeverageCap,omitempty" yaml:"enforceLeverageCap,omitempty"`
+	MaxMajorLeverage   float64 `mapstructure:"maxMajorLeverage" json:"maxMajorLeverage,omitempty" yaml:"maxMajorLeverage,omitempty"`
+	MaxAltLeverage     float64 `mapstructure:"maxAltLeverage" json:"maxAltLeverage,omitempty" yaml:"maxAltLeverage,omitempty"`
+	TrancheBaseUSD     float64 `mapstructure:"trancheBaseUSD" json:"trancheBaseUSD,omitempty" yaml:"trancheBaseUSD,omitempty"`
 }
 
 // OpportunityConfig gates the decision-desk path off MarketPulse.
@@ -266,6 +271,11 @@ type OpportunityConfig struct {
 	RiskBudgets map[string]float64 `mapstructure:"riskBudgets" json:"riskBudgets" yaml:"riskBudgets"`
 	// MaxLeverage caps leverage on decision tickets (0 → 5 fallback).
 	MaxLeverage float64 `mapstructure:"maxLeverage" json:"maxLeverage" yaml:"maxLeverage"`
+	// MaxMajorLeverage / MaxAltLeverage: per-asset-class hard caps (defaults: BTC/ETH 10x, alts 5x).
+	MaxMajorLeverage float64 `mapstructure:"maxMajorLeverage" json:"maxMajorLeverage,omitempty" yaml:"maxMajorLeverage,omitempty"`
+	MaxAltLeverage   float64 `mapstructure:"maxAltLeverage" json:"maxAltLeverage,omitempty" yaml:"maxAltLeverage,omitempty"`
+	// TrancheBaseUSD is the fixed accounting tranche base (e.g. 10000; profit-withdraw / loss-refill accounting only).
+	TrancheBaseUSD float64 `mapstructure:"trancheBaseUSD" json:"trancheBaseUSD,omitempty" yaml:"trancheBaseUSD,omitempty"`
 }
 
 // TelegramConfig holds Telegram delivery settings.

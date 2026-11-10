@@ -278,3 +278,36 @@ func TestMagBucket(t *testing.T) {
 		t.Fatal("buckets")
 	}
 }
+
+func TestReportPolicyNetRSmoke(t *testing.T) {
+	r1 := 0.25
+	r5 := 0.65
+	r15 := 1.40
+	outcomes := []outcomeRecord{
+		{
+			EventTS:         1_700_000_000,
+			SourceEvent:     "market_impulse",
+			Direction:       "up",
+			MedianReturn1m:  &r1,
+			MedianReturn5m:  &r5,
+			MedianReturn15m: &r15,
+			MFE:             2.1,
+			MAE:             0.3,
+		},
+		{
+			EventTS:         1_700_100_000, // >24h -> second wave cluster
+			SourceEvent:     "market_impulse",
+			Direction:       "down",
+			MedianReturn1m:  &r1,
+			MedianReturn5m:  &r5,
+			MedianReturn15m: &r15,
+			MFE:             1.8,
+			MAE:             0.4,
+		},
+	}
+	events := []eventRecord{
+		{Timestamp: 1_700_000_000, EventType: "market_impulse", Direction: "up", MedianReturn60s: 0.35},
+		{Timestamp: 1_700_100_000, EventType: "market_impulse", Direction: "down", MedianReturn60s: -0.40},
+	}
+	reportPolicyNetR(outcomes, events)
+}

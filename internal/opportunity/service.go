@@ -26,7 +26,10 @@ type Config struct {
 	// truth is config (Canonical §9: numeric pct from config, not code constants).
 	RiskBudgets decision.RiskBudgets
 	// MaxLeverage caps leverage on tickets (0 → BuildTicket default 5).
-	MaxLeverage float64
+	MaxLeverage      float64
+	MaxMajorLeverage float64
+	MaxAltLeverage   float64
+	TrancheBaseUSD   float64
 }
 
 // DefaultConfig returns stage-1 defaults (ticket sizing falls back to the
@@ -38,6 +41,9 @@ func DefaultConfig() Config {
 		Enabled:              true,
 		RiskBudgets:          decision.DefaultRiskBudgets(),
 		MaxLeverage:          5,
+		MaxMajorLeverage:     decision.DefaultMajorLeverageCap,
+		MaxAltLeverage:       decision.DefaultAltLeverageCap,
+		TrancheBaseUSD:       decision.DefaultTrancheBaseUSD,
 	}
 }
 
@@ -81,6 +87,15 @@ func ConfigFromTypes(c types.OpportunityConfig) Config {
 	cfg.RiskBudgets = riskBudgetsFromConfig(c.RiskBudgets)
 	if c.MaxLeverage > 0 {
 		cfg.MaxLeverage = c.MaxLeverage
+	}
+	if c.MaxMajorLeverage > 0 {
+		cfg.MaxMajorLeverage = c.MaxMajorLeverage
+	}
+	if c.MaxAltLeverage > 0 {
+		cfg.MaxAltLeverage = c.MaxAltLeverage
+	}
+	if c.TrancheBaseUSD > 0 {
+		cfg.TrancheBaseUSD = c.TrancheBaseUSD
 	}
 	return cfg
 }
@@ -353,8 +368,11 @@ func (s *Service) evaluate(req EvaluateRequest, attachExisting bool) (EvaluateRe
 			EntryPrice:       req.EntryPrice[cand.Symbol],
 			StopPrice:        req.StopPrice[cand.Symbol],
 			Equity:           s.cfg.Equity,
+			TrancheBaseUSD:   s.cfg.TrancheBaseUSD,
 			Budgets:          s.cfg.RiskBudgets,
 			MaxLeverage:      s.cfg.MaxLeverage,
+			MaxMajorLeverage: s.cfg.MaxMajorLeverage,
+			MaxAltLeverage:   s.cfg.MaxAltLeverage,
 			Trigger:          "leader_pullback restart",
 			CreatedAt:        now,
 			SignalAt:         signalAt,

@@ -35,4 +35,42 @@ func TestEvalSummaryFromJournal(t *testing.T) {
 	if rep.Accepted.N != 1 {
 		t.Fatalf("%+v", rep)
 	}
+	if rep.MaxAbsIdentityResidual != 0 {
+		t.Fatalf("MaxAbsIdentityResidual=%v want 0", rep.MaxAbsIdentityResidual)
+	}
+}
+
+func TestEvalGateReauditZeroMisclassificationOnProtectiveStop(t *testing.T) {
+	dir := t.TempDir()
+	j, err := storage.NewJournal(types.StorageConfig{DatabasePath: filepath.Join(dir, "kairos.db")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Historical <5m exit that touched its preset stop must have 0% violation misclassification.
+	_ = j.SaveTicket(types.DecisionTicket{
+		ID: "t-stop-fast", Symbol: "SOL/USDT:USDT", Status: types.TicketStatusAccepted,
+		Direction: types.CycleDirectionUp, TradeClass: types.TradeClassAlignedLong,
+		Grade: types.TicketGradeA, PlaybookID: types.PlaybookLeaderPullbackV1,
+		EntryTriggeredAt: 1_700_000_000,
+		RiskPlan:         types.RiskPlan{EntryPrice: 100.0, StopPrice: 98.0},
+	})
+	_ = j.SaveDecision(types.DecisionRecord{TicketID: "t-stop-fast", Decision: types.DecisionAccepted})
+	_ = j.SaveOutcome(storage.CounterfactualOutcome{
+		TicketID:     "t-stop-fast",
+		Symbol:       "SOL/USDT:USDT",
+		Decision:     types.DecisionAccepted,
+		ExitPrice:    97.95,
+		PathEndUnix:  1_700_000_120, // 2m (<5m) hold
+		StopHitFirst: true,
+		NetR:         -1.08,
+		MechanicalR:  -1.08,
+		Complete:     true,
+	})
+
+	if err := run([]string{"-journal", dir, "-json", "gate"}); err != nil {
+		t.Fatalf("gate run failed: %v", err)
+	}
+	if err := run([]string{"-journal", dir, "summary"}); err != nil {
+		t.Fatalf("summary run failed: %v", err)
+	}
 }

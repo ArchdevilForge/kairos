@@ -171,6 +171,91 @@ def h005(launch_dir: str, out: str | None):
     return 0
 
 
+def pit_sync(db: str, pit_jsonl: str | None, at_ts: int | None, min_vol: float) -> int:
+    """Sync PIT perpetual universe into DuckDB and optionally query active candidates."""
+    from pit_universe import (
+        ensure_pit_schema,
+        fetch_okx_usdt_swaps,
+        load_pit_jsonl,
+        query_pit_candidates,
+        upsert_pit_universe,
+    )
+
+    con = duckdb.connect(db)
+    ensure_pit_schema(con)
+    if pit_jsonl:
+        n = load_pit_jsonl(con, pit_jsonl)
+        print(f"loaded {n} PIT rows from {pit_jsonl}")
+    else:
+        swaps = fetch_okx_usdt_swaps()
+        n = upsert_pit_universe(con, swaps)
+        print(f"synced {n} OKX USDT-SWAP rows into dim_perp_universe_pit")
+    if at_ts is not None:
+        cands = query_pit_candidates(con, at_ts=at_ts, min_quote_vol_24h=min_vol)
+        print(f"PIT candidates at {at_ts} (min_vol={min_vol:,.0f}): {len(cands)}")
+    con.close()
+    return 0
+
+
+def run_p0_cli(
+    db: str,
+    fetch_days: float,
+    end_ts: int | None,
+    journal: str | None,
+    min_vol: float,
+    out: str | None,
+) -> int:
+    """Run Experiment P0 path-dependent NetR calibration & protective-stop counterfactual."""
+    import time as _time
+    from p0_experiment import (
+        detect_market_pulse_candidates,
+        format_p0_markdown,
+        ingest_okx_sample_to_duckdb,
+        load_bars_and_funding_from_duckdb,
+        load_journal_short_exits,
+        run_p0_calibration,
+    )
+
+    con = duckdb.connect(db)
+    now_sec = (int(end_ts) if end_ts else int(_time.time())) // 60 * 60
+    if fetch_days > 0:
+        start_sec = now_sec - int(fetch_days * 86400)
+        counts = ingest_okx_sample_to_duckdb(con, start_ts=start_sec, end_ts=now_sec)
+        print(f"ingested OKX PIT sample: {counts}")
+
+    bars_by_sym, funding_by_sym, tick_map = load_bars_and_funding_from_duckdb(con)
+    signals, clusters, short_exits = detect_market_pulse_candidates(
+        con,
+        bars_by_sym,
+        tick_map,
+        min_quote_vol_24h=min_vol,
+    )
+    if journal:
+        short_exits.extend(load_journal_short_exits(journal, bars_by_sym, clusters))
+
+    if not signals:
+        con.close()
+        print("P0 error: 0 candidate signals detected in sample window")
+        return 1
+
+    report_obj = run_p0_calibration(
+        signals,
+        bars_by_sym,
+        wake_clusters=clusters,
+        short_exit_records=short_exits,
+        funding_by_sym=funding_by_sym,
+    )
+    con.close()
+
+    md = format_p0_markdown(report_obj)
+    print(md)
+    if out:
+        Path(out).parent.mkdir(parents=True, exist_ok=True)
+        Path(out).write_text(md + "\n")
+        print(f"\n已写入: {out}")
+    return 2 if report_obj.stop_condition_triggered else 0
+
+
 def main():
     ap = argparse.ArgumentParser(description="kairos research layer (JSONL → DuckDB)")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -187,6 +272,18 @@ def main():
     p_h5 = sub.add_parser("h005", help="H-005 launch demand 判定(读 data/inbound/launch)")
     p_h5.add_argument("--launch-dir", default="../../data/inbound/launch")
     p_h5.add_argument("--out", help="可选: 输出 markdown 到 docs/40-research/experiments/")
+    p_pit = sub.add_parser("pit", help="PIT perpetual universe 同步/查询 (Work Item 1)")
+    p_pit.add_argument("--db", default="research.duckdb")
+    p_pit.add_argument("--jsonl", help="从本地 JSONL 加载 PIT 合约表(缺省拉 OKX SWAP)")
+    p_pit.add_argument("--at-ts", type=int, help="查询指定 Unix 秒的因果候选池")
+    p_pit.add_argument("--min-vol", type=float, default=30_000_000.0)
+    p_p0 = sub.add_parser("p0", help="Experiment P0 路径依赖 NetR 标尺校准 (Work Items 1-6)")
+    p_p0.add_argument("--db", default="p0.duckdb")
+    p_p0.add_argument("--fetch-days", type=float, default=0.0, help="从 OKX 拉取最近 N 天 1m 数据")
+    p_p0.add_argument("--end-ts", type=int, help="采集截止 Unix 秒(缺省当前整分)")
+    p_p0.add_argument("--journal", help="可选: 历史 trading-journal.jsonl 路径")
+    p_p0.add_argument("--min-vol", type=float, default=30_000_000.0)
+    p_p0.add_argument("--out", help="可选: 输出实验报告 Markdown")
     args = ap.parse_args()
 
     if args.cmd == "load":
@@ -197,6 +294,12 @@ def main():
         sql(args.db, args.query)
     elif args.cmd == "h005":
         return h005(args.launch_dir, args.out)
+    elif args.cmd == "pit":
+        return pit_sync(args.db, args.jsonl, args.at_ts, args.min_vol)
+    elif args.cmd == "p0":
+        return run_p0_cli(
+            args.db, args.fetch_days, args.end_ts, args.journal, args.min_vol, args.out
+        )
 
 
 if __name__ == "__main__":

@@ -1,10 +1,66 @@
 package types
 
+import "strings"
+
 // Schema versions for decision desk contracts.
 const (
 	DecisionTicketSchemaVersion = "decision_ticket.v1"
 	DecisionRecordSchemaVersion = "decision_record.v1"
 )
+
+// ExitReason is the structured close-out classification on a ticket/journal record (Work Item 11).
+type ExitReason string
+
+const (
+	ExitReasonProtectiveStop  ExitReason = "PROTECTIVE_STOP"
+	ExitReasonFakeoutAbort    ExitReason = "FAKEOUT_ABORT"
+	ExitReasonStructuralTrail ExitReason = "STRUCTURAL_TRAIL"
+	ExitReasonTargetPartial   ExitReason = "TARGET_PARTIAL"
+	ExitReasonImpulseEarly    ExitReason = "IMPULSE_EARLY"
+)
+
+var validExitReasons = []ExitReason{
+	ExitReasonProtectiveStop,
+	ExitReasonFakeoutAbort,
+	ExitReasonStructuralTrail,
+	ExitReasonTargetPartial,
+	ExitReasonImpulseEarly,
+}
+
+// ValidExitReasons returns all canonical exit reasons in single-key menu order.
+func ValidExitReasons() []ExitReason {
+	return append([]ExitReason(nil), validExitReasons...)
+}
+
+// IsValidExitReason reports whether r is a canonical ExitReason.
+func IsValidExitReason(r ExitReason) bool {
+	for _, v := range validExitReasons {
+		if r == v {
+			return true
+		}
+	}
+	return false
+}
+
+// ParseExitReasonKey parses a single-key shortcut ("1".."5" or "p"/"f"/"s"/"t"/"i")
+// or full enum name into a canonical ExitReason.
+func ParseExitReasonKey(input string) (ExitReason, bool) {
+	s := strings.TrimSpace(strings.ToUpper(input))
+	switch s {
+	case "1", "P", string(ExitReasonProtectiveStop):
+		return ExitReasonProtectiveStop, true
+	case "2", "F", string(ExitReasonFakeoutAbort):
+		return ExitReasonFakeoutAbort, true
+	case "3", "S", string(ExitReasonStructuralTrail):
+		return ExitReasonStructuralTrail, true
+	case "4", "T", string(ExitReasonTargetPartial):
+		return ExitReasonTargetPartial, true
+	case "5", "I", string(ExitReasonImpulseEarly):
+		return ExitReasonImpulseEarly, true
+	default:
+		return "", false
+	}
+}
 
 // HumanDecision is the final human action on a ticket.
 type HumanDecision string
@@ -91,30 +147,33 @@ type EntryPlan struct {
 // RiskPlan sizes by max loss, not position% first.
 //
 //	loss_budget = equity × risk_budget_pct
-//	notional    = loss_budget / stop_distance_pct
+//	notional    = min(tranche_base_usd × max_asset_lev, loss_budget / effective_stop_pct)
 type RiskPlan struct {
 	TemplateID string `json:"template_id" yaml:"template_id"`
 
-	RiskBudgetPct   float64 `json:"risk_budget_pct" yaml:"risk_budget_pct"`
-	EntryPrice      float64 `json:"entry_price" yaml:"entry_price"`
-	StopPrice       float64 `json:"stop_price" yaml:"stop_price"`
-	StopDistancePct float64 `json:"stop_distance_pct" yaml:"stop_distance_pct"`
+	RiskBudgetPct    float64 `json:"risk_budget_pct" yaml:"risk_budget_pct"`
+	EntryPrice       float64 `json:"entry_price" yaml:"entry_price"`
+	StopPrice        float64 `json:"stop_price" yaml:"stop_price"`
+	StopDistancePct  float64 `json:"stop_distance_pct" yaml:"stop_distance_pct"`
+	EffectiveStopPct float64 `json:"effective_stop_pct,omitempty" yaml:"effective_stop_pct,omitempty"`
 
 	SuggestedNotional float64 `json:"suggested_notional" yaml:"suggested_notional"`
 	MaxNotional       float64 `json:"max_notional" yaml:"max_notional"`
 
-	MaxLeverage  float64 `json:"max_leverage" yaml:"max_leverage"`
-	AddOnAllowed bool    `json:"add_on_allowed" yaml:"add_on_allowed"`
+	MaxLeverage    float64 `json:"max_leverage" yaml:"max_leverage"`
+	TrancheBaseUSD float64 `json:"tranche_base_usd,omitempty" yaml:"tranche_base_usd,omitempty"`
+	AddOnAllowed   bool    `json:"add_on_allowed" yaml:"add_on_allowed"`
 }
 
 // DecisionTicket is the human-facing structured decision card.
 type DecisionTicket struct {
 	SchemaVersion string `json:"schema_version" yaml:"schema_version"`
 
-	ID         string `json:"id" yaml:"id"`
-	SessionID  string `json:"session_id" yaml:"session_id"`
-	Symbol     string `json:"symbol" yaml:"symbol"`
-	PlaybookID string `json:"playbook_id" yaml:"playbook_id"`
+	ID            string `json:"id" yaml:"id"`
+	SessionID     string `json:"session_id" yaml:"session_id"`
+	WaveClusterID string `json:"wave_cluster_id,omitempty" yaml:"wave_cluster_id,omitempty"`
+	Symbol        string `json:"symbol" yaml:"symbol"`
+	PlaybookID    string `json:"playbook_id" yaml:"playbook_id"`
 
 	Direction  CycleDirection `json:"direction" yaml:"direction"`
 	Grade      TicketGrade    `json:"grade" yaml:"grade"`
@@ -131,6 +190,12 @@ type DecisionTicket struct {
 	Invalidations []string `json:"invalidations" yaml:"invalidations"`
 
 	Status TicketStatus `json:"status" yaml:"status"`
+
+	// Additive close-out metadata (Work Item 11).
+	ExitReason         ExitReason `json:"exit_reason,omitempty" yaml:"exit_reason,omitempty"`
+	RealizedFundingUSD float64    `json:"realized_funding_usd,omitempty" yaml:"realized_funding_usd,omitempty"`
+	ExitPrice          float64    `json:"exit_price,omitempty" yaml:"exit_price,omitempty"`
+	ClosedAt           int64      `json:"closed_at,omitempty" yaml:"closed_at,omitempty"`
 
 	// Timestamps (unix seconds) — required for honest forward outcome paths.
 	CreatedAt        int64 `json:"created_at" yaml:"created_at"`
@@ -151,6 +216,16 @@ type DecisionRecord struct {
 	PlannedEntry *float64 `json:"planned_entry,omitempty" yaml:"planned_entry,omitempty"`
 	PlannedStop  *float64 `json:"planned_stop,omitempty" yaml:"planned_stop,omitempty"`
 	PlannedRiskR *float64 `json:"planned_risk_r,omitempty" yaml:"planned_risk_r,omitempty"`
+
+	// Additive close-out metadata (Work Item 11).
+	ExitReason         ExitReason `json:"exit_reason,omitempty" yaml:"exit_reason,omitempty"`
+	RealizedFundingUSD float64    `json:"realized_funding_usd,omitempty" yaml:"realized_funding_usd,omitempty"`
+	ExitPrice          float64    `json:"exit_price,omitempty" yaml:"exit_price,omitempty"`
+	ClosedAt           int64      `json:"closed_at,omitempty" yaml:"closed_at,omitempty"`
+	TouchedPresetStop  bool       `json:"touched_preset_stop,omitempty" yaml:"touched_preset_stop,omitempty"`
+	FakeoutConfirmed   bool       `json:"fakeout_confirmed,omitempty" yaml:"fakeout_confirmed,omitempty"`
+	MarketStressActive bool       `json:"market_stress_active,omitempty" yaml:"market_stress_active,omitempty"`
+	StructureIntact    bool       `json:"structure_intact,omitempty" yaml:"structure_intact,omitempty"`
 
 	DecidedAt int64 `json:"decided_at" yaml:"decided_at"`
 }
