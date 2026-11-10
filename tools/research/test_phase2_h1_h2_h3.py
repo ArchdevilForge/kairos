@@ -197,3 +197,24 @@ def test_h3_swing_pivot_confirmation_lag_and_box_touches():
         "UP", 111.0, 108.0, 1_700_006_000, htf, bars_5m
     )
     assert math.isclose(room_r, (120.0 - 111.0) / (111.0 - 108.0), rel_tol=1e-4)
+
+
+def test_phase2b_slice_windows_coverage_and_spacing():
+    from p0_experiment import (
+        PHASE2B_27_SWAP_INST_IDS,
+        PHASE2B_SLICE_COUNT,
+        PHASE2B_WINDOW_END_TS,
+        PHASE2B_WINDOW_START_TS,
+        build_phase2b_slice_windows,
+    )
+
+    assert len(PHASE2B_27_SWAP_INST_IDS) == 27
+    windows = build_phase2b_slice_windows()
+    assert len(windows) == PHASE2B_SLICE_COUNT == 40
+    assert windows[0][0] == PHASE2B_WINDOW_START_TS
+    assert windows[-1][1] == PHASE2B_WINDOW_END_TS
+    # Adjacent slices must be separated by >> 24h so <24h wave_cluster_id merge yields independent clusters
+    for i in range(len(windows) - 1):
+        gap_sec = windows[i + 1][0] - windows[i][1]
+        assert gap_sec > 5 * 86400
+

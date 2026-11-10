@@ -331,6 +331,32 @@ def run_h3_cli(
     return 0
 
 
+def run_phase2b_ingest_cli(
+    db: str,
+    start_ts: int,
+    end_ts: int,
+    num_slices: int,
+    max_workers: int,
+    batch_size: int = 6,
+    max_batches: int = 10,
+) -> int:
+    """Ingest the pre-registered Phase 2b 12-month 40-slice 27-symbol OKX dataset into DuckDB."""
+    from p0_experiment import PHASE2B_27_SWAP_INST_IDS, ingest_phase2b_sample_to_duckdb
+
+    Path(db).parent.mkdir(parents=True, exist_ok=True)
+    all_ids = list(PHASE2B_27_SWAP_INST_IDS)
+    counts = ingest_phase2b_sample_to_duckdb(
+        db,
+        start_ts=start_ts,
+        end_ts=end_ts,
+        inst_ids=all_ids,
+        num_slices=num_slices,
+        max_workers=max_workers,
+    )
+    print(f"Phase 2b ingestion complete ({db}): {counts}", flush=True)
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(description="kairos research layer (JSONL → DuckDB)")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -372,6 +398,14 @@ def main():
     p_h3.add_argument("--db", default="p0.duckdb")
     p_h3.add_argument("--confirm-lag", type=int, default=3)
     p_h3.add_argument("--out", help="可选: 输出 H3 报告 Markdown")
+    p_p2b = sub.add_parser("phase2b-ingest", help="Phase 2b 12个月40切片27币种 PIT 数据拉取")
+    p_p2b.add_argument("--db", default="../../data/phase2b.duckdb")
+    p_p2b.add_argument("--start-ts", type=int, default=1_762_646_400)
+    p_p2b.add_argument("--end-ts", type=int, default=1_794_268_740)
+    p_p2b.add_argument("--slices", type=int, default=40)
+    p_p2b.add_argument("--workers", type=int, default=8)
+    p_p2b.add_argument("--batch-size", type=int, default=6)
+    p_p2b.add_argument("--max-batches", type=int, default=10)
     args = ap.parse_args()
 
     if args.cmd == "load":
@@ -394,6 +428,16 @@ def main():
         return run_h2_cli(args.db, args.min_vol, args.out)
     elif args.cmd == "h3":
         return run_h3_cli(args.db, args.confirm_lag, args.out)
+    elif args.cmd == "phase2b-ingest":
+        return run_phase2b_ingest_cli(
+            args.db,
+            args.start_ts,
+            args.end_ts,
+            args.slices,
+            args.workers,
+            args.batch_size,
+            args.max_batches,
+        )
 
 
 if __name__ == "__main__":
