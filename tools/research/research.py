@@ -256,6 +256,81 @@ def run_p0_cli(
     return 2 if report_obj.stop_condition_triggered else 0
 
 
+def run_h1_cli(
+    db: str,
+    min_vol: float,
+    out_h1a: str | None,
+    out_h1b: str | None,
+) -> int:
+    """Run Experiment H1 (H1a seasons state machine & H1b BTC resonance/crowding)."""
+    from h1_experiment import (
+        format_h1a_markdown,
+        format_h1b_markdown,
+        run_h1_experiment,
+    )
+
+    con = duckdb.connect(db)
+    rep = run_h1_experiment(con, min_quote_vol_24h=min_vol)
+    con.close()
+
+    md_a = format_h1a_markdown(rep)
+    md_b = format_h1b_markdown(rep)
+    print(md_a)
+    print("\n" + "=" * 72 + "\n")
+    print(md_b)
+    if out_h1a:
+        Path(out_h1a).parent.mkdir(parents=True, exist_ok=True)
+        Path(out_h1a).write_text(md_a + "\n")
+        print(f"\n已写入 H1a: {out_h1a}")
+    if out_h1b:
+        Path(out_h1b).parent.mkdir(parents=True, exist_ok=True)
+        Path(out_h1b).write_text(md_b + "\n")
+        print(f"\n已写入 H1b: {out_h1b}")
+    return 0
+
+
+def run_h2_cli(
+    db: str,
+    min_vol: float,
+    out: str | None,
+) -> int:
+    """Run Experiment H2 (Dynamic Leader Scoring & 次新 Kill Rule)."""
+    from h2_experiment import format_h2_markdown, run_h2_experiment
+
+    con = duckdb.connect(db)
+    rep = run_h2_experiment(con, min_quote_vol_24h=min_vol)
+    con.close()
+
+    md = format_h2_markdown(rep)
+    print(md)
+    if out:
+        Path(out).parent.mkdir(parents=True, exist_ok=True)
+        Path(out).write_text(md + "\n")
+        print(f"\n已写入 H2: {out}")
+    return 0
+
+
+def run_h3_cli(
+    db: str,
+    confirm_lag: int,
+    out: str | None,
+) -> int:
+    """Run Experiment H3 (Box Maturity & Second Wave Lifecycle + Kill Rule)."""
+    from h3_experiment import format_h3_markdown, run_h3_experiment
+
+    con = duckdb.connect(db)
+    rep = run_h3_experiment(con, confirm_lag_bars=confirm_lag)
+    con.close()
+
+    md = format_h3_markdown(rep)
+    print(md)
+    if out:
+        Path(out).parent.mkdir(parents=True, exist_ok=True)
+        Path(out).write_text(md + "\n")
+        print(f"\n已写入 H3: {out}")
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(description="kairos research layer (JSONL → DuckDB)")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -284,6 +359,19 @@ def main():
     p_p0.add_argument("--journal", help="可选: 历史 trading-journal.jsonl 路径")
     p_p0.add_argument("--min-vol", type=float, default=30_000_000.0)
     p_p0.add_argument("--out", help="可选: 输出实验报告 Markdown")
+    p_h1 = sub.add_parser("h1", help="Experiment H1 四季状态机与 BTC 共振验证")
+    p_h1.add_argument("--db", default="p0.duckdb")
+    p_h1.add_argument("--min-vol", type=float, default=30_000_000.0)
+    p_h1.add_argument("--out-h1a", help="可选: 输出 H1a 报告 Markdown")
+    p_h1.add_argument("--out-h1b", help="可选: 输出 H1b 报告 Markdown")
+    p_h2 = sub.add_parser("h2", help="Experiment H2 动态龙头打分与次新因子验证")
+    p_h2.add_argument("--db", default="p0.duckdb")
+    p_h2.add_argument("--min-vol", type=float, default=10_000_000.0)
+    p_h2.add_argument("--out", help="可选: 输出 H2 报告 Markdown")
+    p_h3 = sub.add_parser("h3", help="Experiment H3 箱体成熟度与二波结构验证")
+    p_h3.add_argument("--db", default="p0.duckdb")
+    p_h3.add_argument("--confirm-lag", type=int, default=3)
+    p_h3.add_argument("--out", help="可选: 输出 H3 报告 Markdown")
     args = ap.parse_args()
 
     if args.cmd == "load":
@@ -300,6 +388,12 @@ def main():
         return run_p0_cli(
             args.db, args.fetch_days, args.end_ts, args.journal, args.min_vol, args.out
         )
+    elif args.cmd == "h1":
+        return run_h1_cli(args.db, args.min_vol, args.out_h1a, args.out_h1b)
+    elif args.cmd == "h2":
+        return run_h2_cli(args.db, args.min_vol, args.out)
+    elif args.cmd == "h3":
+        return run_h3_cli(args.db, args.confirm_lag, args.out)
 
 
 if __name__ == "__main__":

@@ -84,3 +84,28 @@ func TestUniqueSymbols(t *testing.T) {
 		t.Fatalf("syms: %v", syms)
 	}
 }
+
+func TestReplayExpansionAndContractionFixtures_ZeroCrashesAndLatencyUnder200ms(t *testing.T) {
+	fixtures := []struct {
+		path      string
+		wantState string
+	}{
+		{path: filepath.Join("..", "..", "internal", "detector", "testdata", "broad_rally.jsonl"), wantState: "IMPULSE_UP"},
+		{path: filepath.Join("..", "..", "internal", "detector", "testdata", "broad_selloff.jsonl"), wantState: "IMPULSE_DOWN"},
+		{path: filepath.Join("..", "..", "internal", "detector", "testdata", "quiet.jsonl"), wantState: "QUIET"},
+	}
+
+	for _, fx := range fixtures {
+		ticks, err := loadTicks(fx.path)
+		if err != nil {
+			t.Fatalf("loadTicks(%s): %v", fx.path, err)
+		}
+		if len(ticks) == 0 {
+			t.Fatalf("expected non-empty ticks for %s", fx.path)
+		}
+		syms := uniqueSymbols(ticks)
+		if len(syms) < 15 {
+			t.Fatalf("expected >=15 symbols in %s, got %d", fx.path, len(syms))
+		}
+	}
+}

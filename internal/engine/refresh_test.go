@@ -92,6 +92,7 @@ marketPulse:
 	}
 	cfg.Exchanges.Primary = "mock"
 	cfg.DataManager.Exchanges = []string{"mock"}
+	cfg.AlertPolicy.LiquidityWeight.Enabled = false
 	return cfg
 }
 
