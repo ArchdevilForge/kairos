@@ -265,6 +265,455 @@ def fetch_okx_funding_history(
     return out
 
 
+PHASE2B_WINDOW_START_TS = 1_762_646_400  # 2025-11-09T00:00:00Z
+PHASE2B_WINDOW_END_TS = 1_794_268_740    # 2026-11-09T23:59:00Z
+PHASE2B_SLICE_COUNT = 40
+PHASE2B_SLICE_DURATION_SEC = 15 * 3600   # 15 hours (900 genuine 1m bars)
+
+PHASE2B_27_SWAP_INST_IDS: tuple[str, ...] = (
+    # 15 Liquid Majors & Established Core Swaps
+    "BTC-USDT-SWAP",
+    "ETH-USDT-SWAP",
+    "SOL-USDT-SWAP",
+    "XRP-USDT-SWAP",
+    "DOGE-USDT-SWAP",
+    "SUI-USDT-SWAP",
+    "LINK-USDT-SWAP",
+    "AVAX-USDT-SWAP",
+    "ADA-USDT-SWAP",
+    "DOT-USDT-SWAP",
+    "LTC-USDT-SWAP",
+    "BCH-USDT-SWAP",
+    "NEAR-USDT-SWAP",
+    "UNI-USDT-SWAP",
+    "AAVE-USDT-SWAP",
+    # 12 Swaps Listed Across the 2025-2026 Window (次新 at Historical Wakes & Mid/Lower-Liquidity Tiers)
+    "PIEVERSE-USDT-SWAP",
+    "LIT-USDT-SWAP",
+    "ZAMA-USDT-SWAP",
+    "EDGE-USDT-SWAP",
+    "UP-USDT-SWAP",
+    "GRAM-USDT-SWAP",
+    "CAP-USDT-SWAP",
+    "VVV-USDT-SWAP",
+    "AKE-USDT-SWAP",
+    "PONS-USDT-SWAP",
+    "DGAI-USDT-SWAP",
+    "CT-USDT-SWAP",
+)
+
+
+def ensure_phase2b_schema(con: duckdb.DuckDBPyConnection) -> None:
+    """Create 1m bar, 8h funding, HTF (4h/1d), and 5m OI tables in DuckDB if absent."""
+    ensure_market_bars_schema(con)
+    con.execute(
+        """
+        CREATE TABLE IF NOT EXISTS fact_perp_bars_htf (
+            symbol VARCHAR NOT NULL,
+            timeframe VARCHAR NOT NULL,
+            ts BIGINT NOT NULL,
+            open DOUBLE NOT NULL,
+            high DOUBLE NOT NULL,
+            low DOUBLE NOT NULL,
+            close DOUBLE NOT NULL,
+            quote_vol DOUBLE DEFAULT 0.0,
+            PRIMARY KEY (symbol, timeframe, ts)
+        )
+        """
+    )
+    con.execute(
+        """
+        CREATE TABLE IF NOT EXISTS fact_perp_oi_5m (
+            symbol VARCHAR NOT NULL,
+            ts BIGINT NOT NULL,
+            oi_usd DOUBLE NOT NULL,
+            PRIMARY KEY (symbol, ts)
+        )
+        """
+    )
+
+
+def build_phase2b_slice_windows(
+    start_ts: int = PHASE2B_WINDOW_START_TS,
+    end_ts: int = PHASE2B_WINDOW_END_TS,
+    num_slices: int = PHASE2B_SLICE_COUNT,
+    slice_dur_sec: int = PHASE2B_SLICE_DURATION_SEC,
+) -> list[tuple[int, int]]:
+    """Construct the pre-registered 40 evenly-spaced contiguous 1m candle slices across `[start_ts, end_ts]`.
+
+    - Slices `0 .. num_slices - 2` are `15h` (`900` 1m bars) spaced evenly every `~9.15 days > 24h`.
+    - Slice `num_slices - 1` is the final `24h` window `[end_ts - 86400, end_ts]` ending `2026-11-09T23:59:00Z`.
+    """
+    if num_slices <= 1:
+        return [(int(start_ts), int(end_ts))]
+    final_start = int(end_ts) - 24 * 3600
+    step = (final_start - int(start_ts)) // (num_slices - 1)
+    windows: list[tuple[int, int]] = []
+    for k in range(num_slices - 1):
+        w_start = ((int(start_ts) + k * step) // 300) * 300
+        windows.append((w_start, w_start + int(slice_dur_sec)))
+    windows.append(((final_start // 300) * 300, int(end_ts)))
+    return windows
+
+
+def fetch_okx_htf_candles(
+    inst_id: str,
+    bar: str,
+    start_ts: int,
+    end_ts: int,
+    max_pages: int = 30,
+) -> list[tuple[int, float, float, float, float, float]]:
+    """Fetch continuous HTF (`4H` or `1Dutc`) candles from OKX `[start_ts, end_ts]`."""
+    cursor_ms = (int(end_ts) + 86400) * 1000
+    start_ms = int(start_ts) * 1000
+    by_ts: dict[int, tuple[int, float, float, float, float, float]] = {}
+
+    for _ in range(max_pages):
+        if cursor_ms <= start_ms:
+            break
+        qs = urllib.parse.urlencode(
+            {
+                "instId": inst_id,
+                "bar": bar,
+                "after": str(cursor_ms),
+                "limit": "100",
+            }
+        )
+        payload = _okx_get_json(
+            f"https://www.okx.com/api/v5/market/history-candles?{qs}"
+        )
+        rows = payload.get("data", [])
+        if not rows:
+            break
+        oldest_ms = cursor_ms
+        for r in rows:
+            ts_ms = int(r[0])
+            oldest_ms = min(oldest_ms, ts_ms)
+            ts_sec = ts_ms // 1000
+            if start_ts - 86400 * 2 <= ts_sec <= end_ts:
+                by_ts[ts_sec] = (
+                    ts_sec,
+                    float(r[1]),
+                    float(r[2]),
+                    float(r[3]),
+                    float(r[4]),
+                    float(r[7]),
+                )
+        if oldest_ms <= start_ms or oldest_ms >= cursor_ms:
+            break
+        cursor_ms = oldest_ms
+
+    return [by_ts[k] for k in sorted(by_ts)]
+
+
+def fetch_okx_oi_history_5m(
+    inst_id: str,
+    start_ts: int,
+    end_ts: int,
+    max_pages: int = 16,
+) -> dict[int, float]:
+    """Fetch 5m open-interest history (USD value) from OKX `/api/v5/rubik/stat/contracts/open-interest-history`."""
+    cursor_ms = (int(end_ts) + 300) * 1000
+    start_ms = int(start_ts) * 1000
+    out: dict[int, float] = {}
+    for _ in range(max_pages):
+        if cursor_ms <= start_ms:
+            break
+        qs = urllib.parse.urlencode(
+            {
+                "instId": inst_id,
+                "period": "5m",
+                "end": str(cursor_ms),
+                "limit": "100",
+            }
+        )
+        try:
+            payload = _okx_get_json(
+                f"https://www.okx.com/api/v5/rubik/stat/contracts/open-interest-history?{qs}"
+            )
+        except Exception:
+            break
+        rows = payload.get("data", [])
+        if not rows:
+            break
+        oldest_ms = cursor_ms
+        for item in rows:
+            ts_ms = int(item[0])
+            oldest_ms = min(oldest_ms, ts_ms)
+            ts_sec = ts_ms // 1000
+            if start_ts <= ts_sec <= end_ts and len(item) >= 4:
+                out[ts_sec] = float(item[3])
+        if oldest_ms <= start_ms or oldest_ms >= cursor_ms:
+            break
+        cursor_ms = oldest_ms
+    return out
+
+
+def ingest_phase2b_sample_to_duckdb(
+    con: duckdb.DuckDBPyConnection | str,
+    *,
+    start_ts: int = PHASE2B_WINDOW_START_TS,
+    end_ts: int = PHASE2B_WINDOW_END_TS,
+    inst_ids: Sequence[str] = PHASE2B_27_SWAP_INST_IDS,
+    num_slices: int = PHASE2B_SLICE_COUNT,
+    slice_dur_sec: int = PHASE2B_SLICE_DURATION_SEC,
+    max_workers: int = 8,
+    cache_dir: str | Path | None = None,
+) -> dict[str, int]:
+    """Ingest the pre-registered Phase 2b 12-month (`2025-11-09` -> `2026-11-09`) dataset into DuckDB:
+    - All OKX linear USDT-SWAP instruments into `dim_perp_universe_pit`
+    - 40 evenly-spaced contiguous 1m candle slices (+ final 24h window) for the 27-symbol PIT cross-section
+    - Continuous `4h` and `1d` HTF candles (`fact_perp_bars_htf`)
+    - Causal 24h quote volume (`fact_perp_volume_24h`)
+    - 8h realized funding rates (`fact_perp_funding_8h`) and 5m OI history (`fact_perp_oi_5m`)
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    import csv
+    import tempfile
+
+    owns_con = isinstance(con, str)
+    db_path = Path(con) if isinstance(con, str) else None
+    cdir = (
+        Path(cache_dir)
+        if cache_dir is not None
+        else (db_path.parent / "phase2b_cache" if db_path is not None else Path(tempfile.mkdtemp()))
+    )
+    cdir.mkdir(parents=True, exist_ok=True)
+
+    swaps = fetch_okx_usdt_swaps()
+    if not swaps:
+        raise RuntimeError("no USDT swap instruments returned from OKX")
+    pit_by_sym = {r.symbol: r for r in swaps}
+
+    windows = build_phase2b_slice_windows(
+        start_ts=start_ts,
+        end_ts=end_ts,
+        num_slices=num_slices,
+        slice_dur_sec=slice_dur_sec,
+    )
+
+    def _cache_file(inst_id: str) -> Path:
+        return cdir / f"{inst_id}.json"
+
+    todo_inst_ids = [
+        i for i in inst_ids if not _cache_file(i).is_file()
+    ]
+
+    def _fetch_and_cache_symbol(inst_id: str) -> str:
+        sym = normalize_perp_symbol(inst_id)
+        rec = pit_by_sym.get(sym)
+        list_ts = rec.list_ts if rec is not None else 0
+        delist_ts = rec.delist_ts if rec is not None else None
+        eff_start = max(int(start_ts), int(list_ts))
+        eff_end = (
+            min(int(end_ts), int(delist_ts))
+            if delist_ts is not None
+            else int(end_ts)
+        )
+
+        by_ts: dict[int, MinuteBar] = {}
+        for w_start, w_end in windows:
+            if w_end < list_ts:
+                continue
+            if delist_ts is not None and w_start >= delist_ts:
+                continue
+            s_start = max(w_start, list_ts)
+            s_end = min(w_end, delist_ts) if delist_ts is not None else w_end
+            if s_end <= s_start:
+                continue
+            for b in fetch_okx_history_1m(inst_id, start_ts=s_start, end_ts=s_end):
+                by_ts[b.ts] = b
+
+        bars_1m = [by_ts[k] for k in sorted(by_ts)]
+        bars_4h = fetch_okx_htf_candles(
+            inst_id, "4H", start_ts=eff_start, end_ts=eff_end, max_pages=25
+        )
+        bars_1d = fetch_okx_htf_candles(
+            inst_id, "1Dutc", start_ts=eff_start - 86400 * 2, end_ts=eff_end, max_pages=6
+        )
+        f_sched = fetch_okx_funding_history(
+            inst_id, start_ts=eff_start, end_ts=eff_end
+        )
+        oi_5m = fetch_okx_oi_history_5m(
+            inst_id, start_ts=eff_start, end_ts=eff_end, max_pages=15
+        )
+
+        payload = {
+            "symbol": sym,
+            "bars_1m": [
+                [b.ts, b.open, b.high, b.low, b.close, b.quote_vol] for b in bars_1m
+            ],
+            "bars_4h": [list(x) for x in bars_4h],
+            "bars_1d": [list(x) for x in bars_1d],
+            "funding": [[int(k), float(v)] for k, v in sorted(f_sched.items())],
+            "oi_5m": [[int(k), float(v)] for k, v in sorted(oi_5m.items())],
+        }
+        tmp_f = _cache_file(inst_id).with_suffix(".json.tmp")
+        tmp_f.write_text(json.dumps(payload))
+        tmp_f.replace(_cache_file(inst_id))
+        print(
+            f"  cached {inst_id}: 1m={len(bars_1m)}, 4h={len(bars_4h)}, 1d={len(bars_1d)}, funding={len(f_sched)}, oi={len(oi_5m)}",
+            flush=True,
+        )
+        return sym
+
+    if todo_inst_ids:
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            list(pool.map(_fetch_and_cache_symbol, todo_inst_ids))
+
+    # Only build the DuckDB file once all requested inst_ids are cached on disk
+    all_1m_rows: list[tuple[str, int, float, float, float, float, float]] = []
+    all_htf_rows: list[tuple[str, str, int, float, float, float, float, float]] = []
+    all_vol_rows: list[tuple[str, int, float]] = []
+    all_funding_rows: list[tuple[str, int, float]] = []
+    all_oi_rows: list[tuple[str, int, float]] = []
+    cached_syms = 0
+
+    for inst_id in inst_ids:
+        cf = _cache_file(inst_id)
+        if not cf.is_file():
+            continue
+        cached_syms += 1
+        data = json.loads(cf.read_text())
+        sym = str(data["symbol"])
+        bars_1m_raw = data["bars_1m"]
+        bars_4h_raw = data["bars_4h"]
+        bars_1d_raw = data["bars_1d"]
+
+        for r in bars_1m_raw:
+            all_1m_rows.append(
+                (sym, int(r[0]), float(r[1]), float(r[2]), float(r[3]), float(r[4]), float(r[5]))
+            )
+        for r in bars_4h_raw:
+            all_htf_rows.append(
+                (sym, "4h", int(r[0]), float(r[1]), float(r[2]), float(r[3]), float(r[4]), float(r[5]))
+            )
+        for r in bars_1d_raw:
+            all_htf_rows.append(
+                (sym, "1d", int(r[0]), float(r[1]), float(r[2]), float(r[3]), float(r[4]), float(r[5]))
+            )
+
+        vol_obs_map: dict[int, float] = {}
+        for r in bars_1d_raw:
+            if float(r[5]) > 0:
+                vol_obs_map[int(r[0]) + 86400] = float(r[5])
+        if bars_4h_raw:
+            for idx_4h, r in enumerate(bars_4h_raw):
+                win_4h = bars_4h_raw[max(0, idx_4h - 5) : idx_4h + 1]
+                q_sum = sum(float(x[5]) for x in win_4h)
+                scale_4h = 6.0 / max(1.0, float(len(win_4h)))
+                if q_sum > 0:
+                    vol_obs_map[int(r[0]) + 14400] = q_sum * scale_4h
+        if bars_1m_raw:
+            running_q = 0.0
+            left = 0
+            for right, r in enumerate(bars_1m_raw):
+                running_q += float(r[5])
+                while int(r[0]) - int(bars_1m_raw[left][0]) >= 86400:
+                    running_q -= float(bars_1m_raw[left][5])
+                    left += 1
+                win_len = right - left + 1
+                scale = 1440.0 / max(60.0, float(win_len)) if win_len < 1440 else 1.0
+                if int(r[0]) % 300 == 0:
+                    vol_obs_map[int(r[0]) + 60] = running_q * scale
+        for ts_k, qv_k in sorted(vol_obs_map.items()):
+            all_vol_rows.append((sym, ts_k, qv_k))
+
+        for k, v in data["funding"]:
+            all_funding_rows.append((sym, int(k), float(v)))
+        for k, v in data["oi_5m"]:
+            all_oi_rows.append((sym, int(k), float(v)))
+
+    # Write into a fresh DuckDB file in a single <2s transaction when all symbols in inst_ids are ready
+    if owns_con and db_path is not None:
+        for stale in (db_path, db_path.with_suffix(".duckdb.wal")):
+            if stale.exists():
+                stale.unlink()
+        c_write = duckdb.connect(str(db_path))
+    else:
+        c_write = con  # type: ignore[assignment]
+
+    ensure_phase2b_schema(c_write)
+    upsert_pit_universe(c_write, swaps)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        if all_1m_rows:
+            p_1m = tmp / "bars_1m.csv"
+            with p_1m.open("w", newline="") as f:
+                csv.writer(f).writerows(all_1m_rows)
+            c_write.execute(
+                f"""
+                INSERT OR REPLACE INTO fact_perp_bars_1m
+                SELECT column0, CAST(column1 AS BIGINT), CAST(column2 AS DOUBLE),
+                       CAST(column3 AS DOUBLE), CAST(column4 AS DOUBLE),
+                       CAST(column5 AS DOUBLE), CAST(column6 AS DOUBLE)
+                FROM read_csv('{p_1m}', header=false, auto_detect=true)
+                """
+            )
+        if all_htf_rows:
+            p_htf = tmp / "bars_htf.csv"
+            with p_htf.open("w", newline="") as f:
+                csv.writer(f).writerows(all_htf_rows)
+            c_write.execute(
+                f"""
+                INSERT OR REPLACE INTO fact_perp_bars_htf
+                SELECT column0, column1, CAST(column2 AS BIGINT),
+                       CAST(column3 AS DOUBLE), CAST(column4 AS DOUBLE),
+                       CAST(column5 AS DOUBLE), CAST(column6 AS DOUBLE),
+                       CAST(column7 AS DOUBLE)
+                FROM read_csv('{p_htf}', header=false, auto_detect=true)
+                """
+            )
+        if all_vol_rows:
+            p_vol = tmp / "vol_24h.csv"
+            with p_vol.open("w", newline="") as f:
+                csv.writer(f).writerows(all_vol_rows)
+            c_write.execute(
+                f"""
+                INSERT OR REPLACE INTO fact_perp_volume_24h
+                SELECT column0, CAST(column1 AS BIGINT), CAST(column2 AS DOUBLE)
+                FROM read_csv('{p_vol}', header=false, auto_detect=true)
+                """
+            )
+        if all_funding_rows:
+            p_f = tmp / "funding.csv"
+            with p_f.open("w", newline="") as f:
+                csv.writer(f).writerows(all_funding_rows)
+            c_write.execute(
+                f"""
+                INSERT OR REPLACE INTO fact_perp_funding_8h
+                SELECT column0, CAST(column1 AS BIGINT), CAST(column2 AS DOUBLE)
+                FROM read_csv('{p_f}', header=false, auto_detect=true)
+                """
+            )
+        if all_oi_rows:
+            p_oi = tmp / "oi_5m.csv"
+            with p_oi.open("w", newline="") as f:
+                csv.writer(f).writerows(all_oi_rows)
+            c_write.execute(
+                f"""
+                INSERT OR REPLACE INTO fact_perp_oi_5m
+                SELECT column0, CAST(column1 AS BIGINT), CAST(column2 AS DOUBLE)
+                FROM read_csv('{p_oi}', header=false, auto_detect=true)
+                """
+            )
+
+    if owns_con:
+        c_write.close()
+
+    return {
+        "pit_universe_total": len(swaps),
+        "sampled_symbols": cached_syms,
+        "slices_1m": len(windows),
+        "bars_1m": len(all_1m_rows),
+        "bars_htf": len(all_htf_rows),
+        "volume_24h_obs": len(all_vol_rows),
+        "funding_ticks": len(all_funding_rows),
+        "oi_5m_ticks": len(all_oi_rows),
+    }
+
+
 def ingest_okx_sample_to_duckdb(
     con: duckdb.DuckDBPyConnection,
     *,

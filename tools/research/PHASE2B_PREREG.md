@@ -64,3 +64,30 @@ This Phase 2b re-run is a **sample-size / statistical-power expansion only**, no
 | **H1b** | `RESONANCE [0, 15m]` mean NetR significantly `>` `LAGGING_CATCHUP [2h, 12h]`, `Delta NetR > 0` AND one-sided `p < 0.05` | Report `BTC near 4h high + CrowdingPct >= 0.75` alt long-breakout fakeout (stop-hit) rate |
 | **H2** | Dynamic Leader Score Top-3 vs Current Ranker Top-3 `Delta NetR >= +0.18R` after full friction + impact slippage | **`次新` Kill Rule**: If `listing_age_cixin` (`<= 90d`) post-slippage standalone excess `<= 0R` (or degrades Top-3 NetR), remove `listing_age_cixin` and report the kill |
 | **H3** | Causal `k = 3` lag `BOX_BREAKOUT` + `SECOND_WAVE_STAGE4` OOS `G_oos >= 15` AND OOS NetR 95% CI lower bound `>= 0.0000R` | **H3 Kill Rule**: If `G_oos < 15` OR OOS NetR 95% CI lower bound `< 0R`, do NOT build any automatic geometry recognizer (reference PR #7 manual watch-range spec) |
+
+---
+
+## 5. Pre-Registration Addendum — Achieved Data Window & Cluster Counts (2026-11-10)
+
+> **Audit Note**: Lines 1–66 above are preserved verbatim from commit `2b96d6e`. This addendum records the achieved window, bar counts, and cluster counts from the Phase 2b OKX USDT-SWAP public API pull (`phase2b-ingest`).
+
+### 5.1 Achieved Data Window & Database Inventory (`data/phase2b.duckdb`, gitignored)
+- **Achieved Contiguous Span**: `2025-11-09T00:00:00Z` (`1762646400`) to `2026-11-09T23:59:00Z` (`1794268740`) — **`366.00` calendar days (`12.0` months)**, meeting the 12-month target and `>= 6m` hard floor.
+- **1m Replay Slices**: **`40` evenly-spaced contiguous 1-minute slices** (`39 x 15h` slices spaced every `~9.15 days >> 24h`, plus final `24h` window ending `2026-11-09T23:59:00Z`).
+- **PIT Universe Synced (`dim_perp_universe_pit`)**: `528` linear `USDT-SWAP` contracts; full 1m/HTF/funding/OI history pulled for all **`27` pre-registered symbols** (`15` liquid majors/core swaps + `12` 2025–2026 new/mid-liquidity swaps).
+- **Row Counts**:
+  - `fact_perp_bars_1m`: **`758,013`** genuine 1-minute bars
+  - `fact_perp_bars_htf`: **`52,946`** continuous `4h` and `1d` HTF bars
+  - `fact_perp_volume_24h`: **`197,626`** causal rolling 24h quote-volume observations
+  - `fact_perp_funding_8h`: **`6,995`** realized 8h funding-rate settlements
+  - `fact_perp_oi_5m`: **`34,867`** 5m open-interest observations
+
+### 5.2 Achieved Sample & Cluster Counts vs Pre-Registered Power Targets
+
+| Hypothesis | Phase 2 (18-Day) `N / G` | Phase 2b Power Target | Phase 2b Achieved `N / G` | Power Target Status |
+|---|---:|---:|---:|---|
+| **H1a** (Seasons State Machine) | `N = 162`, `G = 7` | `G >= 25` (materially `> 7`) | **`N = 1,550`**, **`G = 40`** (`G_oos = 40`) | **MET (`40 >= 25`)** |
+| **H1b** (BTC Sync Resonance) | `N = 162`, `G_impulse = 4` (`G_total = 7`) | `G_impulse >= 15` | **`N = 1,550`**, **`G_impulse = 35`** (`RESONANCE G = 33`, `LAGGING G = 35`, `G_total = 40`) | **MET (`35 >= 15`)** |
+| **H2** (Dynamic Leader Ranker) | `74` wakes, `N = 376`, `G = 7` | Scale with 12m window | **`522` wakes**, **`N = 2,818`** (`Top-3 N = 1,566`), **`G = 39`** | **MET (`39` clusters)** |
+| **H3** (Box & Second-Wave `k=3`) | `N = 114`, `G_total = 7`, `G_oos = 6` | `G_oos >= 15` | **`N = 990`** (`OOS N = 949`), **`G_total = 40`**, **`G_oos = 39`** | **MET (`39 >= 15`)** |
+
