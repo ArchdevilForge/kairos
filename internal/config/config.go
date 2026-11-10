@@ -268,11 +268,15 @@ func setDefaults(v *viper.Viper) {
 	})
 
 	v.SetDefault("riskGate", map[string]any{
-		"enabled":         true,
-		"cooldownMinutes": 45,
-		"windowStartHour": 18,
-		"windowEndHour":   1,
-		"maxLossUSD":      4,
+		"enabled":            true,
+		"cooldownMinutes":    45,
+		"windowStartHour":    18,
+		"windowEndHour":      1,
+		"maxLossUSD":         4,
+		"enforceLeverageCap": true,
+		"maxMajorLeverage":   10.0,
+		"maxAltLeverage":     5.0,
+		"trancheBaseUSD":     10000.0,
 	})
 	v.SetDefault("opportunity", map[string]any{
 		"enabled":              false,
@@ -289,7 +293,10 @@ func setDefaults(v *viper.Viper) {
 			"mixedContext":  0.0,
 			"noTrade":       0.0,
 		},
-		"maxLeverage": 5,
+		"maxLeverage":      5,
+		"maxMajorLeverage": 10.0,
+		"maxAltLeverage":   5.0,
+		"trancheBaseUSD":   10000.0,
 	})
 
 	// MarketPulse defaults: disabled unless explicitly enabled. Shadow mode is

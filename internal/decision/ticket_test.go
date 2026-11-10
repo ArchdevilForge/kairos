@@ -111,3 +111,53 @@ func TestReasonCodeHelpers(t *testing.T) {
 		}
 	}
 }
+
+func TestMaxAssetLeverageAndSingleTicketSizing(t *testing.T) {
+	if got := MaxAssetLeverage("BTC/USDT:USDT", 10, 5); got != 10 {
+		t.Fatalf("BTC max lev=%v want 10", got)
+	}
+	if got := MaxAssetLeverage("ETHUSDT", 10, 5); got != 10 {
+		t.Fatalf("ETH max lev=%v want 10", got)
+	}
+	if got := MaxAssetLeverage("SOL/USDT:USDT", 10, 5); got != 5 {
+		t.Fatalf("SOL max lev=%v want 5", got)
+	}
+
+	// Altcoin: TrancheBaseUSD=10000, MaxAssetLev=5 => cap=50000.
+	// RiskBudgetUSD=200, EffectiveStopPct=0.2% => RiskBudget/Stop = 100000 => capped at 50000!
+	notional := ComputeSingleTicketNotional(10_000, 5, 200, 0.2)
+	if notional != 50_000 {
+		t.Fatalf("alt notional=%v want 50000", notional)
+	}
+
+	// Wide stop: RiskBudgetUSD=100, EffectiveStopPct=2% => RiskBudget/Stop = 5000 < 50000 => 5000.
+	notionalWide := ComputeSingleTicketNotional(10_000, 5, 100, 2.0)
+	if notionalWide != 5_000 {
+		t.Fatalf("wide stop notional=%v want 5000", notionalWide)
+	}
+}
+
+func TestExitReasonSingleKeyParser(t *testing.T) {
+	cases := map[string]types.ExitReason{
+		"1":               types.ExitReasonProtectiveStop,
+		"p":               types.ExitReasonProtectiveStop,
+		"PROTECTIVE_STOP": types.ExitReasonProtectiveStop,
+		"2":               types.ExitReasonFakeoutAbort,
+		"f":               types.ExitReasonFakeoutAbort,
+		"3":               types.ExitReasonStructuralTrail,
+		"s":               types.ExitReasonStructuralTrail,
+		"4":               types.ExitReasonTargetPartial,
+		"t":               types.ExitReasonTargetPartial,
+		"5":               types.ExitReasonImpulseEarly,
+		"i":               types.ExitReasonImpulseEarly,
+	}
+	for k, want := range cases {
+		got, ok := types.ParseExitReasonKey(k)
+		if !ok || got != want {
+			t.Fatalf("ParseExitReasonKey(%q) = (%q, %v), want (%q, true)", k, got, ok, want)
+		}
+	}
+	if _, ok := types.ParseExitReasonKey("invalid"); ok {
+		t.Fatal("invalid exit reason key must fail")
+	}
+}

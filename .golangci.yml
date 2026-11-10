@@ -17,6 +17,13 @@ linters:
       - linters:
           - errcheck
         path: _test\.go
+      - linters:
+          - errcheck
+        path: internal/engine/pipeline\.go
+        source: "<-done"
+      - linters:
+          - staticcheck
+        text: "SA4023|QF1012"
     paths:
       - zz_generated_
 

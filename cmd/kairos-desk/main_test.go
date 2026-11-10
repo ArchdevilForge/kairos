@@ -105,3 +105,44 @@ func TestAcceptGateFlow(t *testing.T) {
 		t.Fatalf("gate subcommand: %v", err)
 	}
 }
+
+func TestCloseWithSingleKeyExitReasonAndFunding(t *testing.T) {
+	dir := t.TempDir()
+	j, err := storage.NewJournal(types.StorageConfig{DatabasePath: filepath.Join(dir, "kairos.db")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tkt := types.DecisionTicket{
+		SchemaVersion: types.DecisionTicketSchemaVersion,
+		ID:            "t-close-1", SessionID: "s", Symbol: "SOL/USDT:USDT",
+		Status: types.TicketStatusAccepted, Grade: types.TicketGradeA,
+		Direction:        types.CycleDirectionUp,
+		EntryTriggeredAt: 1_700_000_000,
+		RiskPlan:         types.RiskPlan{EntryPrice: 100, StopPrice: 98, SuggestedNotional: 10_000},
+	}
+	if err := j.SaveTicket(tkt); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.SaveDecision(types.DecisionRecord{TicketID: "t-close-1", Decision: types.DecisionAccepted}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Single-key 'p' -> PROTECTIVE_STOP + funding-usd
+	if err := run([]string{
+		"-journal", dir, "close",
+		"--exit-price", "98.0",
+		"--funding-usd", "2.5",
+		"--exit-reason", "p",
+		"t-close-1",
+	}); err != nil {
+		t.Fatalf("close subcommand failed: %v", err)
+	}
+
+	gotTkt, ok, err := j.GetTicket("t-close-1")
+	if err != nil || !ok {
+		t.Fatalf("GetTicket: ok=%v err=%v", ok, err)
+	}
+	if gotTkt.ExitReason != types.ExitReasonProtectiveStop || gotTkt.RealizedFundingUSD != 2.5 {
+		t.Fatalf("ticket ExitReason=%q RealizedFundingUSD=%v", gotTkt.ExitReason, gotTkt.RealizedFundingUSD)
+	}
+}

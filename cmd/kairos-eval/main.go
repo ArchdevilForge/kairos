@@ -72,6 +72,8 @@ func run(args []string) error {
 		fmt.Printf("all:        n=%d complete=%d mean_net_r=%.4f\n", rep.AllQualified.N, rep.AllQualified.NComplete, rep.AllQualified.MeanNetR)
 		fmt.Printf("selection_alpha(net_r)=%.4f  rejection_mean_net_r=%.4f\n", rep.SelectionAlpha, rep.RejectionMeanR)
 		fmt.Printf("human_alpha(net-mech)=%.4f  (人工入场+退出 vs 机械规则; 正=干预加分 负=拖后腿)\n", rep.HumanAlpha)
+		fmt.Printf("orthogonal_human_alpha: pool_mean_mech=%.3fR selection=%.3fR timing=%.3fR management=%.3fR max_abs_residual=%.3fR\n",
+			rep.MeanPoolMechR, rep.MeanSelectionAlpha, rep.MeanTimingAlpha, rep.MeanManagementAlpha, rep.MaxAbsIdentityResidual)
 		return nil
 
 	case "decisions":
@@ -153,9 +155,10 @@ func run(args []string) error {
 }
 
 // gateReport is the §9b compliance report: gate annotations (entry-time
-// verdicts) + rule-2 post-hoc scalp audit (<5m holds cannot be judged at
-// entry). Process compliance is separated from P&L on purpose — grade the
-// process, not the outcome.
+// verdicts) + Phase 1 (Duration × ExitReason × RealizedR) post-hoc exit audit.
+// <5m exits that touched their preset structural stop / fakeout confirmation /
+// market_stress circuit breaker are classified as PROTECTIVE_STOP_EXEMPT (0%
+// violation misclassification).
 func gateReport(j *storage.Journal, asJSON bool) error {
 	anns, err := j.ListAnnotations()
 	if err != nil {
@@ -177,14 +180,19 @@ func gateReport(j *storage.Journal, asJSON bool) error {
 		}
 	}
 
-	// 事后审计: <5m 人工持仓(EntryTriggeredAt → PathEnd)。
-	type scalp struct {
-		TicketID string  `json:"ticket_id"`
-		Symbol   string  `json:"symbol"`
-		HoldSecs int64   `json:"hold_secs"`
-		NetR     float64 `json:"net_r"`
+	type exitAuditEntry struct {
+		TicketID   string  `json:"ticket_id"`
+		Symbol     string  `json:"symbol"`
+		HoldSecs   int64   `json:"hold_secs"`
+		NetR       float64 `json:"net_r"`
+		ExitReason string  `json:"exit_reason,omitempty"`
+		Category   string  `json:"category"`
+		Score      float64 `json:"score"`
 	}
-	var scalps []scalp
+	var scalps []exitAuditEntry
+	var protectiveExemptions []exitAuditEntry
+	var earlyProfitNotes []exitAuditEntry
+
 	for _, r := range rows {
 		if r.Decision != types.DecisionAccepted || !r.HasOut {
 			continue
@@ -193,26 +201,80 @@ func gateReport(j *storage.Journal, asJSON bool) error {
 		if open == 0 || end == 0 {
 			continue
 		}
-		if code := decision.AuditHoldingDuration(time.Unix(open, 0), time.Unix(end, 0)); code != "" {
-			scalps = append(scalps, scalp{r.Ticket.ID, r.Ticket.Symbol, end - open, r.Outcome.NetR})
+		exitReason := r.Outcome.ExitReason
+		if exitReason == "" {
+			exitReason = r.Ticket.ExitReason
+		}
+		touchedStop := r.Outcome.TouchedPresetStop || r.Outcome.StopHitFirst
+		if !touchedStop && r.Ticket.RiskPlan.StopPrice > 0 && r.Outcome.ExitPrice > 0 {
+			if r.Ticket.Direction == types.CycleDirectionDown && r.Outcome.ExitPrice >= r.Ticket.RiskPlan.StopPrice {
+				touchedStop = true
+			} else if r.Ticket.Direction != types.CycleDirectionDown && r.Outcome.ExitPrice <= r.Ticket.RiskPlan.StopPrice {
+				touchedStop = true
+			}
+		}
+		res := decision.AuditExit(decision.ExitAuditInput{
+			TicketID:           r.Ticket.ID,
+			HasValidTicket:     r.Ticket.ID != "",
+			Symbol:             r.Ticket.Symbol,
+			Direction:          r.Ticket.Direction,
+			OpenedAt:           time.Unix(open, 0),
+			ClosedAt:           time.Unix(end, 0),
+			ExitReason:         exitReason,
+			RealizedR:          r.Outcome.NetR,
+			PresetStopPrice:    r.Ticket.RiskPlan.StopPrice,
+			ExitPrice:          r.Outcome.ExitPrice,
+			TouchedPresetStop:  touchedStop,
+			FakeoutConfirmed:   r.Outcome.FakeoutConfirmed,
+			MarketStressActive: r.Outcome.MarketStressActive,
+			StructureIntact:    r.Outcome.StructureIntact,
+		})
+		entry := exitAuditEntry{
+			TicketID:   r.Ticket.ID,
+			Symbol:     r.Ticket.Symbol,
+			HoldSecs:   end - open,
+			NetR:       r.Outcome.NetR,
+			ExitReason: string(exitReason),
+			Category:   string(res.Verdict),
+			Score:      res.ScoreDelta,
+		}
+		switch {
+		case res.IsViolation:
+			scalps = append(scalps, entry)
+		case res.Verdict == decision.VerdictProtectiveStopExempt:
+			protectiveExemptions = append(protectiveExemptions, entry)
+		case res.Verdict == decision.VerdictEarlyProfitNote:
+			earlyProfitNotes = append(earlyProfitNotes, entry)
 		}
 	}
 
 	if asJSON {
 		return encode(map[string]any{
-			"annotations": anns, "rejections_by_code": byCode,
-			"overrides": overrides, "scalp_violations": scalps,
+			"annotations":                anns,
+			"rejections_by_code":         byCode,
+			"overrides":                  overrides,
+			"scalp_violations":           scalps,
+			"protective_stop_exemptions": protectiveExemptions,
+			"early_profit_notes":         earlyProfitNotes,
 		})
 	}
 	fmt.Printf("gate annotations=%d overrides=%d\n", len(anns), overrides)
 	for code, n := range byCode {
 		fmt.Printf("  %-22s %d\n", code, n)
 	}
+	fmt.Printf("protective (<5m) stop exemptions=%d (score=+1.0 compliant)\n", len(protectiveExemptions))
+	for _, p := range protectiveExemptions {
+		fmt.Printf("  %s  %s  hold=%ds netR=%.2f reason=%s\n", p.TicketID, p.Symbol, p.HoldSecs, p.NetR, p.ExitReason)
+	}
+	fmt.Printf("early profit (<5m, 0~+0.5R) notes=%d\n", len(earlyProfitNotes))
+	for _, n := range earlyProfitNotes {
+		fmt.Printf("  %s  %s  hold=%ds netR=%.2f\n", n.TicketID, n.Symbol, n.HoldSecs, n.NetR)
+	}
 	fmt.Printf("scalp (<5m) violations=%d\n", len(scalps))
 	for _, s := range scalps {
 		fmt.Printf("  %s  %s  hold=%ds netR=%.2f\n", s.TicketID, s.Symbol, s.HoldSecs, s.NetR)
 	}
-	if len(anns) == 0 && len(scalps) == 0 {
+	if len(anns) == 0 && len(scalps) == 0 && len(protectiveExemptions) == 0 && len(earlyProfitNotes) == 0 {
 		fmt.Println("(no gate activity)")
 	}
 	return nil

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -137,9 +138,10 @@ func (j *Journal) SaveDecision(d types.DecisionRecord) error {
 type CounterfactualOutcome struct {
 	SchemaVersion string `json:"schema_version"`
 
-	TicketID  string `json:"ticket_id"`
-	SessionID string `json:"session_id"`
-	Symbol    string `json:"symbol"`
+	TicketID      string `json:"ticket_id"`
+	SessionID     string `json:"session_id"`
+	WaveClusterID string `json:"wave_cluster_id,omitempty"`
+	Symbol        string `json:"symbol"`
 
 	Direction types.CycleDirection `json:"direction"`
 	Decision  types.HumanDecision  `json:"decision,omitempty"`
@@ -160,8 +162,26 @@ type CounterfactualOutcome struct {
 	MaxRealizableR float64 `json:"max_realizable_r"`
 	// MechanicalR = result under stop/target/fixed-time-exit rules.
 	MechanicalR float64 `json:"mechanical_r"`
-	// NetR = MechanicalR after estimated costs (fees+slippage in R).
+	// NetR = canonical full-friction NetR (both-side fees + dynamic slippage + accumulated funding / pre-entry 1R).
 	NetR float64 `json:"net_r"`
+
+	// Additive Phase 1 close-out, friction, and counterfactual fields (Work Items 11, 12, 13).
+	ExitReason          types.ExitReason `json:"exit_reason,omitempty"`
+	RealizedFundingUSD  float64          `json:"realized_funding_usd,omitempty"`
+	RealizedFeeUSD      float64          `json:"realized_fee_usd,omitempty"`
+	RealizedSlippageUSD float64          `json:"realized_slippage_usd,omitempty"`
+	Initial1RPct        float64          `json:"initial_1r_pct,omitempty"`
+	ExitPrice           float64          `json:"exit_price,omitempty"`
+	HumanEntryPrice     float64          `json:"human_entry_price,omitempty"`
+	MechHumanEntryR     *float64         `json:"mech_human_entry_r,omitempty"`
+	PolicyWaveR         *float64         `json:"policy_wave_r,omitempty"`
+	Policy5mR           *float64         `json:"policy_5m_r,omitempty"`
+	Policy30mR          *float64         `json:"policy_30m_r,omitempty"`
+	PolicyBracketR      *float64         `json:"policy_bracket_r,omitempty"`
+	TouchedPresetStop   bool             `json:"touched_preset_stop,omitempty"`
+	FakeoutConfirmed    bool             `json:"fakeout_confirmed,omitempty"`
+	MarketStressActive  bool             `json:"market_stress_active,omitempty"`
+	StructureIntact     bool             `json:"structure_intact,omitempty"`
 
 	Complete5m  bool `json:"complete_5m"`
 	Complete15m bool `json:"complete_15m"`
@@ -232,33 +252,82 @@ func (j *Journal) ListAnnotations() ([]GateAnnotation, error) {
 	return out, nil
 }
 
-// LastLossAt returns the end time of the most recent finalized losing outcome
-// for symbol (accepted trades only — gate cooldown input). Zero time = none.
-func (j *Journal) LastLossAt(symbol string) (time.Time, error) {
+// CooldownStats summarizes same-symbol recent loss/stop history for dual-track cooldown (Work Item 9).
+type CooldownStats struct {
+	LastLossAt              time.Time
+	ConsecutiveStops24h     int
+	CumulativeTrialLoss24hR float64
+}
+
+// SameSymbolCooldownStats computes the dual-track cooldown inputs for symbol as of now (Work Item 9).
+func (j *Journal) SameSymbolCooldownStats(symbol string, now time.Time) (CooldownStats, error) {
 	outs, err := j.ListOutcomes()
 	if err != nil {
-		return time.Time{}, err
+		return CooldownStats{}, err
 	}
-	var latest int64
+	type timedOutcome struct {
+		end int64
+		out CounterfactualOutcome
+	}
+	var accepted []timedOutcome
 	for _, o := range outs {
 		if o.Symbol != symbol || o.Decision != types.DecisionAccepted || !o.Finalized {
-			continue
-		}
-		if o.NetR >= 0 {
 			continue
 		}
 		end := o.PathEndUnix
 		if end == 0 {
 			end = o.AsOfUnix
 		}
-		if end > latest {
-			latest = end
+		accepted = append(accepted, timedOutcome{end: end, out: o})
+	}
+	sort.Slice(accepted, func(i, k int) bool {
+		return accepted[i].end < accepted[k].end
+	})
+
+	var stats CooldownStats
+	var latestLoss int64
+	cutoff24h := now.Add(-24 * time.Hour).Unix()
+
+	for _, item := range accepted {
+		if item.out.NetR < 0 && item.end > latestLoss {
+			latestLoss = item.end
+		}
+		if !now.IsZero() && item.end >= cutoff24h && item.end <= now.Unix() {
+			if item.out.NetR < 0 {
+				stats.CumulativeTrialLoss24hR += item.out.NetR
+			}
 		}
 	}
-	if latest == 0 {
-		return time.Time{}, nil
+	// Count consecutive stops from the most recent accepted outcome within 24h backwards.
+	for idx := len(accepted) - 1; idx >= 0; idx-- {
+		item := accepted[idx]
+		if !now.IsZero() && (item.end < cutoff24h || item.end > now.Unix()) {
+			continue
+		}
+		isStopLoss := item.out.NetR < 0 ||
+			item.out.StopHitFirst ||
+			item.out.ExitReason == types.ExitReasonProtectiveStop ||
+			item.out.ExitReason == types.ExitReasonFakeoutAbort
+		if isStopLoss {
+			stats.ConsecutiveStops24h++
+		} else {
+			break
+		}
 	}
-	return time.Unix(latest, 0), nil
+	if latestLoss > 0 {
+		stats.LastLossAt = time.Unix(latestLoss, 0)
+	}
+	return stats, nil
+}
+
+// LastLossAt returns the end time of the most recent finalized losing outcome
+// for symbol (accepted trades only — gate cooldown input). Zero time = none.
+func (j *Journal) LastLossAt(symbol string) (time.Time, error) {
+	st, err := j.SameSymbolCooldownStats(symbol, time.Time{})
+	if err != nil {
+		return time.Time{}, err
+	}
+	return st.LastLossAt, nil
 }
 
 // SessionCandidates is the ranked board attached to a session (may have 0 tickets).

@@ -4,10 +4,70 @@ package decision
 import (
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/ArchdevilForge/kairos/internal/types"
 )
+
+const (
+	// DefaultMajorLeverageCap enforces BTC/ETH <= 10x (Work Item 7).
+	DefaultMajorLeverageCap = 10.0
+	// DefaultAltLeverageCap enforces alts <= 5x (Work Item 7).
+	DefaultAltLeverageCap = 5.0
+	// DefaultTrancheBaseUSD is the default fixed tranche base in USD (Work Item 10).
+	DefaultTrancheBaseUSD = 10_000.0
+)
+
+// IsMajorAsset reports whether symbol is BTC or ETH (perps or spot notation).
+func IsMajorAsset(symbol string) bool {
+	s := strings.ToUpper(strings.TrimSpace(symbol))
+	for _, sep := range []string{"/", "-", ":", "_"} {
+		if idx := strings.Index(s, sep); idx > 0 {
+			s = s[:idx]
+			break
+		}
+	}
+	s = strings.TrimSuffix(s, "USDT")
+	s = strings.TrimSuffix(s, "USDC")
+	s = strings.TrimSuffix(s, "USD")
+	s = strings.TrimSuffix(s, "PERP")
+	return s == "BTC" || s == "ETH"
+}
+
+// MaxAssetLeverage returns the hard leverage cap for symbol (BTC/ETH <= 10x, alts <= 5x).
+func MaxAssetLeverage(symbol string, majorCap, altCap float64) float64 {
+	if majorCap <= 0 {
+		majorCap = DefaultMajorLeverageCap
+	}
+	if altCap <= 0 {
+		altCap = DefaultAltLeverageCap
+	}
+	if IsMajorAsset(symbol) {
+		return majorCap
+	}
+	return altCap
+}
+
+// ComputeSingleTicketNotional computes:
+//
+//	Notional = min(TrancheBaseUSD * MaxAssetLev, RiskBudgetUSD / EffectiveStopPct)
+//
+// where effectiveStopPct is expressed in percent (e.g. 2.0 means 2% stop distance).
+func ComputeSingleTicketNotional(trancheBaseUSD, maxAssetLev, riskBudgetUSD, effectiveStopPct float64) float64 {
+	if trancheBaseUSD <= 0 {
+		trancheBaseUSD = DefaultTrancheBaseUSD
+	}
+	if maxAssetLev <= 0 {
+		maxAssetLev = DefaultAltLeverageCap
+	}
+	capNotional := trancheBaseUSD * maxAssetLev
+	if effectiveStopPct <= 0 || riskBudgetUSD <= 0 {
+		return 0
+	}
+	riskNotional := riskBudgetUSD / (effectiveStopPct / 100.0)
+	return round2(math.Min(capNotional, riskNotional))
+}
 
 // RiskBudgets maps risk template → risk_budget_pct of equity.
 // Canonical §9: numeric pct lives in config, not code constants — these are
@@ -28,9 +88,10 @@ func DefaultRiskBudgets() RiskBudgets {
 
 // BuildInput carries prices for risk sizing.
 type BuildInput struct {
-	TicketID string
-	Match    types.PlaybookMatch
-	Context  types.PlaybookContext
+	TicketID      string
+	WaveClusterID string
+	Match         types.PlaybookMatch
+	Context       types.PlaybookContext
 	// Invalidations copied onto the ticket (required for open tickets).
 	Invalidations []string
 
@@ -38,11 +99,17 @@ type BuildInput struct {
 	StopPrice  float64
 	// Equity for notional suggestion; 0 → leave notionals 0.
 	Equity float64
+	// TrancheBaseUSD for single-ticket sizing (0 → Equity if >0 else DefaultTrancheBaseUSD).
+	TrancheBaseUSD float64
+	// SlippageBufferPct optional pre-entry slippage buffer in percent added to EffectiveStopPct.
+	SlippageBufferPct float64
 	// Budgets optional; nil → DefaultRiskBudgets.
 	Budgets RiskBudgets
 
-	// MaxLeverage cap (0 → 5).
-	MaxLeverage float64
+	// MaxLeverage cap (0 → asset cap: BTC/ETH 10x, alts 5x).
+	MaxLeverage      float64
+	MaxMajorLeverage float64
+	MaxAltLeverage   float64
 	// Entry plan fields
 	EntryMode string
 	ZoneLow   float64
@@ -61,9 +128,18 @@ func BuildTicket(in BuildInput) types.DecisionTicket {
 	if budgets == nil {
 		budgets = DefaultRiskBudgets()
 	}
+	assetCap := MaxAssetLeverage(in.Match.Symbol, in.MaxMajorLeverage, in.MaxAltLeverage)
 	lev := in.MaxLeverage
-	if lev <= 0 {
-		lev = 5
+	if lev <= 0 || lev > assetCap {
+		lev = assetCap
+	}
+	trancheBase := in.TrancheBaseUSD
+	if trancheBase <= 0 {
+		if in.Equity > 0 {
+			trancheBase = in.Equity
+		} else {
+			trancheBase = DefaultTrancheBaseUSD
+		}
 	}
 	mode := in.EntryMode
 	if mode == "" {
@@ -83,22 +159,25 @@ func BuildTicket(in BuildInput) types.DecisionTicket {
 
 	budgetPct := budgets[template]
 	risk := types.RiskPlan{
-		TemplateID:    template,
-		RiskBudgetPct: budgetPct,
-		EntryPrice:    in.EntryPrice,
-		StopPrice:     in.StopPrice,
-		MaxLeverage:   lev,
-		AddOnAllowed:  addOn && in.Match.Matched,
+		TemplateID:     template,
+		RiskBudgetPct:  budgetPct,
+		EntryPrice:     in.EntryPrice,
+		StopPrice:      in.StopPrice,
+		MaxLeverage:    lev,
+		TrancheBaseUSD: trancheBase,
+		AddOnAllowed:   addOn && in.Match.Matched,
 	}
 	if in.EntryPrice > 0 && in.StopPrice > 0 {
 		dist := math.Abs(in.EntryPrice-in.StopPrice) / in.EntryPrice * 100
+		effectiveStopPct := dist + math.Max(0, in.SlippageBufferPct)
 		risk.StopDistancePct = round2(dist)
-		if dist > 0 && in.Equity > 0 && budgetPct > 0 {
+		risk.EffectiveStopPct = round2(effectiveStopPct)
+		if effectiveStopPct > 0 && in.Equity > 0 && budgetPct > 0 {
 			lossBudget := in.Equity * (budgetPct / 100.0)
-			// budgetPct stored as percent of equity (0.75 = 0.75%)
-			notional := lossBudget / (dist / 100.0)
-			risk.SuggestedNotional = round2(notional)
-			risk.MaxNotional = round2(notional * 1.25)
+			// Work Item 10: Notional = min(TrancheBaseUSD * MaxAssetLev, RiskBudgetUSD / EffectiveStopPct)
+			notional := ComputeSingleTicketNotional(trancheBase, assetCap, lossBudget, effectiveStopPct)
+			risk.SuggestedNotional = notional
+			risk.MaxNotional = round2(math.Min(trancheBase*assetCap, notional*1.25))
 		}
 	}
 
@@ -128,6 +207,7 @@ func BuildTicket(in BuildInput) types.DecisionTicket {
 		SchemaVersion: types.DecisionTicketSchemaVersion,
 		ID:            in.TicketID,
 		SessionID:     in.Match.SessionID,
+		WaveClusterID: in.WaveClusterID,
 		Symbol:        in.Match.Symbol,
 		PlaybookID:    in.Match.PlaybookID,
 		Direction:     in.Match.Direction,

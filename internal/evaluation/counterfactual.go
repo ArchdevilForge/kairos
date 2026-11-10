@@ -44,11 +44,27 @@ type PathInput struct {
 	Stop   float64
 	Target float64
 
-	// CostR estimated round-trip in R units. Prefer CostPct/stop for honesty.
+	// CostR estimated round-trip in R units. Prefer CostPct/stop or UseFullFriction for honesty.
 	CostR float64
 	// CostPct round-trip fee+slip as fraction (e.g. 0.001 = 10 bps). If >0 and
 	// stop distance known, overrides CostR.
 	CostPct float64
+
+	// Work Item 12: Canonical full-friction parameters.
+	// When UseFullFriction is true (or Friction != nil), NetR uses ComputeFullFrictionNetR
+	// (numerator nets out both-side fees + dynamic slippage + accumulated funding;
+	// denominator is pre-entry initial 1R including slippage buffer).
+	UseFullFriction    bool
+	WaveClusterID      string
+	NotionalUSD        float64
+	ATR1mEntry         float64
+	ADV5mEntryUSD      float64
+	RealizedFeeUSD     float64
+	RealizedFundingUSD float64
+	HasRealizedFunding bool
+	FundingSchedule    map[int64]float64
+	FrictionParams     *FrictionParams
+	BarPeriodSec       int64
 
 	// TimeExitBars: mechanical time stop (default 12 = 1h on 5m). 0 → DefaultHorizons.H1.
 	TimeExitBars int
@@ -60,6 +76,7 @@ func ComputeOutcome(in PathInput, hz HorizonBars) storage.CounterfactualOutcome 
 		SchemaVersion: storage.CounterfactualSchemaVersion,
 		TicketID:      in.TicketID,
 		SessionID:     in.SessionID,
+		WaveClusterID: in.WaveClusterID,
 		Symbol:        in.Symbol,
 		Direction:     in.Direction,
 		Decision:      in.Decision,
@@ -96,6 +113,7 @@ func ComputeOutcome(in PathInput, hz HorizonBars) storage.CounterfactualOutcome 
 	mechanicalR := 0.0
 	exited := false
 	exitIdx := -1
+	exitPx := in.Bars[len(in.Bars)-1].Close
 
 	// Walk all bars for path MFE/MAE; mechanical exit still stops at timeExit/stop/target.
 	for i, b := range in.Bars {
@@ -138,16 +156,20 @@ func ComputeOutcome(in PathInput, hz HorizonBars) storage.CounterfactualOutcome 
 			if hitStop && hitTarget {
 				stopFirst, exited, exitIdx = true, true, i
 				mechanicalR = -1
+				exitPx = in.Stop
 			} else if hitStop {
 				stopFirst, exited, exitIdx = true, true, i
 				mechanicalR = -1
+				exitPx = in.Stop
 			} else if hitTarget {
 				targetFirst, exited, exitIdx = true, true, i
 				mechanicalR = sign * (in.Target - in.Entry) / risk
+				exitPx = in.Target
 			} else if i+1 >= timeExit {
 				// fixed horizon time exit at this bar close
 				exited, exitIdx = true, i
 				mechanicalR = sign * (b.Close - in.Entry) / risk
+				exitPx = b.Close
 			}
 		}
 	}
@@ -156,6 +178,7 @@ func ComputeOutcome(in PathInput, hz HorizonBars) storage.CounterfactualOutcome 
 		last := in.Bars[len(in.Bars)-1]
 		mechanicalR = sign * (last.Close - in.Entry) / risk
 		exitIdx = len(in.Bars) - 1
+		exitPx = last.Close
 	}
 
 	// Horizons are bar *counts*; path[0] is first bar AFTER trigger close.
@@ -180,7 +203,77 @@ func ComputeOutcome(in PathInput, hz HorizonBars) storage.CounterfactualOutcome 
 	o.TargetHitFirst = targetFirst
 	o.MaxRealizableR = math.Round(maxR*100) / 100
 	o.MechanicalR = math.Round(mechanicalR*100) / 100
-	o.NetR = math.Round((mechanicalR-costR)*100) / 100
+
+	useFull := in.UseFullFriction ||
+		in.FrictionParams != nil ||
+		in.HasRealizedFunding ||
+		in.RealizedFundingUSD != 0 ||
+		in.RealizedFeeUSD > 0 ||
+		len(in.FundingSchedule) > 0
+
+	if useFull {
+		barPeriod := in.BarPeriodSec
+		if barPeriod <= 0 {
+			if len(in.Bars) >= 2 && in.Bars[1].TS > in.Bars[0].TS {
+				barPeriod = in.Bars[1].TS - in.Bars[0].TS
+			} else {
+				barPeriod = 300
+			}
+		}
+		exitTS := o.PathEndUnix
+		if exitIdx >= 0 && exitIdx < len(in.Bars) {
+			exitTS = in.Bars[exitIdx].TS + barPeriod
+		}
+		ff := ComputeFullFrictionNetR(FullFrictionInput{
+			Symbol:             in.Symbol,
+			Direction:          in.Direction,
+			EntryPrice:         in.Entry,
+			ExitPrice:          exitPx,
+			StopPrice:          in.Stop,
+			EntryUnix:          o.PathStartUnix,
+			ExitUnix:           exitTS,
+			NotionalUSD:        in.NotionalUSD,
+			IsStopExit:         stopFirst,
+			ATR1mOpen:          in.ATR1mEntry,
+			ADV5mOpenUSD:       in.ADV5mEntryUSD,
+			ATR1mClose:         in.ATR1mEntry,
+			ADV5mCloseUSD:      in.ADV5mEntryUSD,
+			RealizedFeeUSD:     in.RealizedFeeUSD,
+			RealizedFundingUSD: in.RealizedFundingUSD,
+			HasRealizedFunding: in.HasRealizedFunding,
+			FundingSchedule:    in.FundingSchedule,
+			Params:             in.FrictionParams,
+		})
+		o.NetR = round4(ff.NetR)
+		o.RealizedFeeUSD = round4(ff.FeeUSD)
+		o.RealizedSlippageUSD = round4(ff.SlippageUSD)
+		o.RealizedFundingUSD = round4(ff.FundingUSD)
+		o.Initial1RPct = round4(ff.Initial1RPct * 100.0)
+		o.ExitPrice = exitPx
+
+		waveRes := SimulateHoldingPolicy(PolicySimInput{
+			SignalID:        in.TicketID,
+			WaveClusterID:   in.WaveClusterID,
+			Symbol:          in.Symbol,
+			Direction:       in.Direction,
+			EntryUnix:       o.PathStartUnix,
+			EntryPrice:      in.Entry,
+			StopPrice:       in.Stop,
+			ATR1mEntry:      in.ATR1mEntry,
+			ADV5mEntryUSD:   in.ADV5mEntryUSD,
+			NotionalUSD:     in.NotionalUSD,
+			Bars:            in.Bars,
+			BarPeriodSec:    barPeriod,
+			Policy:          PolicyWave,
+			KBE:             DefaultWaveKBE,
+			FundingSchedule: in.FundingSchedule,
+			Params:          in.FrictionParams,
+		})
+		pw := round4(waveRes.NetR())
+		o.PolicyWaveR = &pw
+	} else {
+		o.NetR = math.Round((mechanicalR-costR)*100) / 100
+	}
 
 	o.Complete5m = len(in.Bars) >= hz.M5
 	o.Complete15m = len(in.Bars) >= hz.M15

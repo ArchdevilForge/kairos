@@ -182,3 +182,184 @@ func TestAuditHoldingDuration(t *testing.T) {
 		t.Fatalf("zero open time must not flag, got %q", code)
 	}
 }
+
+func TestPhase1LeverageHardCaps(t *testing.T) {
+	cfg := DefaultBehaviorGateConfig()
+
+	// BTC 10x passes, 12x rejected
+	inBTC := passInput()
+	inBTC.Symbol = "BTC/USDT:USDT"
+	inBTC.Leverage = 10
+	if got := EvaluateBehaviorGate(cfg, inBTC); !got.LiveEligible {
+		t.Fatalf("BTC 10x must pass: %+v", got)
+	}
+	inBTC.Leverage = 12
+	if got := EvaluateBehaviorGate(cfg, inBTC); got.LiveEligible || !slices.Contains(got.Rejections, GateLeverageExceeded) {
+		t.Fatalf("BTC 12x must reject with %s, got %+v", GateLeverageExceeded, got)
+	}
+
+	// Altcoin 5x passes, 6x rejected
+	inAlt := passInput()
+	inAlt.Symbol = "SOL/USDT:USDT"
+	inAlt.Leverage = 5
+	if got := EvaluateBehaviorGate(cfg, inAlt); !got.LiveEligible {
+		t.Fatalf("SOL 5x must pass: %+v", got)
+	}
+	inAlt.Leverage = 6
+	if got := EvaluateBehaviorGate(cfg, inAlt); got.LiveEligible || !slices.Contains(got.Rejections, GateLeverageExceeded) {
+		t.Fatalf("SOL 6x must reject with %s, got %+v", GateLeverageExceeded, got)
+	}
+}
+
+func TestPhase1DualTrackCooldown(t *testing.T) {
+	cfg := DefaultBehaviorGateConfig()
+
+	// Track A: early unlock via NewStructuralConfirm15m1h or SECOND_WAVE
+	inUnlock := passInput()
+	inUnlock.LastLossSameSymbolAt = inUnlock.Now.Add(-10 * time.Minute)
+	inUnlock.NewStructuralConfirm15m1h = true
+	if got := EvaluateBehaviorGate(cfg, inUnlock); !got.LiveEligible {
+		t.Fatalf("15m/1h structural confirmation should unlock 2nd ticket early: %+v", got)
+	}
+
+	inSecondWave := passInput()
+	inSecondWave.LastLossSameSymbolAt = inSecondWave.Now.Add(-10 * time.Minute)
+	inSecondWave.PlaybookSwitch = "SECOND_WAVE"
+	if got := EvaluateBehaviorGate(cfg, inSecondWave); !got.LiveEligible {
+		t.Fatalf("SECOND_WAVE playbook switch should unlock 2nd ticket early: %+v", got)
+	}
+
+	// Track B: non-overridable 24h lock on 2 consecutive stops or <= -1.5R cumulative trial loss
+	inConsec := passInput()
+	inConsec.ConsecutiveStops24h = 2
+	inConsec.NewStructuralConfirm15m1h = true // cannot override rigid floor!
+	gotConsec := EvaluateBehaviorGate(cfg, inConsec)
+	if gotConsec.LiveEligible || !gotConsec.NonOverridable || !slices.Contains(gotConsec.Rejections, GateRigid24hLock) {
+		t.Fatalf("2 consecutive stops must trigger rigid 24h lock: %+v", gotConsec)
+	}
+
+	inCumLoss := passInput()
+	inCumLoss.CumulativeTrialLoss24hR = -1.55
+	inCumLoss.PlaybookSwitch = "SECOND_WAVE" // cannot override rigid floor!
+	gotCum := EvaluateBehaviorGate(cfg, inCumLoss)
+	if gotCum.LiveEligible || !gotCum.NonOverridable || !slices.Contains(gotCum.Rejections, GateRigid24hLock) {
+		t.Fatalf("cumulative trial loss <= -1.5R must trigger rigid 24h lock: %+v", gotCum)
+	}
+}
+
+func TestPhase1AuditExitMatrix(t *testing.T) {
+	open := eveningTime(20, 0)
+
+	// 1. Protective stop <5m => compliant, 0% violation misclassification, scores +1.0
+	resStop := AuditExit(ExitAuditInput{
+		TicketID:          "t-stop",
+		HasValidTicket:    true,
+		Symbol:            "SOL/USDT:USDT",
+		Direction:         types.CycleDirectionUp,
+		OpenedAt:          open,
+		ClosedAt:          open.Add(90 * time.Second),
+		ExitReason:        types.ExitReasonProtectiveStop,
+		RealizedR:         -1.08,
+		PresetStopPrice:   99.0,
+		ExitPrice:         98.95,
+		TouchedPresetStop: true,
+	})
+	if resStop.IsViolation || resStop.Verdict != VerdictProtectiveStopExempt || resStop.ScoreDelta <= 0 {
+		t.Fatalf("protective stop <5m must be compliant with positive score: %+v", resStop)
+	}
+
+	// 2. Early profit <5m with 0~+0.5R and intact structure => review note, NOT a violation
+	resEarly := AuditExit(ExitAuditInput{
+		TicketID:        "t-early",
+		HasValidTicket:  true,
+		Symbol:          "SOL/USDT:USDT",
+		Direction:       types.CycleDirectionUp,
+		OpenedAt:        open,
+		ClosedAt:        open.Add(3 * time.Minute),
+		ExitReason:      types.ExitReasonImpulseEarly,
+		RealizedR:       0.25,
+		StructureIntact: true,
+	})
+	if resEarly.IsViolation || resEarly.Verdict != VerdictEarlyProfitNote || resEarly.Code != NoteEarlyProfitLt5m {
+		t.Fatalf("early profit <5m with intact structure must be review note only: %+v", resEarly)
+	}
+
+	// 3. True churn: opening without a valid ticket OR >=2 flips within <5m
+	resNoTicket := AuditExit(ExitAuditInput{
+		HasValidTicket: false,
+		Symbol:         "SOL/USDT:USDT",
+		Direction:      types.CycleDirectionUp,
+		OpenedAt:       open,
+		ClosedAt:       open.Add(10 * time.Minute),
+	})
+	if !resNoTicket.IsViolation || resNoTicket.Code != GateNoValidTicket {
+		t.Fatalf("opening without valid ticket must be violation: %+v", resNoTicket)
+	}
+
+	seq := AuditExitSequence([]ExitAuditInput{
+		{
+			TicketID: "t1", HasValidTicket: true, Symbol: "SOL/USDT:USDT",
+			Direction: types.CycleDirectionUp, OpenedAt: open, ClosedAt: open.Add(60 * time.Second),
+			ExitReason: types.ExitReasonProtectiveStop, TouchedPresetStop: true, RealizedR: -1.0,
+		},
+		{
+			TicketID: "t2", HasValidTicket: true, Symbol: "SOL/USDT:USDT",
+			Direction: types.CycleDirectionDown, OpenedAt: open.Add(90 * time.Second), ClosedAt: open.Add(150 * time.Second),
+			ExitReason: types.ExitReasonProtectiveStop, TouchedPresetStop: true, RealizedR: -1.0,
+		},
+		{
+			TicketID: "t3", HasValidTicket: true, Symbol: "SOL/USDT:USDT",
+			Direction: types.CycleDirectionUp, OpenedAt: open.Add(180 * time.Second), ClosedAt: open.Add(220 * time.Second),
+			ExitReason: types.ExitReasonProtectiveStop, TouchedPresetStop: true, RealizedR: -1.0,
+		},
+	})
+	if !seq[2].IsViolation || seq[2].Code != GateChurnFlipLt5m {
+		t.Fatalf("2nd direction flip within <5m without structural reset must be churn violation: %+v", seq[2])
+	}
+
+	// 4. BehaviorGateConfigFrom mapping + short preset stop price touch + >0.5R structural exit + unexcused <5m loss
+	on := true
+	mapped := BehaviorGateConfigFrom(types.RiskGateConfig{
+		Enabled:            true,
+		CooldownMinutes:    30,
+		WindowStartHour:    19,
+		WindowEndHour:      2,
+		MaxLossUSD:         10,
+		EnforceLeverageCap: &on,
+		MaxMajorLeverage:   10,
+		MaxAltLeverage:     5,
+		TrancheBaseUSD:     10_000,
+	})
+	if !mapped.LeverageCapEnabled() || mapped.MaxMajorLeverage != 10 || mapped.MaxAltLeverage != 5 {
+		t.Fatalf("BehaviorGateConfigFrom=%+v", mapped)
+	}
+
+	resShortPriceStop := AuditExit(ExitAuditInput{
+		TicketID:        "t-short-stop",
+		HasValidTicket:  true,
+		Symbol:          "ETH/USDT:USDT",
+		Direction:       types.CycleDirectionDown,
+		OpenedAt:        open,
+		ClosedAt:        open.Add(2 * time.Minute),
+		PresetStopPrice: 102.0,
+		ExitPrice:       102.1,
+		RealizedR:       -1.05,
+	})
+	if resShortPriceStop.IsViolation || resShortPriceStop.Verdict != VerdictProtectiveStopExempt {
+		t.Fatalf("short exit >= preset stop price must be protective stop exempt: %+v", resShortPriceStop)
+	}
+
+	resTargetFast := AuditExit(ExitAuditInput{
+		TicketID:       "t-target-fast",
+		HasValidTicket: true,
+		Symbol:         "ETH/USDT:USDT",
+		Direction:      types.CycleDirectionUp,
+		OpenedAt:       open,
+		ClosedAt:       open.Add(3 * time.Minute),
+		ExitReason:     types.ExitReasonTargetPartial,
+		RealizedR:      0.85,
+	})
+	if resTargetFast.IsViolation || resTargetFast.Verdict != VerdictCompliant {
+		t.Fatalf(">0.5R target exit <5m must be compliant: %+v", resTargetFast)
+	}
+}
