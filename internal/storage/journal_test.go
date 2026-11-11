@@ -2,6 +2,7 @@ package storage
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/ArchdevilForge/kairos/internal/types"
@@ -86,5 +87,105 @@ func TestConfigHashOfStable(t *testing.T) {
 	h3 := ConfigHashOf(map[string]any{"a": 1, "b": "y"})
 	if h1 == "" || h1 != h2 || h1 == h3 {
 		t.Fatalf("hash unstable: %q %q %q", h1, h2, h3)
+	}
+}
+
+func TestJournal_SeasonRegimeAndWinterDefenseHint(t *testing.T) {
+	dir := t.TempDir()
+	j, err := NewJournal(types.StorageConfig{DatabasePath: filepath.Join(dir, "k.db")})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. WINTER ticket -> both season_regime and winter_defense_hint persisted
+	if err := j.SaveTicket(types.DecisionTicket{
+		SchemaVersion: types.DecisionTicketSchemaVersion,
+		ID:            "t-win",
+		SessionID:     "s1",
+		Symbol:        "BTC/USDT:USDT",
+		Status:        types.TicketStatusOpen,
+		SeasonRegime:  types.SeasonRegimeWinter,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	gotWin, ok, err := j.GetTicket("t-win")
+	if err != nil || !ok {
+		t.Fatalf("GetTicket(t-win): ok=%v err=%v", ok, err)
+	}
+	if gotWin.SeasonRegime != types.SeasonRegimeWinter || gotWin.WinterDefenseHint == "" {
+		t.Fatalf("expected WINTER + hint, got regime=%q hint=%q", gotWin.SeasonRegime, gotWin.WinterDefenseHint)
+	}
+
+	// 2. SUMMER ticket -> season_regime=SUMMER, winter_defense_hint omitted
+	if err := j.SaveTicket(types.DecisionTicket{
+		SchemaVersion: types.DecisionTicketSchemaVersion,
+		ID:            "t-sum",
+		SessionID:     "s1",
+		Symbol:        "ETH/USDT:USDT",
+		Status:        types.TicketStatusOpen,
+		SeasonRegime:  types.SeasonRegimeSummer,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	gotSum, ok, err := j.GetTicket("t-sum")
+	if err != nil || !ok {
+		t.Fatalf("GetTicket(t-sum): ok=%v err=%v", ok, err)
+	}
+	if gotSum.SeasonRegime != types.SeasonRegimeSummer || gotSum.WinterDefenseHint != "" {
+		t.Fatalf("expected SUMMER + empty hint, got regime=%q hint=%q", gotSum.SeasonRegime, gotSum.WinterDefenseHint)
+	}
+
+	// 3. No cross-sectional input (SeasonRegime == ""), even with MarketCycle winter:
+	// BOTH season_regime and winter_defense_hint MUST be absent in struct and raw JSONL.
+	if err := j.SaveTicket(types.DecisionTicket{
+		SchemaVersion: types.DecisionTicketSchemaVersion,
+		ID:            "t-unm",
+		SessionID:     "s1",
+		Symbol:        "SOL/USDT:USDT",
+		Status:        types.TicketStatusOpen,
+		MarketCycle: types.CycleMap{
+			LegacyClimate: types.MarketPhaseWinter,
+			Nodes: map[string]types.CycleNode{
+				"15m": {Timeframe: "15m", Phase: types.WavePhaseWinter},
+			},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := j.SaveOutcome(CounterfactualOutcome{
+		SchemaVersion: CounterfactualSchemaVersion,
+		TicketID:      "t-unm",
+		SessionID:     "s1",
+		Symbol:        "SOL/USDT:USDT",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	gotUnm, ok, err := j.GetTicket("t-unm")
+	if err != nil || !ok {
+		t.Fatalf("GetTicket(t-unm): ok=%v err=%v", ok, err)
+	}
+	if gotUnm.SeasonRegime != "" || gotUnm.WinterDefenseHint != "" {
+		t.Fatalf("expected both fields empty when unmeasured, got regime=%q hint=%q",
+			gotUnm.SeasonRegime, gotUnm.WinterDefenseHint)
+	}
+	outUnm, ok, err := j.GetOutcome("t-unm")
+	if err != nil || !ok {
+		t.Fatalf("GetOutcome(t-unm): ok=%v err=%v", ok, err)
+	}
+	if outUnm.SeasonRegime != "" || outUnm.WinterDefenseHint != "" {
+		t.Fatalf("expected outcome fields empty when unmeasured, got regime=%q hint=%q",
+			outUnm.SeasonRegime, outUnm.WinterDefenseHint)
+	}
+	rows, err := j.readAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range rows {
+		if r.ID == "t-unm" {
+			raw := string(r.Payload)
+			if strings.Contains(raw, `"season_regime"`) || strings.Contains(raw, `"winter_defense_hint"`) {
+				t.Fatalf("journal %s payload for unmeasured record must omit both fields: %s", r.Kind, raw)
+			}
+		}
 	}
 }
