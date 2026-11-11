@@ -19,7 +19,10 @@ import (
 	"github.com/ArchdevilForge/kairos/internal/types"
 )
 
-var closeInputReader io.Reader = os.Stdin
+var (
+	closeInputReader io.Reader = os.Stdin
+	deskNowFunc                = time.Now
+)
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -139,7 +142,8 @@ func run(args []string) error {
 		if *asJSON {
 			return encode(t)
 		}
-		fmt.Println(decision.FormatTicket(t))
+		warnings := computeShowWarnings(journal, *cfgPath, t)
+		fmt.Println(decision.FormatTicketWithWarnings(t, warnings))
 		if dec, ok, _ := journal.GetDecision(t.ID); ok {
 			fmt.Printf("human: %s reasons=%v note=%q at=%d\n", dec.Decision, dec.ReasonCodes, dec.Note, dec.DecidedAt)
 		}
@@ -150,9 +154,11 @@ func run(args []string) error {
 		dfs.SetOutput(os.Stderr)
 		reason := dfs.String("reason", "", "reason code (comma-separated)")
 		note := dfs.String("note", "", "free-text note")
-		// Behavior gate inputs (doctrine §9b + Phase 1) — accept only.
+		// Behavior gate inputs (doctrine §9b + Phase 1 + Phase 3b) — accept only.
 		margin := dfs.String("margin", "", "margin mode (isolated required for live)")
 		maxLoss := dfs.Float64("max-loss", 0, "predefined max loss USD for this trade")
+		stopBasis := dfs.String("stop-basis", "", "structural stop invalidation basis text (Phase 3b A2)")
+		setupPointRaw := dfs.String("setup-point", "", "explicit §3 setup point enum or 1..6 (Phase 3b A1)")
 		newSetup := dfs.String("new-setup", "", "new setup id (exempts same-symbol cooldown)")
 		structConfirm := dfs.Bool("structural-confirm", false, "new independent 15m/1h structural confirmation (early cooldown unlock)")
 		playbookSwitch := dfs.String("playbook-switch", "", "playbook switch (e.g. SECOND_WAVE for early cooldown unlock)")
@@ -168,6 +174,14 @@ func run(args []string) error {
 			return fmt.Errorf("usage: kairos-desk %s --reason code [--note text] <ticket-id>", cmd)
 		}
 		ticketID := dfs.Arg(0)
+		var parsedSetup types.SetupPoint
+		if strings.TrimSpace(*setupPointRaw) != "" {
+			sp, ok := types.ParseSetupPoint(*setupPointRaw)
+			if !ok {
+				return fmt.Errorf("unknown --setup-point %q (valid: 1..6 or %v)", *setupPointRaw, types.ValidSetupPoints())
+			}
+			parsedSetup = sp
+		}
 		d := map[string]types.HumanDecision{
 			"accept": types.DecisionAccepted,
 			"wait":   types.DecisionWaiting,
@@ -192,6 +206,8 @@ func run(args []string) error {
 			res, gateCodes, err := runGate(journal, *cfgPath, ticketID, gateFlags{
 				Margin:            *margin,
 				MaxLoss:           *maxLoss,
+				StopBasis:         *stopBasis,
+				SetupPoint:        parsedSetup,
 				NewSetup:          *newSetup,
 				StructuralConfirm: *structConfirm,
 				PlaybookSwitch:    *playbookSwitch,
@@ -203,11 +219,14 @@ func run(args []string) error {
 			if err != nil {
 				return err
 			}
+			for _, w := range res.Warnings {
+				fmt.Printf("⚠ %s\n", w)
+			}
 			if !res.LiveEligible {
 				allowOverride := *override && !res.NonOverridable
 				ann := storage.GateAnnotation{
 					TicketID: ticketID, Codes: gateCodes,
-					Override: allowOverride, Note: *note, At: time.Now().Unix(),
+					Override: allowOverride, Note: *note, At: deskNowFunc().Unix(),
 				}
 				if err := journal.SaveAnnotation(ann); err != nil {
 					return err
@@ -226,6 +245,26 @@ func run(args []string) error {
 		if err := svc.ApplyHumanDecision(ticketID, d, codes, *note); err != nil {
 			return err
 		}
+		if cmd == "accept" {
+			if strings.TrimSpace(*stopBasis) != "" || parsedSetup != "" {
+				if t, ok, err := journal.GetTicket(ticketID); err == nil && ok {
+					if strings.TrimSpace(*stopBasis) != "" {
+						t.StopBasis = strings.TrimSpace(*stopBasis)
+					}
+					if parsedSetup != "" {
+						t.SetupPoint = parsedSetup
+					}
+					_ = journal.SaveTicket(t)
+				}
+			}
+			if *maxLoss > 0 {
+				if dec, ok, err := journal.GetDecision(ticketID); err == nil && ok {
+					ml := *maxLoss
+					dec.PlannedMaxLossUSD = &ml
+					_ = journal.SaveDecision(dec)
+				}
+			}
+		}
 		fmt.Printf("ok %s %s\n", ticketID, d)
 		return nil
 
@@ -234,6 +273,8 @@ func run(args []string) error {
 		gfs.SetOutput(os.Stderr)
 		margin := gfs.String("margin", "", "margin mode")
 		maxLoss := gfs.Float64("max-loss", 0, "predefined max loss USD")
+		stopBasis := gfs.String("stop-basis", "", "structural stop invalidation basis text")
+		setupPointRaw := gfs.String("setup-point", "", "explicit §3 setup point enum or 1..6")
 		newSetup := gfs.String("new-setup", "", "new setup id")
 		structConfirm := gfs.Bool("structural-confirm", false, "new independent 15m/1h structural confirmation")
 		playbookSwitch := gfs.String("playbook-switch", "", "playbook switch (e.g. SECOND_WAVE)")
@@ -247,9 +288,20 @@ func run(args []string) error {
 		if gfs.NArg() < 1 {
 			return fmt.Errorf("usage: kairos-desk gate --margin isolated --max-loss 3 <ticket-id>")
 		}
-		res, gateCodes, err := runGate(journal, *cfgPath, gfs.Arg(0), gateFlags{
+		var parsedSetup types.SetupPoint
+		if strings.TrimSpace(*setupPointRaw) != "" {
+			sp, ok := types.ParseSetupPoint(*setupPointRaw)
+			if !ok {
+				return fmt.Errorf("unknown --setup-point %q (valid: 1..6 or %v)", *setupPointRaw, types.ValidSetupPoints())
+			}
+			parsedSetup = sp
+		}
+		ticketID := gfs.Arg(0)
+		res, gateCodes, err := runGate(journal, *cfgPath, ticketID, gateFlags{
 			Margin:            *margin,
 			MaxLoss:           *maxLoss,
+			StopBasis:         *stopBasis,
+			SetupPoint:        parsedSetup,
 			NewSetup:          *newSetup,
 			StructuralConfirm: *structConfirm,
 			PlaybookSwitch:    *playbookSwitch,
@@ -263,6 +315,12 @@ func run(args []string) error {
 		}
 		if *asJSON {
 			return encode(res)
+		}
+		if t, ok, _ := journal.GetTicket(ticketID); ok {
+			printDeskStopAndTranche(t, *stopBasis, *trancheBase, *leverage)
+		}
+		for _, w := range res.Warnings {
+			fmt.Printf("⚠ %s\n", w)
 		}
 		if res.LiveEligible {
 			fmt.Println("PASS live_eligible=true")
@@ -335,7 +393,7 @@ func runClose(journal *storage.Journal, cmdArgs []string) error {
 	if !ok {
 		return fmt.Errorf("ticket not found: %s", ticketID)
 	}
-	nowUnix := time.Now().Unix()
+	nowUnix := deskNowFunc().Unix()
 	t.Status = types.TicketStatusClosed
 	t.ClosedAt = nowUnix
 	if exitReason != "" {
@@ -407,6 +465,8 @@ func runClose(journal *storage.Journal, cmdArgs []string) error {
 type gateFlags struct {
 	Margin            string
 	MaxLoss           float64
+	StopBasis         string
+	SetupPoint        types.SetupPoint
 	NewSetup          string
 	StructuralConfirm bool
 	PlaybookSwitch    string
@@ -416,25 +476,47 @@ type gateFlags struct {
 	Liq               float64
 }
 
-// runGate evaluates the §9b + Phase 1 behavior gate for a ticket at decision time.
-// journal 注入 cooldown 历史;config 缺失时用 doctrine 默认值(gate 常开)。
-func runGate(journal *storage.Journal, cfgPath, ticketID string, f gateFlags) (decision.GateResult, []string, error) {
-	t, ok, err := journal.GetTicket(ticketID)
-	if err != nil {
-		return decision.GateResult{}, nil, err
-	}
-	if !ok {
-		return decision.GateResult{}, nil, fmt.Errorf("ticket not found: %s", ticketID)
-	}
+func loadGateConfig(cfgPath string) decision.BehaviorGateConfig {
 	gcfg := decision.DefaultBehaviorGateConfig()
 	if cfg, err := config.Load(cfgPath); err == nil {
 		gcfg = decision.BehaviorGateConfigFrom(cfg.RiskGate)
 	}
-	now := time.Now()
+	return gcfg
+}
+
+func buildGateInput(journal *storage.Journal, gcfg decision.BehaviorGateConfig, t types.DecisionTicket, f gateFlags, now time.Time) (decision.GateInput, error) {
 	cdStats, err := journal.SameSymbolCooldownStats(t.Symbol, now)
 	if err != nil {
-		return decision.GateResult{}, nil, err
+		return decision.GateInput{}, err
 	}
+	setupPoint := types.NormalizeSetupPoint(f.SetupPoint)
+	if setupPoint == "" {
+		setupPoint = types.NormalizeSetupPoint(t.SetupPoint)
+	}
+	winHours := gcfg.TrialBudgetWindowHours
+	if winHours <= 0 {
+		winHours = 24.0
+	}
+	trialWin := time.Duration(winHours * float64(time.Hour))
+	sameSetup, sameSymbol, err := journal.TrialBudgetStats(t.Symbol, setupPoint, t.ID, now, trialWin)
+	if err != nil {
+		return decision.GateInput{}, err
+	}
+	churnMin := gcfg.ChurnWindowMinutes
+	if churnMin <= 0 {
+		churnMin = 60
+	}
+	relStats, err := journal.RelapseHistoryStats(
+		t.Symbol,
+		t.ID,
+		now,
+		time.Duration(churnMin)*time.Minute,
+		gcfg.RecentRiskSampleSize,
+	)
+	if err != nil {
+		return decision.GateInput{}, err
+	}
+
 	lev := f.Leverage
 	if lev <= 0 {
 		lev = t.RiskPlan.MaxLeverage
@@ -447,28 +529,104 @@ func runGate(journal *storage.Journal, cfgPath, ticketID string, f gateFlags) (d
 	if tranche <= 0 {
 		tranche = t.RiskPlan.TrancheBaseUSD
 	}
-	in := decision.GateInput{
-		Now:                       now,
-		Symbol:                    t.Symbol,
-		Direction:                 t.Direction,
-		MarginMode:                f.Margin,
-		StopPrice:                 t.RiskPlan.StopPrice,
-		LiquidationPrice:          f.Liq,
-		MaxLossUSD:                f.MaxLoss,
-		Leverage:                  lev,
-		NotionalUSD:               notional,
-		TrancheBaseUSD:            tranche,
-		ContextDirection:          t.MarketCycle.PrimaryDirection,
-		RankSupported:             t.PlaybookID != "" && t.Grade != types.TicketGradeD,
-		LastLossSameSymbolAt:      cdStats.LastLossAt,
-		NewSetupID:                f.NewSetup,
-		NewStructuralConfirm15m1h: f.StructuralConfirm,
-		PlaybookSwitch:            f.PlaybookSwitch,
-		ConsecutiveStops24h:       cdStats.ConsecutiveStops24h,
-		CumulativeTrialLoss24hR:   cdStats.CumulativeTrialLoss24hR,
+	stopBasis := strings.TrimSpace(f.StopBasis)
+	if stopBasis == "" {
+		stopBasis = t.StopBasisText()
+	}
+	return decision.GateInput{
+		Now:                         now,
+		Symbol:                      t.Symbol,
+		Direction:                   t.Direction,
+		MarginMode:                  f.Margin,
+		StopPrice:                   t.RiskPlan.StopPrice,
+		LiquidationPrice:            f.Liq,
+		StopBasis:                   stopBasis,
+		MaxLossUSD:                  f.MaxLoss,
+		Leverage:                    lev,
+		NotionalUSD:                 notional,
+		TrancheBaseUSD:              tranche,
+		ContextDirection:            t.MarketCycle.PrimaryDirection,
+		RankSupported:               t.PlaybookID != "" && t.Grade != types.TicketGradeD,
+		LastLossSameSymbolAt:        cdStats.LastLossAt,
+		NewSetupID:                  f.NewSetup,
+		NewStructuralConfirm15m1h:   f.StructuralConfirm,
+		PlaybookSwitch:              f.PlaybookSwitch,
+		ConsecutiveStops24h:         cdStats.ConsecutiveStops24h,
+		CumulativeTrialLoss24hR:     cdStats.CumulativeTrialLoss24hR,
+		SetupPoint:                  setupPoint,
+		SameSetupTrialsInWindow:     sameSetup,
+		SameSymbolTrialsInWindow:    sameSymbol,
+		LastStopSameSymbolAt:        relStats.LastStopSameSymbolAt,
+		LastStopSameSymbolDirection: relStats.LastStopSameSymbolDirection,
+		GlobalConsecutiveStops:      relStats.GlobalConsecutiveStops,
+		RecentTicketsInChurnWindow:  relStats.RecentTicketsInChurnWindow,
+		LastOutcomeWasLoss:          relStats.LastOutcomeWasLoss,
+		RecentPersonalRiskUSD:       relStats.RecentPersonalRiskUSD,
+	}, nil
+}
+
+// runGate evaluates the §9b + Phase 1 + Phase 3b behavior gate for a ticket at decision time.
+// journal 注入 cooldown / 试错预算 / §12 犯病图谱历史;config 缺失时用 doctrine 默认值(gate 常开)。
+func runGate(journal *storage.Journal, cfgPath, ticketID string, f gateFlags) (decision.GateResult, []string, error) {
+	t, ok, err := journal.GetTicket(ticketID)
+	if err != nil {
+		return decision.GateResult{}, nil, err
+	}
+	if !ok {
+		return decision.GateResult{}, nil, fmt.Errorf("ticket not found: %s", ticketID)
+	}
+	gcfg := loadGateConfig(cfgPath)
+	in, err := buildGateInput(journal, gcfg, t, f, deskNowFunc())
+	if err != nil {
+		return decision.GateResult{}, nil, err
 	}
 	res := decision.EvaluateBehaviorGate(gcfg, in)
 	return res, res.Rejections, nil
+}
+
+func computeShowWarnings(journal *storage.Journal, cfgPath string, t types.DecisionTicket) []string {
+	gcfg := loadGateConfig(cfgPath)
+	previewRisk := 0.0
+	if dec, ok, _ := journal.GetDecision(t.ID); ok && dec.PlannedMaxLossUSD != nil && *dec.PlannedMaxLossUSD > 0 {
+		previewRisk = *dec.PlannedMaxLossUSD
+	} else if t.RiskPlan.SuggestedNotional > 0 && t.OneRPct() > 0 {
+		previewRisk = t.RiskPlan.SuggestedNotional * (t.OneRPct() / 100.0)
+	}
+	in, err := buildGateInput(journal, gcfg, t, gateFlags{MaxLoss: previewRisk}, deskNowFunc())
+	if err != nil {
+		return nil
+	}
+	warnCfg := gcfg
+	warnCfg.Enabled = true
+	return decision.EvaluateBehaviorGate(warnCfg, in).Warnings
+}
+
+func printDeskStopAndTranche(t types.DecisionTicket, stopBasisOverride string, trancheOverride, levOverride float64) {
+	basis := strings.TrimSpace(stopBasisOverride)
+	if basis == "" {
+		basis = t.StopBasisText()
+	}
+	if basis == "" {
+		basis = "(missing)"
+	}
+	tranche := trancheOverride
+	if tranche <= 0 {
+		tranche = t.RiskPlan.TrancheBaseUSD
+	}
+	if tranche <= 0 {
+		tranche = decision.DefaultTrancheBaseUSD
+	}
+	lev := levOverride
+	if lev <= 0 {
+		lev = t.RiskPlan.MaxLeverage
+	}
+	if lev <= 0 {
+		lev = decision.MaxAssetLeverage(t.Symbol, decision.DefaultMajorLeverageCap, decision.DefaultAltLeverageCap)
+	}
+	fmt.Printf("stop: entry=%.4f  stop_price=%.4f  1R=%.4f (%.2f%%)  basis=%s\n",
+		t.RiskPlan.EntryPrice, t.RiskPlan.StopPrice, t.OneRPriceDistance(), t.OneRPct(), basis)
+	fmt.Printf("tranche: base=$%.2f  max_lev=%.1fx  suggested_notional=$%.2f  max_notional=$%.2f\n",
+		tranche, lev, t.RiskPlan.SuggestedNotional, t.RiskPlan.MaxNotional)
 }
 
 func openJournal(cfgPath, override string) (*storage.Journal, error) {

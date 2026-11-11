@@ -268,15 +268,23 @@ func setDefaults(v *viper.Viper) {
 	})
 
 	v.SetDefault("riskGate", map[string]any{
-		"enabled":            true,
-		"cooldownMinutes":    45,
-		"windowStartHour":    18,
-		"windowEndHour":      1,
-		"maxLossUSD":         4,
-		"enforceLeverageCap": true,
-		"maxMajorLeverage":   10.0,
-		"maxAltLeverage":     5.0,
-		"trancheBaseUSD":     10000.0,
+		"enabled":                true,
+		"cooldownMinutes":        45,
+		"windowStartHour":        18,
+		"windowEndHour":          1,
+		"maxLossUSD":             4,
+		"enforceLeverageCap":     true,
+		"maxMajorLeverage":       10.0,
+		"maxAltLeverage":         5.0,
+		"trancheBaseUSD":         10000.0,
+		"trialBudgetMax":         3,
+		"trialBudgetWindowHours": 24.0,
+		"tiltReverseMinutes":     30,
+		"churnConsecutiveStops":  2,
+		"churnWindowMinutes":     60,
+		"churnTicketCount":       3,
+		"sizeEscalationMult":     1.5,
+		"recentRiskSampleSize":   10,
 	})
 	v.SetDefault("opportunity", map[string]any{
 		"enabled":              false,

@@ -3,6 +3,7 @@ package alert
 import (
 	"fmt"
 	"html"
+	"math"
 	"strings"
 
 	"github.com/ArchdevilForge/kairos/internal/types"
@@ -97,13 +98,18 @@ func FormatAlert(setups []map[string]any) string {
 		state := html.EscapeString(stateZH(fmt.Sprint(setup["action_state"])))
 		setupType := html.EscapeString(setupTypeZH(fmt.Sprint(setup["setup_type"])))
 		matched, missing := strategyPoints(reasons, warnings)
+		basisText := formatStopBasis(risk["invalidation"])
+		oneRText := formatSetupOneR(risk["entry_zone"], risk["structural_stop"])
+		trancheBase := formatTrancheBase(risk["tranche_base_usd"])
 		parts = append(parts,
 			"",
 			fmt.Sprintf("<b>[%s] %s %s</b> | %s | %v/%v", state, symbol, direction, setupType, setup["setup_score"], setup["threshold"]),
 			fmt.Sprintf("<b>匹配</b>: %s", joinOrDash(matched, "、")),
 			fmt.Sprintf("<b>缺口</b>: %s", joinOrDash(missing, "、")),
 			fmt.Sprintf("<b>位</b>: 入 %s | 损 %s | 目 %s", fmtList(risk["entry_zone"], " - "), formatAnyFloat(risk["structural_stop"]), fmtList(risk["targets"], " / ")),
+			fmt.Sprintf("<b>止损依据/1R</b>: %s | 1R %s", html.EscapeString(basisText), html.EscapeString(oneRText)),
 			fmt.Sprintf("<b>RR/上限</b>: %s | %s%% / %sx", formatAnyFloat(risk["risk_reward"]), formatAnyFloat(risk["max_position_pct"]), formatAnyFloat(risk["max_leverage"])),
+			fmt.Sprintf("<b>分仓</b>: 基数 $%s | 单仓上限 %s%% / 杠杆 <=%sx", html.EscapeString(trancheBase), formatAnyFloat(risk["max_position_pct"]), formatAnyFloat(risk["max_leverage"])),
 		)
 	}
 	return strings.Join(parts, "\n")
@@ -289,5 +295,101 @@ func formatAnyFloat(v any) string {
 		return formatFloat(float64(n))
 	default:
 		return fmt.Sprint(v)
+	}
+}
+
+func formatStopBasis(v any) string {
+	if v == nil {
+		return "缺少结构依据"
+	}
+	switch s := v.(type) {
+	case string:
+		if strings.TrimSpace(s) == "" {
+			return "缺少结构依据"
+		}
+		return strings.TrimSpace(s)
+	case *string:
+		if s == nil || strings.TrimSpace(*s) == "" {
+			return "缺少结构依据"
+		}
+		return strings.TrimSpace(*s)
+	default:
+		txt := strings.TrimSpace(fmt.Sprint(v))
+		if txt == "" || txt == "<nil>" {
+			return "缺少结构依据"
+		}
+		return txt
+	}
+}
+
+func formatSetupOneR(entryZone any, structuralStop any) string {
+	stop, ok := toFloat(structuralStop)
+	if !ok || stop <= 0 {
+		return "-"
+	}
+	entryMid, ok := entryMidpoint(entryZone)
+	if !ok || entryMid <= 0 {
+		return "-"
+	}
+	dist := math.Abs(entryMid - stop)
+	pct := dist / entryMid * 100
+	return fmt.Sprintf("%s (%.2f%%)", formatFloat(math.Round(dist*1e8)/1e8), pct)
+}
+
+func entryMidpoint(entryZone any) (float64, bool) {
+	switch z := entryZone.(type) {
+	case []float64:
+		if len(z) == 0 {
+			return 0, false
+		}
+		sum := 0.0
+		for _, v := range z {
+			sum += v
+		}
+		return sum / float64(len(z)), true
+	case []any:
+		var vals []float64
+		for _, item := range z {
+			if f, ok := toFloat(item); ok {
+				vals = append(vals, f)
+			}
+		}
+		if len(vals) == 0 {
+			return 0, false
+		}
+		sum := 0.0
+		for _, v := range vals {
+			sum += v
+		}
+		return sum / float64(len(vals)), true
+	default:
+		return 0, false
+	}
+}
+
+func formatTrancheBase(v any) string {
+	if f, ok := toFloat(v); ok && f > 0 {
+		return fmt.Sprintf("%.0f", f)
+	}
+	return "10000"
+}
+
+func toFloat(v any) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case *float64:
+		if n == nil {
+			return 0, false
+		}
+		return *n, true
+	case float32:
+		return float64(n), true
+	case int:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	default:
+		return 0, false
 	}
 }

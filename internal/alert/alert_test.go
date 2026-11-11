@@ -62,7 +62,9 @@ func TestFormatAlert_DryRunShape(t *testing.T) {
 		"<b>匹配</b>: 日线顺势、BTC共振、盈亏比达标",
 		"<b>缺口</b>: 缺量能确认",
 		"<b>位</b>: 入 20.0 - 20.1 | 损 21.0 | 目 18.5",
+		"<b>止损依据/1R</b>: 缺少结构依据 | 1R 0.95 (4.74%)",
 		"<b>RR/上限</b>: 2.4 | 20.0% / 3.0x",
+		"<b>分仓</b>: 基数 $10000 | 单仓上限 20.0% / 杠杆 <=3.0x",
 	}
 	for _, want := range checks {
 		if !strings.Contains(text, want) {
@@ -71,5 +73,39 @@ func TestFormatAlert_DryRunShape(t *testing.T) {
 	}
 	if strings.Contains(text, "CCC/USDT:USDT") {
 		t.Fatal("raw symbol should be stripped from alert text")
+	}
+}
+
+func TestFormatAlert_WithExplicitStopBasisAndTrancheBase(t *testing.T) {
+	setups := []map[string]any{
+		{
+			"symbol":       "SOL/USDT:USDT",
+			"direction":    "long",
+			"setup_type":   "box_breakout",
+			"action_state": "trade_candidate",
+			"setup_score":  8.1,
+			"threshold":    7.5,
+			"risk": map[string]any{
+				"entry_zone":       []any{100.0, 100.0},
+				"structural_stop":  98.0,
+				"invalidation":     "4H 箱体上沿跌破失效",
+				"targets":          []any{105.0},
+				"risk_reward":      2.5,
+				"max_position_pct": 33.0,
+				"max_leverage":     5.0,
+				"tranche_base_usd": 12000.0,
+			},
+			"reasons":  []any{"4h structure is usable"},
+			"warnings": []any{},
+		},
+	}
+	text := FormatAlert(setups)
+	for _, want := range []string{
+		"<b>止损依据/1R</b>: 4H 箱体上沿跌破失效 | 1R 2.0 (2.00%)",
+		"<b>分仓</b>: 基数 $12000 | 单仓上限 33.0% / 杠杆 <=5.0x",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("missing %q in:\n%s", want, text)
+		}
 	}
 }

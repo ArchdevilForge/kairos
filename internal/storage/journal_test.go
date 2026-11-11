@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ArchdevilForge/kairos/internal/types"
 )
@@ -187,5 +188,60 @@ func TestJournal_SeasonRegimeAndWinterDefenseHint(t *testing.T) {
 				t.Fatalf("journal %s payload for unmeasured record must omit both fields: %s", r.Kind, raw)
 			}
 		}
+	}
+}
+
+func TestJournal_TrialBudgetAndRelapseHistoryStats(t *testing.T) {
+	dir := t.TempDir()
+	j, err := NewJournal(types.StorageConfig{DatabasePath: filepath.Join(dir, "k.db")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Unix(1_730_000_000, 0)
+
+	// Rejected ticket does NOT count against trial budget; accepted/open/closed within 24h DO count; >24h old excluded.
+	records := []types.DecisionTicket{
+		{ID: "t-old", Symbol: "SOL/USDT:USDT", SetupPoint: types.SetupPoint1Breakout, Status: types.TicketStatusClosed, CreatedAt: now.Add(-26 * time.Hour).Unix()},
+		{ID: "t-rej", Symbol: "SOL/USDT:USDT", SetupPoint: types.SetupPoint1Breakout, Status: types.TicketStatusRejected, CreatedAt: now.Add(-2 * time.Hour).Unix()},
+		{ID: "t-1", Symbol: "SOL/USDT:USDT", SetupPoint: types.SetupPoint1Breakout, Status: types.TicketStatusClosed, Direction: types.CycleDirectionUp, ExitReason: types.ExitReasonProtectiveStop, ClosedAt: now.Add(-50 * time.Minute).Unix(), CreatedAt: now.Add(-55 * time.Minute).Unix()},
+		{ID: "t-2", Symbol: "SOL/USDT:USDT", SetupPoint: types.SetupPoint1Breakout, Status: types.TicketStatusClosed, Direction: types.CycleDirectionDown, ExitReason: types.ExitReasonProtectiveStop, ClosedAt: now.Add(-15 * time.Minute).Unix(), CreatedAt: now.Add(-20 * time.Minute).Unix()},
+		{ID: "t-3", Symbol: "SOL/USDT:USDT", SetupPoint: types.SetupPoint2MinorDiv, Status: types.TicketStatusOpen, Direction: types.CycleDirectionUp, CreatedAt: now.Add(-5 * time.Minute).Unix()},
+	}
+	for _, tk := range records {
+		if err := j.SaveTicket(tk); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i, id := range []string{"t-old", "t-1", "t-2"} {
+		r := 2.0 + float64(i)*0.2
+		_ = j.SaveDecision(types.DecisionRecord{
+			TicketID: id, Decision: types.DecisionAccepted,
+			PlannedMaxLossUSD: &r, DecidedAt: now.Add(-time.Duration(60-i*20) * time.Minute).Unix(),
+		})
+	}
+
+	sameSetup, sameSym, err := j.TrialBudgetStats("SOL/USDT:USDT", types.SetupPoint1Breakout, "t-cur", now, 24*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sameSetup != 2 || sameSym != 3 {
+		t.Fatalf("TrialBudgetStats got sameSetup=%d sameSym=%d, want 2 and 3", sameSetup, sameSym)
+	}
+
+	rel, err := j.RelapseHistoryStats("SOL/USDT:USDT", "t-cur", now, 60*time.Minute, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rel.GlobalConsecutiveStops != 2 || !rel.LastOutcomeWasLoss {
+		t.Fatalf("RelapseHistoryStats stops=%d lastLoss=%v", rel.GlobalConsecutiveStops, rel.LastOutcomeWasLoss)
+	}
+	if rel.LastStopSameSymbolDirection != types.CycleDirectionDown {
+		t.Fatalf("LastStopSameSymbolDirection=%q, want down", rel.LastStopSameSymbolDirection)
+	}
+	if rel.RecentTicketsInChurnWindow != 3 {
+		t.Fatalf("RecentTicketsInChurnWindow=%d, want 3", rel.RecentTicketsInChurnWindow)
+	}
+	if len(rel.RecentPersonalRiskUSD) != 3 {
+		t.Fatalf("RecentPersonalRiskUSD=%v, want 3 entries", rel.RecentPersonalRiskUSD)
 	}
 }

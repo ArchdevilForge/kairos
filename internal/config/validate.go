@@ -264,6 +264,32 @@ func Validate(cfg *types.Config) error {
 		}
 	}
 
+	// --- riskGate ------------------------------------------------------------
+	if cfg.RiskGate.TrialBudgetMax < 0 {
+		addf("riskGate.trialBudgetMax must be >= 0, got %d", cfg.RiskGate.TrialBudgetMax)
+	}
+	if cfg.RiskGate.TrialBudgetWindowHours < 0 {
+		addf("riskGate.trialBudgetWindowHours must be >= 0, got %v", cfg.RiskGate.TrialBudgetWindowHours)
+	}
+	if cfg.RiskGate.TiltReverseMinutes < 0 {
+		addf("riskGate.tiltReverseMinutes must be >= 0, got %d", cfg.RiskGate.TiltReverseMinutes)
+	}
+	if cfg.RiskGate.ChurnConsecutiveStops < 0 {
+		addf("riskGate.churnConsecutiveStops must be >= 0, got %d", cfg.RiskGate.ChurnConsecutiveStops)
+	}
+	if cfg.RiskGate.ChurnWindowMinutes < 0 {
+		addf("riskGate.churnWindowMinutes must be >= 0, got %d", cfg.RiskGate.ChurnWindowMinutes)
+	}
+	if cfg.RiskGate.ChurnTicketCount < 0 {
+		addf("riskGate.churnTicketCount must be >= 0, got %d", cfg.RiskGate.ChurnTicketCount)
+	}
+	if cfg.RiskGate.SizeEscalationMult < 0 {
+		addf("riskGate.sizeEscalationMult must be >= 0, got %v", cfg.RiskGate.SizeEscalationMult)
+	}
+	if cfg.RiskGate.RecentRiskSampleSize < 0 {
+		addf("riskGate.recentRiskSampleSize must be >= 0, got %d", cfg.RiskGate.RecentRiskSampleSize)
+	}
+
 	if len(errs) == 0 {
 		return nil
 	}
