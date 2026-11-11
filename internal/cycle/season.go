@@ -89,6 +89,27 @@ type SeasonBar5m struct {
 	QuoteVol float64 `json:"quote_vol"`
 }
 
+const seasonBar5mSeconds int64 = 300
+
+// SeasonBar5mFromCandle is the single canonical converter from a closed 5-minute
+// types.Candle (whose Timestamp is bar open time in Unix seconds, or milliseconds
+// if > 1e12) into a SeasonBar5m indexed by CloseTS = open_ts + 300, matching
+// Build5mBarsFrom1m and tools/research/h1_experiment.py.
+func SeasonBar5mFromCandle(c types.Candle) SeasonBar5m {
+	openTS := c.Timestamp
+	if openTS > 1_000_000_000_000 {
+		openTS /= 1000
+	}
+	return SeasonBar5m{
+		CloseTS:  openTS + seasonBar5mSeconds,
+		Open:     c.Open,
+		High:     c.High,
+		Low:      c.Low,
+		Close:    c.Close,
+		QuoteVol: c.QuoteVol,
+	}
+}
+
 // SeasonObservation is the causal market season state at 5m bar close timestamp TS.
 // Ported verbatim from tools/research/h1_experiment.py SeasonObservation.
 type SeasonObservation struct {

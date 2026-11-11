@@ -63,6 +63,7 @@ type SignalEnvelope struct {
 
 // Candle represents a single OHLCV candle. Timestamp is Unix seconds;
 // adapters convert exchange-native milliseconds at the boundary.
+// QuoteVol is the quote-currency volume (e.g. OKX volCcyQuote row[7] in USDT).
 type Candle struct {
 	Timestamp int64   `json:"timestamp" yaml:"timestamp"`
 	Open      float64 `json:"open" yaml:"open"`
@@ -70,6 +71,7 @@ type Candle struct {
 	Low       float64 `json:"low" yaml:"low"`
 	Close     float64 `json:"close" yaml:"close"`
 	Volume    float64 `json:"volume" yaml:"volume"`
+	QuoteVol  float64 `json:"quote_vol" yaml:"quote_vol"`
 }
 
 // Ticker represents normalized market data from an exchange ticker.

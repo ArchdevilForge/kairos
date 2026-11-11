@@ -54,10 +54,11 @@ type EnrichRequest struct {
 	Config  EnrichConfig
 	Equity  float64
 
-	// Phase 2c optional causal season inputs (shadow advisory only).
-	SeasonRegime    types.SeasonRegime
-	UniverseBars5m  map[string][]cycle.SeasonBar5m
-	UniverseFunding map[string]map[int64]float64
+	// Phase 2c/2d optional causal season inputs (shadow advisory only).
+	SeasonRegime           types.SeasonRegime
+	UniverseBars5m         map[string][]cycle.SeasonBar5m
+	UniverseBars5mSnapshot func() map[string][]cycle.SeasonBar5m
+	UniverseFunding        map[string]map[int64]float64
 }
 
 // EnrichAndEvaluate fetches OHLCV, measures features, detects pullback trigger, attaches tickets.

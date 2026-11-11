@@ -101,7 +101,7 @@ func TestOKXFetchTickersAndOHLCV_Mock(t *testing.T) {
 		case strings.Contains(r.URL.Path, "/market/candles"):
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"code": "0",
-				"data": [][]string{{"1704067200000", "1", "2", "0.5", "1.5", "10"}},
+				"data": [][]string{{"1704067200000", "1", "2", "0.5", "1.5", "10", "1.0", "15234.5", "1"}},
 			})
 		case strings.Contains(r.URL.Path, "/market/ticker"):
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -143,7 +143,7 @@ func TestOKXFetchTickersAndOHLCV_Mock(t *testing.T) {
 	}
 
 	candles, err := o.FetchOHLCV(context.Background(), "BTC/USDT:USDT", "4h", 10, 0)
-	if err != nil || len(candles) != 1 {
+	if err != nil || len(candles) != 1 || candles[0].Volume != 10 || candles[0].QuoteVol != 15234.5 {
 		t.Fatalf("okx ohlcv: %v %+v", err, candles)
 	}
 
@@ -169,7 +169,7 @@ func TestBybitFetchTickersAndOHLCV_Mock(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"retCode": 0,
 				"result": map[string]any{
-					"list": [][]string{{"1704067200000", "1", "2", "0.5", "1.5", "10", "0"}},
+					"list": [][]string{{"1704067200000", "1", "2", "0.5", "1.5", "10", "15.25"}},
 				},
 			})
 		default:
@@ -190,7 +190,7 @@ func TestBybitFetchTickersAndOHLCV_Mock(t *testing.T) {
 	}
 
 	candles, err := b.FetchOHLCV(context.Background(), "BTC/USDT:USDT", "4h", 10, 0)
-	if err != nil || len(candles) != 1 {
+	if err != nil || len(candles) != 1 || candles[0].Volume != 10 || candles[0].QuoteVol != 15.25 {
 		t.Fatalf("bybit ohlcv: %v %+v", err, candles)
 	}
 }

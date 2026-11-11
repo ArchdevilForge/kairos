@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
+	"github.com/ArchdevilForge/kairos/internal/cycle"
 	"github.com/ArchdevilForge/kairos/internal/types"
 )
 
@@ -129,5 +131,107 @@ func TestEnrichAndEvaluate_FetchFailClosed(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("market fetch fail should error")
+	}
+}
+
+func TestWatchAndEnrich_RefreshesUniverseBars5mSnapshot(t *testing.T) {
+	j := testJournal(t)
+	cfgSvc := DefaultConfig()
+	cfgSvc.SessionTTLSeconds = 60
+	s := NewService(j, cfgSvc)
+
+	baseOpen := int64(1_700_000_000)
+	// Build 54 closed 5m bars + 1 forming bar; pulse sits right before pullback low.
+	build5m := func(withRestart bool) []types.Candle {
+		c := synthLongPullback()
+		for len(c) < 54 {
+			c = append([]types.Candle{bar(100, 100.2, 99.8)}, c...)
+		}
+		if !withRestart {
+			// Continue stepping down on the final 3 bars so attempt #1 sits on the low (no restart yet).
+			px := c[len(c)-4].Low
+			for i := len(c) - 3; i < len(c); i++ {
+				px -= 0.4
+				c[i] = bar(px, px+0.1, px-0.1)
+			}
+		}
+		// Append 1 unclosed forming bar (dropped by enrich.go:173).
+		c = append(c, bar(120, 121, 119))
+		for i := range c {
+			c[i].Timestamp = baseOpen + int64(i*300)
+			c[i].Volume = 50_000
+		}
+		return c
+	}
+
+	lastClosedOpen := baseOpen + int64(53*300)
+	pulseTS := lastClosedOpen - int64(8*300)
+
+	snapCalls := 0
+	fetcher := ohlcvFunc(func(ctx context.Context, symbol, timeframe string, limit int, beforeMs int64) ([]types.Candle, error) {
+		if timeframe == "5m" {
+			return build5m(snapCalls >= 2), nil
+		}
+		return (mockOHLCV{}).FetchOHLCV(ctx, symbol, timeframe, limit, beforeMs)
+	})
+
+	evt := types.AnomalyEvent{
+		EventType: "market_impulse", EventID: "watch-snap-1", Timestamp: float64(pulseTS),
+		Data: map[string]any{
+			"direction": "up", "state_to": "IMPULSE_UP", "median_return_60s_pct": 1.0,
+			"leaders_detail": []any{
+				map[string]any{"symbol": "SOL/USDT:USDT", "return_pct": 5.0, "relative_pct": 4.0},
+			},
+		},
+	}
+
+	snapFn := func() map[string][]cycle.SeasonBar5m {
+		snapCalls++
+		if snapCalls == 1 {
+			// Cross-section not ready on initial attempt.
+			return nil
+		}
+		syms := []string{"BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT", "XRP/USDT:USDT"}
+		out := make(map[string][]cycle.SeasonBar5m, len(syms))
+		startClose := lastClosedOpen + 300 - int64(23*300)
+		for _, sym := range syms {
+			bars := make([]cycle.SeasonBar5m, 24)
+			for i := range bars {
+				bars[i] = cycle.SeasonBar5m{
+					CloseTS:  startClose + int64(i*300),
+					Open:     100.0,
+					High:     100.1,
+					Low:      99.5,
+					Close:    99.6, // negative returns across all 4 symbols -> WINTER
+					QuoteVol: 40_000,
+				}
+			}
+			out[sym] = bars
+		}
+		return out
+	}
+
+	ecfg := DefaultEnrichConfig()
+	ecfg.AssumeSpreadOK = true
+	ecfg.MinQuoteVol = 1
+	ecfg.WatchInterval = 15 * time.Millisecond
+
+	s.WatchAndEnrich(context.Background(), EnrichRequest{
+		Event:                  evt,
+		Fetcher:                fetcher,
+		Config:                 ecfg,
+		UniverseBars5mSnapshot: snapFn,
+	})
+
+	if snapCalls < 2 {
+		t.Fatalf("expected UniverseBars5mSnapshot to be called across retries, got %d", snapCalls)
+	}
+	tickets, err := j.ListTickets("")
+	if err != nil || len(tickets) != 1 {
+		t.Fatalf("tickets=%d err=%v", len(tickets), err)
+	}
+	if tickets[0].SeasonRegime != types.SeasonRegimeWinter || tickets[0].WinterDefenseHint != types.DefaultWinterDefenseHint {
+		t.Fatalf("ticket got SeasonRegime=%q WinterDefenseHint=%q, want WINTER + default hint",
+			tickets[0].SeasonRegime, tickets[0].WinterDefenseHint)
 	}
 }

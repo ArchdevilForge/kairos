@@ -129,3 +129,29 @@ func TestMarketSnapshotJSONTags(t *testing.T) {
 		t.Fatalf("snapshot JSON leaked PascalCase keys: %s", s)
 	}
 }
+
+func TestCandle_JSONRoundTrip(t *testing.T) {
+	orig := Candle{
+		Timestamp: 1704067200,
+		Open:      65000.5,
+		High:      65120.0,
+		Low:       64980.0,
+		Close:     65090.0,
+		Volume:    125.4,
+		QuoteVol:  8_162_286.0,
+	}
+	raw, err := json.Marshal(orig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"quote_vol":8162286`) {
+		t.Fatalf("expected quote_vol snake_case tag, got %s", string(raw))
+	}
+	var got Candle
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got != orig {
+		t.Fatalf("candle round-trip mismatch: got %+v want %+v", got, orig)
+	}
+}

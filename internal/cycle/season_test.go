@@ -276,3 +276,101 @@ func TestPhase2bConsistencyWithPython(t *testing.T) {
 		t.Fatalf("consistency below 99.9%% bar: timeline=%.4f%% tickets=%.4f%%", timelineRate, ticketRate)
 	}
 }
+
+func TestSeasonBar5mFromCandle_MatchesBuild5mBarsFrom1mConvention(t *testing.T) {
+	openTS := int64(1_762_646_400) // aligned 5m open timestamp
+	b1m := []SeasonBar1m{
+		{TS: openTS + 0, Open: 100.0, High: 101.0, Low: 99.5, Close: 100.4, QuoteVol: 10_000},
+		{TS: openTS + 60, Open: 100.4, High: 102.5, Low: 100.2, Close: 102.0, QuoteVol: 20_000},
+		{TS: openTS + 120, Open: 102.0, High: 102.2, Low: 99.0, Close: 99.8, QuoteVol: 30_000},
+		{TS: openTS + 180, Open: 99.8, High: 101.5, Low: 99.7, Close: 101.2, QuoteVol: 15_000},
+		{TS: openTS + 240, Open: 101.2, High: 101.8, Low: 100.9, Close: 101.5, QuoteVol: 25_000},
+	}
+	built := Build5mBarsFrom1m(b1m)
+	if len(built) != 1 {
+		t.Fatalf("expected 1 aggregated 5m bar, got %d", len(built))
+	}
+
+	candleSec := types.Candle{
+		Timestamp: openTS,
+		Open:      100.0,
+		High:      102.5,
+		Low:       99.0,
+		Close:     101.5,
+		Volume:    999, // base/contract volume; must NOT be mixed into QuoteVol
+		QuoteVol:  100_000,
+	}
+	gotSec := SeasonBar5mFromCandle(candleSec)
+	if gotSec != built[0] {
+		t.Fatalf("SeasonBar5mFromCandle(sec) = %+v, want exact match with Build5mBarsFrom1m %+v", gotSec, built[0])
+	}
+	if gotSec.CloseTS != openTS+300 {
+		t.Fatalf("CloseTS = %d, want %d", gotSec.CloseTS, openTS+300)
+	}
+
+	// Millisecond timestamp defensive normalization must yield identical CloseTS.
+	candleMs := candleSec
+	candleMs.Timestamp = openTS * 1000
+	if gotMs := SeasonBar5mFromCandle(candleMs); gotMs != built[0] {
+		t.Fatalf("SeasonBar5mFromCandle(ms) = %+v, want %+v", gotMs, built[0])
+	}
+}
+
+func TestBuildCausalSeasonTimeline_FundingDoesNotAffectSeasonRegime(t *testing.T) {
+	syms := []string{
+		"BTC/USDT:USDT",
+		"ETH/USDT:USDT",
+		"SOL/USDT:USDT",
+		"XRP/USDT:USDT",
+		"DOGE/USDT:USDT",
+	}
+	baseClose := int64(1_762_646_700)
+	bars := make(map[string][]SeasonBar5m, len(syms))
+	funding := make(map[string]map[int64]float64, len(syms))
+	for sIdx, sym := range syms {
+		series := make([]SeasonBar5m, 30)
+		px := 100.0
+		for i := range series {
+			step := -0.2
+			qv := 50_000.0
+			if i >= 12 {
+				step = 0.6
+				qv = 140_000.0
+			}
+			series[i] = SeasonBar5m{
+				CloseTS:  baseClose + int64(i*300),
+				Open:     px,
+				High:     px + 0.8,
+				Low:      px - 0.5,
+				Close:    px + step,
+				QuoteVol: qv + float64(sIdx*1000),
+			}
+			px += step
+		}
+		bars[sym] = series
+		funding[sym] = map[int64]float64{
+			baseClose:        0.0010,
+			baseClose + 1200: 0.0025,
+			baseClose + 2400: 0.0050,
+			baseClose + 3600: -0.0020,
+		}
+	}
+
+	tlNil := BuildCausalSeasonTimeline(bars, nil)
+	tlWithFunding := BuildCausalSeasonTimeline(bars, funding)
+	if len(tlNil) == 0 || len(tlNil) != len(tlWithFunding) {
+		t.Fatalf("timeline len mismatch: nil=%d vs funding=%d", len(tlNil), len(tlWithFunding))
+	}
+	for ts, obsNil := range tlNil {
+		obsF, ok := tlWithFunding[ts]
+		if !ok {
+			t.Fatalf("missing ts=%d in funded timeline", ts)
+		}
+		if obsNil.SeasonRegime != obsF.SeasonRegime ||
+			obsNil.BreadthFast != obsF.BreadthFast ||
+			obsNil.BreadthSlow != obsF.BreadthSlow ||
+			obsNil.VolumeRatio != obsF.VolumeRatio {
+			t.Fatalf("SeasonRegime changed with funding at ts=%d: nil=%+v vs funded=%+v", ts, obsNil, obsF)
+		}
+	}
+}
