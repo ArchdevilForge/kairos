@@ -388,6 +388,9 @@ def run_phase3bj_cli(
     out_report: str | None = None,
     out_template: str | None = None,
     skip_anchor_check: bool = False,
+    cache_path: str | None = None,
+    manifest_path: str | None = None,
+    smoke_only: bool = False,
 ) -> int:
     """Run Phase 3b-J Jev blind judgment scaffold / evaluator (--mock for Stage 1)."""
     from phase3bj_experiment import (
@@ -398,12 +401,15 @@ def run_phase3bj_cli(
 
     con = duckdb.connect(db)
     try:
-        bundle, suite_eval, snap_path, cache_path, manifest_path = run_phase3bj_pipeline(
+        bundle, suite_eval, snap_path, c_path, m_path = run_phase3bj_pipeline(
             con,
             work_dir=work_dir,
             mock=mock,
             shuffle_seed=seed,
             enforce_anchor=not skip_anchor_check,
+            cache_path=cache_path,
+            manifest_path=manifest_path,
+            smoke_only=smoke_only,
         )
     finally:
         con.close()
@@ -411,7 +417,7 @@ def run_phase3bj_cli(
     eval_md = format_phase3bj_evaluation_markdown(suite_eval)
     print(eval_md)
     print(
-        f"\n快照 JSONL: {snap_path}\n判断缓存 JSONL: {cache_path}\n运行清单 JSON: {manifest_path}"
+        f"\n快照 JSONL: {snap_path}\n判断缓存 JSONL: {c_path}\n运行清单 JSON: {m_path}"
     )
 
     if out_report:
@@ -499,6 +505,13 @@ def main():
         help="Stage 1 确定性伪判断模式（按 candidate_id HMAC-SHA256 派生 p，零外部调用）",
     )
     p_p3bj.add_argument("--seed", type=int, default=20261111, help="随机提交序种子")
+    p_p3bj.add_argument("--cache-path", help="可选: 显式指定判断缓存 JSONL 输出/复用路径")
+    p_p3bj.add_argument("--manifest-path", help="可选: 显式指定运行清单 JSON 输出路径")
+    p_p3bj.add_argument(
+        "--smoke-only",
+        action="store_true",
+        help="Stage 2 冒烟模式: 仅对 P1 OOS / P2 / P1 IS 各 1 张共 3 张执行判断并写入正式缓存",
+    )
     p_p3bj.add_argument("--out-report", help="可选: 输出评测/Mock 干跑报告 Markdown")
     p_p3bj.add_argument("--out-template", help="可选: 输出 Stage 2 空白实测模板 Markdown")
     p_p3bj.add_argument(
@@ -549,6 +562,9 @@ def main():
             args.out_report,
             args.out_template,
             args.skip_anchor_check,
+            args.cache_path,
+            args.manifest_path,
+            args.smoke_only,
         )
 
 

@@ -15,19 +15,26 @@ import pytest
 from clustering import ExAnteViolationError
 from h1_experiment import AnnotatedTicketSignal, SeasonObservation
 from jev_client import (
+    BuildDriftError,
     CandidatePriorityMeta,
     EXPECTED_CONTEXT_TOP_KEYS,
     FROZEN_PROMPT_TEMPLATE,
+    FROZEN_TARGET_DEFINITION,
+    JEV_SYSTEMONE_MODEL,
+    JEV_SYSTEMONE_QUESTION_KEY,
     JevClient,
     JevConfig,
     JudgmentCacheEntry,
     RedactingLogFilter,
+    SystemOneTransportAdapter,
     TEMPLATE_ID,
     assert_blind_payload_clean,
     assert_snapshot_ex_ante_clean,
     build_jev_payload,
     compute_template_spec_sha256,
+    extract_systemone_response,
     load_judgment_cache,
+    map_payload_to_systemone_request,
     mock_jev_probability,
     redact_sensitive_text,
     select_and_shuffle_pending,
@@ -38,6 +45,7 @@ from phase3a_experiment import (
     evaluate_s3_point2_constraints,
 )
 from phase3bj_experiment import (
+    ExtractedPopulationsBundle,
     GroundTruthTicketOutcome,
     POOL_P1_S3,
     POOL_P2_S1,
@@ -49,6 +57,7 @@ from phase3bj_experiment import (
     format_phase3bj_evaluation_markdown,
     format_phase3bj_stage2_template_markdown,
     run_phase3bj_pipeline,
+    select_stage2_smoke_snapshots,
     write_snapshots_jsonl,
 )
 from policies import CandidateSignal, MinuteBar, simulate_holding_policy
@@ -845,3 +854,286 @@ def test_evaluator_matches_phase3a_s3_cr1_math_and_calibration_metrics(tmp_path:
     assert "STAGE 1 MOCK DRY-RUN" in md_dry
     assert "TEMPLATE" in md_tpl
     assert 0.25 <= mock_jev_probability("cand_0123456789abcdef") <= 0.85
+
+
+def test_systemone_request_mapping_and_frozen_template_fingerprint():
+    """Verify Stage 2 request mapping uses ONLY payload['prompt'] & payload['target_definition']."""
+    assert (
+        compute_template_spec_sha256()
+        == "e77cd51842062da704d61b42030b310adb0de17c7fc2a4923f50740a4c580f1c"
+    )
+
+    sig, _, b5, idx, b4, b1d, pit, vol, sea, imp = _build_synthetic_world(future_bull=True)
+    snap = build_ex_ante_snapshot_for_signal(
+        sig,
+        POOL_P1_S3,
+        bars_5m_by_sym=b5,
+        close5m_idx_by_sym=idx,
+        bars_4h_by_sym=b4,
+        bars_1d_by_sym=b1d,
+        pit_meta=pit,
+        vol_by_sym=vol,
+        season_timeline=sea,
+        btc_up_impulses=imp,
+        btc_sym="BTC/USDT:USDT",
+        eth_sym="ETH/USDT:USDT",
+    )
+    payload = build_jev_payload(snap)
+    wire_req = map_payload_to_systemone_request(payload)
+
+    assert set(wire_req.keys()) == {"model", "state", "questions"}
+    assert wire_req["model"] == JEV_SYSTEMONE_MODEL == "jev-latest"
+    assert wire_req["state"] == payload["prompt"]
+    assert wire_req["questions"] == {
+        JEV_SYSTEMONE_QUESTION_KEY: {
+            "type": "noul",
+            "instructions": payload["target_definition"],
+        }
+    }
+    assert wire_req["questions"]["netr_gt_0"]["instructions"] == FROZEN_TARGET_DEFINITION
+
+    # Reject missing/corrupted payload fields
+    with pytest.raises(ValueError, match="prompt"):
+        map_payload_to_systemone_request({"target_definition": FROZEN_TARGET_DEFINITION})
+    with pytest.raises(ValueError, match="target_definition"):
+        map_payload_to_systemone_request({"prompt": "ok"})
+
+
+@pytest.mark.parametrize(
+    "bad_resp",
+    [
+        [],
+        {"answers": {"netr_gt_0": {"type": "noul", "noul": 0.5}}},  # missing model
+        {"model": "   ", "answers": {"netr_gt_0": {"type": "noul", "noul": 0.5}}},
+        {"model": "jev-1.14.0"},  # missing answers
+        {"model": "jev-1.14.0", "answers": []},
+        {"model": "jev-1.14.0", "answers": {}},  # missing netr_gt_0
+        {"model": "jev-1.14.0", "answers": {"netr_gt_0": {"type": "bool", "noul": 0.5}}},
+        {"model": "jev-1.14.0", "answers": {"netr_gt_0": {"type": "noul"}}},  # missing noul
+        {"model": "jev-1.14.0", "answers": {"netr_gt_0": {"type": "noul", "noul": None}}},
+        {"model": "jev-1.14.0", "answers": {"netr_gt_0": {"type": "noul", "noul": True}}},
+        {"model": "jev-1.14.0", "answers": {"netr_gt_0": {"type": "noul", "noul": "0.5"}}},
+        {"model": "jev-1.14.0", "answers": {"netr_gt_0": {"type": "noul", "noul": -0.001}}},
+        {"model": "jev-1.14.0", "answers": {"netr_gt_0": {"type": "noul", "noul": 1.001}}},
+        {"model": "jev-1.14.0", "answers": {"netr_gt_0": {"type": "noul", "noul": float("nan")}}},
+        {"model": "jev-1.14.0", "answers": {"netr_gt_0": {"type": "noul", "noul": float("inf")}}},
+        {
+            "model": "jev-1.14.0",
+            "answers": {"netr_gt_0": {"type": "noul", "noul": 0.5}},
+            "usage": "invalid",
+        },
+        {
+            "model": "jev-1.14.0",
+            "answers": {"netr_gt_0": {"type": "noul", "noul": 0.5}},
+            "usage": {"input_tokens": -5, "output_tokens": 2},
+        },
+        {
+            "model": "jev-1.14.0",
+            "answers": {"netr_gt_0": {"type": "noul", "noul": 0.5}},
+            "usage": {"input_tokens": True, "output_tokens": 2},
+        },
+    ],
+)
+def test_systemone_response_extractor_rejects_malformed_and_out_of_bounds_shapes(
+    bad_resp: Any,
+):
+    """Malformed System One responses MUST raise ValueError rather than swallowing."""
+    with pytest.raises(ValueError):
+        extract_systemone_response(bad_resp)
+
+
+def test_systemone_adapter_smoke_to_full_batch_and_build_drift_guard(tmp_path: Path):
+    """Verify Smoke(3) -> Full(6) cache continuity, token accounting, and BuildDriftError stop."""
+    sig_base, _, b5, idx, b4, b1d, pit, vol, sea, imp = _build_synthetic_world(
+        future_bull=True
+    )
+    snapshots: list[dict[str, Any]] = []
+    outcomes_by_id: dict[str, GroundTruthTicketOutcome] = {}
+    priorities: dict[str, CandidatePriorityMeta] = {}
+
+    # 6 tickets: 2 P1 OOS, 2 P1 IS-only, 2 P2 OOS
+    specs = [
+        (POOL_P1_S3, True, "wave_0001"),
+        (POOL_P1_S3, True, "wave_0002"),
+        (POOL_P1_S3, False, "wave_0000"),
+        (POOL_P1_S3, False, "wave_0000"),
+        (POOL_P2_S1, True, "wave_0001"),
+        (POOL_P2_S1, True, "wave_0002"),
+    ]
+    for k, (pool, is_oos, wcid) in enumerate(specs):
+        sig_k = CandidateSignal(
+            signal_id=f"s2_{k}",
+            wave_cluster_id=wcid,
+            symbol=sig_base.symbol,
+            direction="UP",
+            entry_ts=sig_base.entry_ts - (6 - k) * 300 if k < 5 else sig_base.entry_ts,
+            entry_price=sig_base.entry_price + k * 0.05,
+            stop_price=sig_base.stop_price,
+            atr_1m_entry=sig_base.atr_1m_entry,
+            adv_5m_entry_usd=sig_base.adv_5m_entry_usd,
+        )
+        snap_k = build_ex_ante_snapshot_for_signal(
+            sig_k,
+            pool,
+            bars_5m_by_sym=b5,
+            close5m_idx_by_sym=idx,
+            bars_4h_by_sym=b4,
+            bars_1d_by_sym=b1d,
+            pit_meta=pit,
+            vol_by_sym=vol,
+            season_timeline=sea,
+            btc_up_impulses=imp,
+            btc_sym="BTC/USDT:USDT",
+            eth_sym="ETH/USDT:USDT",
+        )
+        cid = snap_k["candidate_id"]
+        snapshots.append(snap_k)
+        outcomes_by_id[cid] = GroundTruthTicketOutcome(
+            candidate_id=cid,
+            source_pool=pool,
+            signal_id=sig_k.signal_id,
+            symbol=sig_k.symbol,
+            side="LONG",
+            entry_ts=sig_k.entry_ts,
+            wave_cluster_id=wcid,
+            is_oos=is_oos,
+            net_r_wave=0.4,
+            net_r_bracket=0.3,
+            s3_rule_retained=True,
+        )
+        priorities[cid] = CandidatePriorityMeta(
+            candidate_id=cid,
+            priority_tier=1 if (pool == POOL_P1_S3 and is_oos) else (2 if pool == POOL_P2_S1 else 3),
+            entry_ts=sig_k.entry_ts,
+            symbol=sig_k.symbol,
+        )
+
+    from phase3a_experiment import DatasetAnchorAudit
+
+    dummy_anchor = DatasetAnchorAudit(
+        bars_1m=758_013,
+        bars_htf=53_122,
+        volume_24h_obs=197_776,
+        funding_ticks=6_995,
+        oi_5m_ticks=30_157,
+        distinct_1m_symbols=27,
+        pit_universe_total=528,
+        expected_bars_1m=758_013,
+        rel_diff_pct=0.0,
+        within_2pct_anchor=True,
+    )
+    bundle = ExtractedPopulationsBundle(
+        anchor=dummy_anchor,
+        snapshots=tuple(snapshots),
+        outcomes_by_id=outcomes_by_id,
+        priority_by_id=priorities,
+        baseline_long_oos_outcomes=(),
+    )
+
+    smoke_snaps = select_stage2_smoke_snapshots(bundle)
+    assert len(smoke_snaps) == 3
+    smoke_meta = [outcomes_by_id[s["candidate_id"]] for s in smoke_snaps]
+    assert sum(1 for o in smoke_meta if o.source_pool == POOL_P1_S3 and o.is_oos) == 1
+    assert sum(1 for o in smoke_meta if o.source_pool == POOL_P2_S1) == 1
+    assert sum(1 for o in smoke_meta if o.source_pool == POOL_P1_S3 and not o.is_oos) == 1
+
+    wire_calls: list[dict[str, Any]] = []
+    build_to_return = ["jev-1.14.0"]
+
+    def _fake_systemone_http(
+        url: str,
+        body: bytes,
+        headers: Mapping[str, str],
+        timeout: float,
+    ) -> tuple[int, bytes]:
+        assert url == "https://api.typesafe.ai/v1/systemone"
+        assert headers["Authorization"] == "Bearer test_key_abc"
+        req_json = json.loads(body.decode("utf-8"))
+        assert req_json["model"] == "jev-latest"
+        assert "netr_gt_0" in req_json["questions"]
+        wire_calls.append(req_json)
+        resp = {
+            "model": build_to_return[0],
+            "answers": {"netr_gt_0": {"type": "noul", "noul": 0.64}},
+            "usage": {"input_tokens": 700, "output_tokens": 10},
+        }
+        return 200, json.dumps(resp).encode("utf-8")
+
+    cfg = JevConfig(
+        base_url="https://api.typesafe.ai/v1/systemone",
+        api_key="test_key_abc",
+        min_interval_sec=0.0,
+    )
+    cache_path = tmp_path / "stage2_live.jsonl"
+    manifest_path = tmp_path / "stage2_manifest.json"
+
+    # Step 2: Run 3 smoke tickets
+    smoke_client = JevClient(
+        cfg,
+        mock=False,
+        transport=SystemOneTransportAdapter(_fake_systemone_http),
+        sleep_fn=lambda _: None,
+    )
+    smoke_cache, smoke_man = smoke_client.run_batch(
+        smoke_snaps,
+        cache_path,
+        manifest_path=manifest_path,
+        priority_by_id=priorities,
+        shuffle_seed=20261111,
+    )
+    assert len(smoke_cache) == 3
+    assert len(wire_calls) == 3
+    assert smoke_man.service_builds == ("jev-1.14.0",)
+    assert smoke_man.build_drift_detected is False
+    assert smoke_man.total_input_tokens == 2100
+    assert smoke_man.failed_calls == 0
+
+    # Simulate build drift on resume -> must raise BuildDriftError immediately and NOT cache drifted ticket
+    build_to_return[0] = "jev-1.15.0"
+    drift_client = JevClient(
+        cfg,
+        mock=False,
+        transport=SystemOneTransportAdapter(_fake_systemone_http),
+        sleep_fn=lambda _: None,
+    )
+    with pytest.raises(BuildDriftError, match="jev-1.15.0"):
+        drift_client.run_batch(
+            snapshots,
+            cache_path,
+            manifest_path=manifest_path,
+            priority_by_id=priorities,
+            shuffle_seed=20261111,
+        )
+    # Cache still has ONLY the 3 clean smoke entries; manifest recorded the drift
+    reloaded_after_drift = load_judgment_cache(cache_path, expected_mode="live")
+    assert len(reloaded_after_drift) == 3
+    drift_man_raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert drift_man_raw["build_drift_detected"] is True
+    assert drift_man_raw["service_builds"] == ["jev-1.14.0", "jev-1.15.0"]
+    assert drift_man_raw["failed_calls"] == 1
+
+    # Restore consistent build -> Full batch completes remaining 3 tickets without re-calling smoke 3
+    build_to_return[0] = "jev-1.14.0"
+    calls_before_resume = len(wire_calls)
+    full_client = JevClient(
+        cfg,
+        mock=False,
+        transport=SystemOneTransportAdapter(_fake_systemone_http),
+        sleep_fn=lambda _: None,
+    )
+    full_cache, full_man = full_client.run_batch(
+        snapshots,
+        cache_path,
+        manifest_path=manifest_path,
+        priority_by_id=priorities,
+        shuffle_seed=20261111,
+    )
+    assert len(wire_calls) - calls_before_resume == 3
+    assert len(full_cache) == 6
+    assert full_man.cached_hits == 3
+    assert full_man.new_calls_completed == 3
+    assert full_man.service_builds == ("jev-1.14.0",)
+    assert full_man.build_drift_detected is False
+    assert full_man.total_input_tokens == 4200
+    assert full_man.new_input_tokens == 2100
+

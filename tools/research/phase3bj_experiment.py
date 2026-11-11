@@ -1704,6 +1704,63 @@ def evaluate_phase3bj_suite(
     )
 
 
+def select_stage2_smoke_snapshots(
+    bundle: ExtractedPopulationsBundle,
+) -> list[dict[str, Any]]:
+    """Select 3 deterministic Stage 2 smoke tickets: 1 P1 OOS, 1 P2, 1 P1 IS-only warmup.
+
+    Ordered deterministically within each stratum by `(entry_ts, symbol, candidate_id)`
+    with zero inspection of post-entry outcomes.
+    """
+    snap_by_id = {str(s["candidate_id"]): s for s in bundle.snapshots}
+
+    def _sort_key(cid: str) -> tuple[int, str, str]:
+        o = bundle.outcomes_by_id[cid]
+        return (int(o.entry_ts), str(o.symbol), cid)
+
+    p1_oos_ids = sorted(
+        (
+            cid
+            for cid, o in bundle.outcomes_by_id.items()
+            if o.source_pool == POOL_P1_S3 and o.is_oos
+        ),
+        key=_sort_key,
+    )
+    p2_ids = sorted(
+        (
+            cid
+            for cid, o in bundle.outcomes_by_id.items()
+            if o.source_pool == POOL_P2_S1
+        ),
+        key=_sort_key,
+    )
+    p1_is_only_ids = sorted(
+        (
+            cid
+            for cid, o in bundle.outcomes_by_id.items()
+            if o.source_pool == POOL_P1_S3 and not o.is_oos
+        ),
+        key=_sort_key,
+    )
+
+    chosen_ids: list[str] = []
+    for group in (p1_oos_ids, p2_ids, p1_is_only_ids):
+        for cid in group:
+            if cid not in chosen_ids:
+                chosen_ids.append(cid)
+                break
+
+    # Fallback if a synthetic test DB has no warmup-only cluster in P1
+    if len(chosen_ids) < 3:
+        for cid in p1_oos_ids:
+            if cid not in chosen_ids:
+                chosen_ids.append(cid)
+            if len(chosen_ids) >= 3:
+                break
+
+    return [snap_by_id[cid] for cid in chosen_ids]
+
+
 def run_phase3bj_pipeline(
     con: duckdb.DuckDBPyConnection,
     *,
@@ -1712,6 +1769,9 @@ def run_phase3bj_pipeline(
     shuffle_seed: int = DEFAULT_SHUFFLE_SEED,
     enforce_anchor: bool = True,
     client: JevClient | None = None,
+    cache_path: str | Path | None = None,
+    manifest_path: str | Path | None = None,
+    smoke_only: bool = False,
 ) -> tuple[ExtractedPopulationsBundle, Phase3bjSuiteEvaluation, Path, Path, Path]:
     """End-to-end runner: Step A anchor -> Step B snapshots -> Step D client -> Evaluation.
 
@@ -1721,25 +1781,37 @@ def run_phase3bj_pipeline(
     wdir.mkdir(parents=True, exist_ok=True)
     snapshots_path = wdir / "phase3bj_ex_ante_snapshots.jsonl"
     mode_tag = "mock" if mock else "live"
-    cache_path = wdir / f"phase3bj_jev_cache_{mode_tag}.jsonl"
-    manifest_path = wdir / f"phase3bj_jev_manifest_{mode_tag}.json"
+    resolved_cache_path = (
+        Path(cache_path)
+        if cache_path is not None
+        else (wdir / f"phase3bj_jev_cache_{mode_tag}.jsonl")
+    )
+    resolved_manifest_path = (
+        Path(manifest_path)
+        if manifest_path is not None
+        else (wdir / f"phase3bj_jev_manifest_{mode_tag}.json")
+    )
 
     bundle = extract_phase3bj_populations(con, enforce_anchor=enforce_anchor)
     write_snapshots_jsonl(bundle.snapshots, snapshots_path)
 
+    target_snapshots: Sequence[dict[str, Any]] = (
+        select_stage2_smoke_snapshots(bundle) if smoke_only else bundle.snapshots
+    )
+
     active_client = client if client is not None else JevClient(JevConfig.from_env(), mock=mock)
     cache_map, manifest = active_client.run_batch(
-        bundle.snapshots,
-        cache_path,
-        manifest_path=manifest_path,
+        target_snapshots,
+        resolved_cache_path,
+        manifest_path=resolved_manifest_path,
         priority_by_id=bundle.priority_by_id,
         shuffle_seed=shuffle_seed,
     )
-    loaded_cache = load_judgment_cache(cache_path, expected_mode=active_client.mode)
-    assert len(loaded_cache) == len(cache_map)
+    loaded_cache = load_judgment_cache(resolved_cache_path, expected_mode=active_client.mode)
+    assert len(loaded_cache) >= len(cache_map)
 
     suite_eval = evaluate_phase3bj_suite(bundle, loaded_cache, manifest=manifest)
-    return bundle, suite_eval, snapshots_path, cache_path, manifest_path
+    return bundle, suite_eval, snapshots_path, resolved_cache_path, resolved_manifest_path
 
 
 # ---------------------------------------------------------------------------
@@ -1775,14 +1847,14 @@ def _format_population_section_md(rep: PopulationEvaluationReport) -> list[str]:
     d_oos = rep.diff_accepted_vs_pool_oos
     d_is = rep.diff_accepted_vs_pool_is
     lines: list[str] = [
-        f"## {rep.title}",
+        f"### {rep.title}",
         "",
         f"- **主判决（`τ = 0.60`, Walk-Forward OOS）**: **{rep.verdict}** (`{rep.verdict_detail}`)",
         f"- **全候选池规模**: IS `{rep.n_total_is}` 张 (`G = {rep.g_total_is}`) / Walk-Forward OOS `{rep.n_total_oos}` 张 (`G = {rep.g_total_oos}`)",
         f"- **已判覆盖数**: IS `{rep.n_judged_is}` / `{rep.n_total_is}`；OOS `{rep.n_judged_oos}` / `{rep.n_total_oos}`",
         f"- **主口径放行率（`τ = 0.60`）**: OOS **`{_fmt_pct(rep.accept_rate_oos)}`** (`{rep.accepted_oos_stat.n_obs} / {rep.n_judged_oos}`)；IS `{_fmt_pct(rep.accept_rate_is)}` (`{rep.accepted_is_stat.n_obs} / {rep.n_judged_is}`)",
         "",
-        "### 核心组间对比（`wave_k_be=0.8` 全摩擦 `PolicyNetR` + `CR1` 波次聚类稳健推断）",
+        "#### 核心组间对比（`wave_k_be=0.8` 全摩擦 `PolicyNetR` + `CR1` 波次聚类稳健推断）",
         "",
         "| 分组 / 口径 | `N` | `G` | Mean `PolicyNetR` | Cluster SE | 95% CI | vs 同池基线 `ΔNetR` | 单侧 `p` |",
         "|---|---:|---:|---:|---:|---|---:|---:|",
@@ -1799,73 +1871,56 @@ def _format_population_section_md(rep: PopulationEvaluationReport) -> list[str]:
             f"| `附报参照：Jev 放行组 vs 3a 基线多头流 (OOS)` | {rep.accepted_oos_stat.n_obs} vs {dbl.stat_b.n_obs} | {dbl.n_clusters_total} | `{_fmt_r(rep.accepted_oos_stat.mean)}` vs `{_fmt_r(dbl.stat_b.mean)}` | `{_fmt_f(dbl.diff_cluster_se)}` | `[{_fmt_r(dbl.ci95_low)}, {_fmt_r(dbl.ci95_high)}]` | `{_fmt_r(dbl.diff_mean)}` | `{_fmt_f(dbl.one_sided_p)}` |"
         )
 
+    cal_is = rep.calibration_is
     lines.extend(
         [
             "",
-            "### 阈值 `τ` 敏感性附报（仅 `τ = 0.60` 绑定主判决；`0.55 / 0.65` 只描述不改判）",
+            "#### 全样本 IS 概率校准附报（只描述不改判）",
             "",
-            "| 阈值 `τ` | 口径定位 | OOS 放行数 `N` | OOS 放行率 | `G_oos` | OOS Mean `PolicyNetR` | vs 全池 `ΔNetR` | 单侧 `p` |",
-            "|---:|---|---:|---:|---:|---:|---:|---:|",
+            f"- **全样本 IS (`N = {cal_is.n_obs}`)**: 基准 `P(NetR > 0) = {_fmt_pct(cal_is.base_pos_rate)}`，`Brier = {_fmt_f(cal_is.brier_score)}`，`BS_clim = {_fmt_f(cal_is.brier_climatology)}`，`BSS = {_fmt_f(cal_is.brier_skill_score)}`，`ECE = {_fmt_f(cal_is.ece)}`。",
+            "",
         ]
     )
-    for srow in rep.sensitivity_rows:
-        role = "**主口径（写死）**" if srow.is_primary else "描述性附报（不改判）"
-        lines.append(
-            f"| `{srow.tau:.2f}` | {role} | {srow.n_accepted_oos} | `{_fmt_pct(srow.accept_rate_oos)}` | {srow.g_accepted_oos} | `{_fmt_r(srow.accepted_oos_stat.mean)}` | `{_fmt_r(srow.diff_vs_pool_oos.diff_mean)}` | `{_fmt_f(srow.diff_vs_pool_oos.one_sided_p)}` |"
-        )
-
-    if (
-        rep.rule_retained_oos_stat is not None
-        and rep.diff_jev_vs_rule_oos is not None
-        and rep.rule_overlap_oos is not None
-    ):
-        rr = rep.rule_retained_oos_stat
-        dj = rep.diff_jev_vs_rule_oos
-        ov = rep.rule_overlap_oos
-        lines.extend(
-            [
-                "",
-                "### 次要诊断 A：Jev 放行组 vs Phase 3a S3 规则保留组头对头对照（仅 P1，只描述不改判）",
-                "",
-                "| 对照项（Walk-Forward OOS） | `N` | `G` | Mean `PolicyNetR` | Cluster SE | 95% CI | 头对头 `ΔNetR (Jev - Rule)` | 单侧 `p` |",
-                "|---|---:|---:|---:|---:|---|---:|---:|",
-                f"| `Jev 盲判放行组 (p >= 0.60)` | {rep.accepted_oos_stat.n_obs} | {rep.accepted_oos_stat.n_clusters} | `{_fmt_r(rep.accepted_oos_stat.mean)}` | `{_fmt_f(rep.accepted_oos_stat.cluster_se)}` | {_fmt_ci_r(rep.accepted_oos_stat)} | `{_fmt_r(dj.diff_mean)}` | `{_fmt_f(dj.one_sided_p)}` |",
-                f"| `S3 固定规则保留组 (C1∧C2∧C3∧C4)` | {rr.n_obs} | {rr.n_clusters} | `{_fmt_r(rr.mean)}` | `{_fmt_f(rr.cluster_se)}` | {_fmt_ci_r(rr)} | — | — |",
-                "",
-                f"- **2×2 交叉列联（OOS）**：`Jev ∩ Rule` = `{ov.n_both}` 张（均值 `{_fmt_r(ov.mean_both)}`）；`Jev \\ Rule` = `{ov.n_jev_only}` 张（均值 `{_fmt_r(ov.mean_jev_only)}`）；`Rule \\ Jev` = `{ov.n_rule_only}` 张（均值 `{_fmt_r(ov.mean_rule_only)}`）；`双拒` = `{ov.n_neither}` 张（均值 `{_fmt_r(ov.mean_neither)}`）。",
-            ]
-        )
-
-    cal = rep.calibration_oos
-    lines.extend(
-        [
-            "",
-            "### 次要诊断 B：Jev 概率校准（OOS，目标事件 `y = 1{PolicyNetR > 0}`，只描述不改判）",
-            "",
-            f"- **样本基准正净值率 `P(NetR > 0)`**: `{_fmt_pct(cal.base_pos_rate)}` (`N = {cal.n_obs}`)",
-            f"- **Brier Score**: `{_fmt_f(cal.brier_score)}`（无技巧气候学基准 `BS_clim = {_fmt_f(cal.brier_climatology)}`，`Brier Skill Score = {_fmt_f(cal.brier_skill_score)}`，`ECE = {_fmt_f(cal.ece)}`）",
-            "",
-            "| 预测概率分箱 | 票数 `n` | 平均预测概率 `mean(p)` | 实际 `P(NetR > 0)` | 箱内 Mean `PolicyNetR` |",
-            "|---|---:|---:|---:|---:|",
-        ]
-    )
-    for brow in cal.bins:
-        lines.append(
-            f"| `{brow.label}` | {brow.n_obs} | `{_fmt_f(brow.mean_pred_p)}` | `{_fmt_f(brow.empirical_pos_rate)}` | `{_fmt_r(brow.mean_net_r)}` |"
-        )
-    lines.append("")
     return lines
 
 
+def _format_caveat_impact_lines(suite: Phase3bjSuiteEvaluation) -> list[str]:
+    any_pass = (suite.p1.verdict == "PASS") or (suite.p2.verdict == "PASS")
+    if any_pass:
+        grade_note = (
+            "由于至少一个总体在统计上跨越 `PASS` 门槛，触发预注册 §5 强制降格条款："
+            "因 Jev 底层训练语料截止时间不可审计（可能覆盖 `2025-11-09` 至 `2026-11-09` 公开市场行情），"
+            "正向判决的证据等级**强制封顶为「判断一致性证据（Judgment Consistency Evidence）」**，"
+            "**严禁声称为「独立样本外预测证据（Independent Out-of-Sample Evidence）」**；"
+            "唯有在模型归档日期晚于训练截止日的未来前瞻实盘窗口（Prospective Forward Shadow）中复现，方可升级为独立样本外证据。"
+        )
+    else:
+        grade_note = (
+            f"本次实测两总体独立主判决分别为 **P1 = `{suite.p1.verdict}`**、**P2 = `{suite.p2.verdict}`**（均未跨越 `PASS`）。"
+            "根据预注册 §5 逻辑方向性分析：潜在训练窗重叠或事后市场记忆只会对模型表现构成**正向虚高偏误（乐观偏误）**，而绝不会掩盖真实正边。"
+            "在即便可能享有同期历史行情记忆的有利条件下，Jev 在严格盲判载荷下的 `p >= 0.60` 放行子集仍未能跨越 Phase 3a 同一道样本外全摩擦门槛（`ΔNetR >= +0.18R`、单侧 `p < 0.05`、`G_oos >= 15`），"
+            "因此该负向证伪结论不受训练窗重叠隐患削弱，证据等级保持为**预注册盲判证伪结论（Pre-Registered Blind Falsification Result）**。"
+        )
+    return [
+        f"- **预注册强制声明原文**：{KNOWN_TRAINING_OVERLAP_CAVEAT}",
+        f"- **对本次结论等级的实质影响**：{grade_note}",
+    ]
+
+
 def format_phase3bj_evaluation_markdown(suite: Phase3bjSuiteEvaluation) -> str:
-    """Format complete Phase 3b-J evaluation report (clearly badged when `mode == 'mock'`)."""
+    """Format complete Phase 3b-J evaluation report (filling Stage 2 template in live mode)."""
     a = suite.anchor
     today = datetime.now(timezone.utc).date().isoformat()
     is_mock = suite.mode == "mock"
+    spec_sha = (
+        suite.manifest.template_spec_sha256
+        if suite.manifest is not None
+        else compute_template_spec_sha256()
+    )
     header_title = (
         f"# Phase 3b-J Stage 1 端到端 Mock 干跑报告（NON-EVIDENTIARY DRY-RUN） ({today})"
         if is_mock
-        else f"# Phase 3b-J 实验报告 — Jev 盲判重验 ({today})"
+        else f"# Phase 3b-J 正式实验报告 — Jev 盲判重验（Stage 2 Live） ({today})"
     )
     banner_lines = (
         [
@@ -1876,23 +1931,96 @@ def format_phase3bj_evaluation_markdown(suite: Phase3bjSuiteEvaluation) -> str:
         else []
     )
 
+    branch_name = (
+        "feat/kairos-phase3bj-jev-blind-judgment"
+        if is_mock
+        else "feat/kairos-phase3bj-stage2-live-jev"
+    )
+    status_line = (
+        "- **状态**: **NON-EVIDENTIARY MOCK DRY-RUN**"
+        if is_mock
+        else "- **状态**: **FINAL（Stage 2 真实 Jev 盲判已完成，基于模板 `2026-11-11-phase3bj-jev-blind-judgment-template.md` 填充）**"
+    )
+
     manifest_lines: list[str] = []
-    if suite.manifest is not None:
-        m = suite.manifest
+    m = suite.manifest
+    if m is not None:
+        builds_str = ", ".join(f"`{b}`" for b in m.service_builds) if m.service_builds else "`n/a`"
+        drift_str = (
+            "**DRIFT DETECTED（停批阻断）**"
+            if m.build_drift_detected
+            else "**PASS（全程单一服务构建，零漂移）**"
+        )
         manifest_lines = [
-            f"- **运行模式 / 端点宿主**: `{m.mode}` / `{m.endpoint_host}`",
-            f"- **盲判模板版本与指纹**: `{m.template_id}` (`sha256={m.template_spec_sha256[:16]}...`)",
-            f"- **随机提交序种子（`shuffle_seed`）**: `{m.shuffle_seed}`（提交序 `sha256={m.submitted_order_sha256[:16]}...`）",
-            f"- **调用统计**: 总输入 `{m.total_candidates_input}` 张，缓存命中 `{m.cached_hits}` 张，本次新判 `{m.new_calls_completed}` 张，预算截断 `{m.truncated_by_budget}` 张（上限 `{m.max_calls}`）",
+            f"- **运行模式 / 端点宿主**: `{m.mode}` / `{m.endpoint_host}`"
+            + (f"（请求模型别名: `{m.requested_model}`）" if m.requested_model else ""),
+            f"- **盲判载荷模板版本**: `{m.template_id}` (`spec_sha256 = {m.template_spec_sha256}`)",
+            f"- **Stage 2 运行清单元数据**: `endpoint_host = {m.endpoint_host}` | `shuffle_seed = {m.shuffle_seed}` | `submitted_order_sha256 = {m.submitted_order_sha256}`",
+            f"- **服务构建集合与漂移检查**: 构建集合 = {builds_str} | 漂移检查 = {drift_str}",
+            f"- **调用与总成本统计**: 唯一候选总数 `{m.total_candidates_input}` 张（已缓存复用 `{m.cached_hits}` 张 + 本批新判 `{m.new_calls_completed}` 张，预算截断 `{m.truncated_by_budget}` 张，调用失败 `{m.failed_calls}` 次，瞬态退避重试 `{m.retried_attempts}` 次）| **总 `input_tokens` = `{m.total_input_tokens:,}`**（总 `output_tokens` = `{m.total_output_tokens:,}`）",
         ]
+    else:
+        manifest_lines = [
+            f"- **盲判载荷模板版本**: `{TEMPLATE_ID}` (`spec_sha256 = {spec_sha}`)",
+        ]
+
+    # Sensitivity combined rows (matching template Section 3)
+    sens_table_lines: list[str] = []
+    for pop_label, rep in (
+        ("**P1 (`S3_POOL`)**", suite.p1),
+        ("**P2 (`S1_SET`)**", suite.p2),
+    ):
+        for srow in rep.sensitivity_rows:
+            tau_cell = f"**`{srow.tau:.2f}`**" if srow.is_primary else f"`{srow.tau:.2f}`"
+            role = "**主口径（写死）**" if srow.is_primary else "描述性附报"
+            sens_table_lines.append(
+                f"| {pop_label} | {tau_cell} | {role} | `{srow.n_accepted_oos}` | `{_fmt_pct(srow.accept_rate_oos)}` | `{srow.g_accepted_oos}` | `{_fmt_r(srow.accepted_oos_stat.mean)}` | `{_fmt_r(srow.diff_vs_pool_oos.diff_mean)}` | `{_fmt_f(srow.diff_vs_pool_oos.one_sided_p)}` |"
+            )
+
+    # P1 Head-to-Head vs S3 Rule Retained (matching template Section 4)
+    h2h_lines: list[str] = []
+    if (
+        suite.p1.rule_retained_oos_stat is not None
+        and suite.p1.diff_jev_vs_rule_oos is not None
+        and suite.p1.rule_overlap_oos is not None
+    ):
+        rr = suite.p1.rule_retained_oos_stat
+        dj = suite.p1.diff_jev_vs_rule_oos
+        ov = suite.p1.rule_overlap_oos
+        h2h_lines = [
+            "## 4. 次要诊断 A：P1 头对头对照（Jev 放行组 vs Phase 3a S3 规则保留组，OOS）",
+            "",
+            "| 对照组（P1 Walk-Forward OOS） | `N` | `G` | Mean `PolicyNetR` | Cluster SE | 95% CI | 头对头 `ΔNetR (Jev - Rule)` | 单侧 `p` |",
+            "|---|---:|---:|---:|---:|---|---:|---:|",
+            f"| `Jev 盲判放行组 (p >= 0.60)` | `{suite.p1.accepted_oos_stat.n_obs}` | `{suite.p1.accepted_oos_stat.n_clusters}` | `{_fmt_r(suite.p1.accepted_oos_stat.mean)}` | `{_fmt_f(suite.p1.accepted_oos_stat.cluster_se)}` | {_fmt_ci_r(suite.p1.accepted_oos_stat)} | `{_fmt_r(dj.diff_mean)}` | `{_fmt_f(dj.one_sided_p)}` |",
+            f"| `S3 固定规则保留组 (C1∧C2∧C3∧C4)` | `{rr.n_obs}` | `{rr.n_clusters}` | `{_fmt_r(rr.mean)}` | `{_fmt_f(rr.cluster_se)}` | {_fmt_ci_r(rr)} | — | — |",
+            "",
+            f"- **2×2 交叉列联（OOS）**: `Jev ∩ Rule` = `{ov.n_both}` 张（均值 `{_fmt_r(ov.mean_both)}`） | `Jev \\ Rule` = `{ov.n_jev_only}` 张（均值 `{_fmt_r(ov.mean_jev_only)}`） | `Rule \\ Jev` = `{ov.n_rule_only}` 张（均值 `{_fmt_r(ov.mean_rule_only)}`） | `双拒` = `{ov.n_neither}` 张（均值 `{_fmt_r(ov.mean_neither)}`）",
+            "",
+        ]
+
+    # Calibration combined tables (matching template Section 5)
+    c1 = suite.p1.calibration_oos
+    c2 = suite.p2.calibration_oos
+    cal_bin_lines: list[str] = []
+    for b1, b2 in zip(c1.bins, c2.bins):
+        cal_bin_lines.append(
+            f"| `{b1.label}` | `{b1.n_obs}` | `{_fmt_f(b1.mean_pred_p)}` | `{_fmt_f(b1.empirical_pos_rate)}` | `{_fmt_r(b1.mean_net_r)}` | `{b2.n_obs}` | `{_fmt_f(b2.mean_pred_p)}` | `{_fmt_f(b2.empirical_pos_rate)}` | `{_fmt_r(b2.mean_net_r)}` |"
+        )
+
+    p1_warmup_only = suite.p1.n_total_is - suite.p1.n_total_oos
+    p2_warmup_only = suite.p2.n_total_is - suite.p2.n_total_oos
 
     lines = [
         header_title,
         "",
         *banner_lines,
-        "- **分支**: `feat/kairos-phase3bj-jev-blind-judgment`",
-        "- **预注册锚点**: `docs/40-research/experiments/PHASE3BJ_PREREG.md`（与 Phase 3a 完全同一道门槛：`OOS ΔNetR >= +0.18R`、单侧 `p < 0.05`、`G_oos >= 15`；主口径 `τ = 0.60`；P1/P2 独立判定）",
+        status_line,
+        f"- **分支**: `{branch_name}`",
+        "- **预注册锚点**: `docs/40-research/experiments/PHASE3BJ_PREREG.md`（一字未改；主口径 `τ = 0.60`；`OOS ΔNetR >= +0.18R`、单侧 `p < 0.05`、`G_oos >= 15`；P1/P2 独立判定）",
+        "- **传输层映射附记**: `docs/40-research/experiments/2026-11-11-phase3bj-stage2-transport-addendum.md`",
         *manifest_lines,
+        f"- **候选票去重口径核对**: 唯一 `candidate_id` 共 `{suite.p1.n_total_is + suite.p2.n_total_is}` 张 = **P1 (`S3_POOL`) `{suite.p1.n_total_is}` 张**（预热簇 IS-only `{p1_warmup_only}` 张 + Walk-Forward OOS `{suite.p1.n_total_oos}` 张；全样本 IS 诊断视图 `{suite.p1.n_total_is}` 张包含该 `{suite.p1.n_total_oos}` 张 OOS 票） + **P2 (`S1_SET`) `{suite.p2.n_total_is}` 张**（预热簇 IS-only `{p2_warmup_only}` 张 + Walk-Forward OOS `{suite.p2.n_total_oos}` 张）。",
         "",
         f"> {KNOWN_TRAINING_OVERLAP_CAVEAT}",
         "",
@@ -1900,22 +2028,45 @@ def format_phase3bj_evaluation_markdown(suite: Phase3bjSuiteEvaluation) -> str:
         "",
         "| 数据表 / 指标 | Phase 2b/3a 锚点值 | 本次重演实测值 | 偏差 | 状态 |",
         "|---|---:|---:|---:|---|",
-        f"| `fact_perp_bars_1m` | `758,013` | **`{a.bars_1m:,}`** | `{a.rel_diff_pct:.3f}%` | **{'PASS (`<= 2%`)' if a.within_2pct_anchor else 'STOP (`> 2%`)'}** |",
+        f"| `fact_perp_bars_1m`（硬锚点 `±2%`） | `758,013` | **`{a.bars_1m:,}`** | `{a.rel_diff_pct:.3f}%` | **{'PASS (`<= 2%`)' if a.within_2pct_anchor else 'STOP (`> 2%`)'}** |",
         f"| `fact_perp_bars_htf` (`4h` + `1d`) | `53,122` (3a) | **`{a.bars_htf:,}`** | — | OK |",
         f"| `fact_perp_volume_24h` | `197,776` (3a) | **`{a.volume_24h_obs:,}`** | — | OK |",
         f"| `fact_perp_funding_8h` | `6,995` | **`{a.funding_ticks:,}`** | — | OK |",
         f"| `fact_perp_oi_5m` | `30,157` (3a) | **`{a.oi_5m_ticks:,}`** | — | OK |",
         f"| `采样标的数 / PIT 合约总数` | `27 / 528` | **`{a.distinct_1m_symbols} / {a.pit_universe_total}`** | — | OK |",
         "",
-        "## 2. 总判决矩阵（Walk-Forward OOS 主口径，`τ = 0.60`，P1/P2 独立判定）",
+        "## 2. 主判决总表（Walk-Forward OOS，`τ = 0.60` 写死，P1 / P2 独立判定）",
         "",
-        "| 总体 | 定义溯源 | OOS 基线 `N` (`G`) | Jev 放行 `N` (`G_oos`) | 放行率 | 放行组 OOS Mean (`95% CI`) | vs 同池基线 `ΔNetR` | 单侧 `p` | 判决 |",
-        "|---|---|---:|---:|---:|---|---:|---:|---|",
-        f"| **P1 (`S3_POOL`)** | 3a S3 全候选池 | `{suite.p1.n_total_oos}` (`{suite.p1.g_total_oos}`) | `{suite.p1.accepted_oos_stat.n_obs}` (`{suite.p1.accepted_oos_stat.n_clusters}`) | `{_fmt_pct(suite.p1.accept_rate_oos)}` | `{_fmt_r(suite.p1.accepted_oos_stat.mean)}` ({_fmt_ci_r(suite.p1.accepted_oos_stat)}) | **`{_fmt_r(suite.p1.diff_accepted_vs_pool_oos.diff_mean)}`** | `{_fmt_f(suite.p1.diff_accepted_vs_pool_oos.one_sided_p)}` | **{suite.p1.verdict}** |",
-        f"| **P2 (`S1_SET`)** | 3a S1 全候选票 | `{suite.p2.n_total_oos}` (`{suite.p2.g_total_oos}`) | `{suite.p2.accepted_oos_stat.n_obs}` (`{suite.p2.accepted_oos_stat.n_clusters}`) | `{_fmt_pct(suite.p2.accept_rate_oos)}` | `{_fmt_r(suite.p2.accepted_oos_stat.mean)}` ({_fmt_ci_r(suite.p2.accepted_oos_stat)}) | **`{_fmt_r(suite.p2.diff_accepted_vs_pool_oos.diff_mean)}`** | `{_fmt_f(suite.p2.diff_accepted_vs_pool_oos.one_sided_p)}` | **{suite.p2.verdict}** |",
+        "| 总体 | 全样本 IS+OOS `N` | OOS 基线 `N` (`G`) | OOS 基线 Mean `PolicyNetR` | Jev 放行 `N` (`G_oos`) | OOS 放行率 | Jev 放行 Mean (`95% CI`) | OOS `ΔNetR` (vs 同池基线) | 单侧 `p` | 最终判决 |",
+        "|---|---:|---:|---:|---:|---:|---|---:|---:|---|",
+        f"| **P1 (`S3_POOL`)** | `{suite.p1.n_total_is}` | `{suite.p1.n_total_oos}` (`{suite.p1.g_total_oos}`) | `{_fmt_r(suite.p1.pool_oos_stat.mean)}` | `{suite.p1.accepted_oos_stat.n_obs}` (`{suite.p1.accepted_oos_stat.n_clusters}`) | `{_fmt_pct(suite.p1.accept_rate_oos)}` | `{_fmt_r(suite.p1.accepted_oos_stat.mean)}` ({_fmt_ci_r(suite.p1.accepted_oos_stat)}) | **`{_fmt_r(suite.p1.diff_accepted_vs_pool_oos.diff_mean)}`** | `{_fmt_f(suite.p1.diff_accepted_vs_pool_oos.one_sided_p)}` | **{suite.p1.verdict}** |",
+        f"| **P2 (`S1_SET`)** | `{suite.p2.n_total_is}` | `{suite.p2.n_total_oos}` (`{suite.p2.g_total_oos}`) | `{_fmt_r(suite.p2.pool_oos_stat.mean)}` | `{suite.p2.accepted_oos_stat.n_obs}` (`{suite.p2.accepted_oos_stat.n_clusters}`) | `{_fmt_pct(suite.p2.accept_rate_oos)}` | `{_fmt_r(suite.p2.accepted_oos_stat.mean)}` ({_fmt_ci_r(suite.p2.accepted_oos_stat)}) | **`{_fmt_r(suite.p2.diff_accepted_vs_pool_oos.diff_mean)}`** | `{_fmt_f(suite.p2.diff_accepted_vs_pool_oos.one_sided_p)}` | **{suite.p2.verdict}** |",
+        "",
+        "## 3. 阈值敏感性附报表（`τ ∈ {0.55, 0.60, 0.65}`；`0.55 / 0.65` 只描述不改判）",
+        "",
+        "| 总体 | 阈值 `τ` | 定位 | OOS 放行数 `N` | OOS 放行率 | `G_oos` | OOS Mean `PolicyNetR` | vs 同池 `ΔNetR` | 单侧 `p` |",
+        "|---|---:|---|---:|---:|---:|---:|---:|---:|",
+        *sens_table_lines,
+        "",
+        *h2h_lines,
+        "## 5. 次要诊断 B：Jev 概率校准（Brier 分数与 5 档可靠性分箱，OOS）",
+        "",
+        "| 总体 | OOS `N` | 基准 `P(NetR > 0)` | Brier Score | `BS_clim` | Brier Skill Score | `ECE` |",
+        "|---|---:|---:|---:|---:|---:|---:|",
+        f"| **P1 (`S3_POOL`)** | `{c1.n_obs}` | `{_fmt_pct(c1.base_pos_rate)}` | `{_fmt_f(c1.brier_score)}` | `{_fmt_f(c1.brier_climatology)}` | `{_fmt_f(c1.brier_skill_score)}` | `{_fmt_f(c1.ece)}` |",
+        f"| **P2 (`S1_SET`)** | `{c2.n_obs}` | `{_fmt_pct(c2.base_pos_rate)}` | `{_fmt_f(c2.brier_score)}` | `{_fmt_f(c2.brier_climatology)}` | `{_fmt_f(c2.brier_skill_score)}` | `{_fmt_f(c2.ece)}` |",
+        "",
+        "| 概率分箱 | P1 `n` | P1 `mean(p)` | P1 实际 `P(NetR>0)` | P1 Mean `NetR` | P2 `n` | P2 `mean(p)` | P2 实际 `P(NetR>0)` | P2 Mean `NetR` |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|",
+        *cal_bin_lines,
+        "",
+        "## 6. 分总体完整诊断明细（含拒绝子集、IS 全样本诊断与基线多头流参照）",
         "",
         *_format_population_section_md(suite.p1),
         *_format_population_section_md(suite.p2),
+        "## 7. 服务构建漂移核验、成本审计与训练窗重叠 Caveat 对结论等级的影响",
+        "",
+        *_format_caveat_impact_lines(suite),
     ]
     return "\n".join(lines).rstrip()
 

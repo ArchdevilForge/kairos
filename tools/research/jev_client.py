@@ -337,9 +337,12 @@ class JudgmentCacheEntry:
     payload_sha256: str
     latency_ms: float
     cached_at_utc: str
+    service_build: str | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {
             "candidate_id": self.candidate_id,
             "p_netr_gt_0": round(float(self.p_netr_gt_0), 6),
             "mode": self.mode,
@@ -348,6 +351,13 @@ class JudgmentCacheEntry:
             "latency_ms": round(float(self.latency_ms), 3),
             "cached_at_utc": self.cached_at_utc,
         }
+        if self.service_build is not None:
+            out["service_build"] = self.service_build
+        if self.input_tokens is not None:
+            out["input_tokens"] = int(self.input_tokens)
+        if self.output_tokens is not None:
+            out["output_tokens"] = int(self.output_tokens)
+        return out
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any]) -> JudgmentCacheEntry:
@@ -357,6 +367,12 @@ class JudgmentCacheEntry:
         mode = str(raw["mode"])
         if mode not in ("mock", "live"):
             raise ValueError(f"invalid judgment cache mode={mode!r}")
+        raw_sb = raw.get("service_build")
+        service_build = str(raw_sb).strip() if raw_sb is not None and str(raw_sb).strip() else None
+        raw_in = raw.get("input_tokens")
+        input_tokens = int(raw_in) if raw_in is not None else None
+        raw_out = raw.get("output_tokens")
+        output_tokens = int(raw_out) if raw_out is not None else None
         return cls(
             candidate_id=str(raw["candidate_id"]),
             p_netr_gt_0=p_val,
@@ -365,6 +381,9 @@ class JudgmentCacheEntry:
             payload_sha256=str(raw["payload_sha256"]),
             latency_ms=float(raw.get("latency_ms", 0.0)),
             cached_at_utc=str(raw.get("cached_at_utc", "")),
+            service_build=service_build,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
         )
 
 
@@ -385,6 +404,14 @@ class JevRunManifest:
     submitted_order_sha256: str
     endpoint_host: str
     created_at_utc: str
+    requested_model: str = ""
+    service_builds: tuple[str, ...] = ()
+    build_drift_detected: bool = False
+    total_input_tokens: int = 0
+    total_output_tokens: int = 0
+    new_input_tokens: int = 0
+    failed_calls: int = 0
+    retried_attempts: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -400,8 +427,17 @@ class JevRunManifest:
             "truncated_by_budget": self.truncated_by_budget,
             "submitted_order_sha256": self.submitted_order_sha256,
             "endpoint_host": self.endpoint_host,
+            "requested_model": self.requested_model,
+            "service_builds": list(self.service_builds),
+            "build_drift_detected": bool(self.build_drift_detected),
+            "total_input_tokens": int(self.total_input_tokens),
+            "total_output_tokens": int(self.total_output_tokens),
+            "new_input_tokens": int(self.new_input_tokens),
+            "failed_calls": int(self.failed_calls),
+            "retried_attempts": int(self.retried_attempts),
             "created_at_utc": self.created_at_utc,
         }
+
 
 
 def compute_template_spec_sha256() -> str:
@@ -658,6 +694,99 @@ def _extract_probability_from_response(resp_obj: Any) -> float:
 
 HttpTransportFn = Callable[[str, bytes, Mapping[str, str], float], tuple[int, bytes]]
 
+JEV_SYSTEMONE_MODEL: str = "jev-latest"
+JEV_SYSTEMONE_QUESTION_KEY: str = "netr_gt_0"
+
+
+class BuildDriftError(RuntimeError):
+    """Raised immediately when the upstream Jev service build changes mid-experiment."""
+
+
+def map_payload_to_systemone_request(
+    payload: Mapping[str, Any],
+    *,
+    model: str = JEV_SYSTEMONE_MODEL,
+) -> dict[str, Any]:
+    """Map frozen Appendix A blind payload into TypeSafe `/v1/systemone` request JSON.
+
+    Strictly extracts existing `payload["prompt"]` and `payload["target_definition"]`
+    without inventing, concatenating, or modifying any judgment phrasing.
+    """
+    if not isinstance(payload, Mapping):
+        raise ValueError("blind payload must be a JSON object")
+    prompt = payload.get("prompt")
+    if not isinstance(prompt, str) or not prompt:
+        raise ValueError("blind payload missing non-empty string field 'prompt'")
+    target_def = payload.get("target_definition")
+    if not isinstance(target_def, Mapping) or not target_def:
+        raise ValueError("blind payload missing object field 'target_definition'")
+    return {
+        "model": model,
+        "state": prompt,
+        "questions": {
+            JEV_SYSTEMONE_QUESTION_KEY: {
+                "type": "noul",
+                "instructions": target_def,
+            }
+        },
+    }
+
+
+def extract_systemone_response(resp_obj: Any) -> tuple[float, str, int, int]:
+    """Validate TypeSafe `/v1/systemone` response and return `(p, service_build, input_tokens, output_tokens)`."""
+    if not isinstance(resp_obj, Mapping):
+        raise ValueError("System One response must be a JSON object")
+
+    raw_model = resp_obj.get("model")
+    if not isinstance(raw_model, str) or not raw_model.strip():
+        raise ValueError("System One response missing non-empty string top-level 'model'")
+    service_build = raw_model.strip()
+
+    answers = resp_obj.get("answers")
+    if not isinstance(answers, Mapping):
+        raise ValueError("System One response missing object field 'answers'")
+    q_ans = answers.get(JEV_SYSTEMONE_QUESTION_KEY)
+    if not isinstance(q_ans, Mapping):
+        raise ValueError(
+            f"System One response 'answers' missing object {JEV_SYSTEMONE_QUESTION_KEY!r}"
+        )
+    ans_type = q_ans.get("type")
+    if ans_type is not None and ans_type != "noul":
+        raise ValueError(
+            f"System One answer {JEV_SYSTEMONE_QUESTION_KEY!r} unexpected type={ans_type!r}"
+        )
+    if "noul" not in q_ans or q_ans["noul"] is None:
+        raise ValueError(
+            f"System One answer {JEV_SYSTEMONE_QUESTION_KEY!r} missing 'noul' probability"
+        )
+    raw_noul = q_ans["noul"]
+    if isinstance(raw_noul, bool) or not isinstance(raw_noul, (int, float)):
+        raise ValueError(
+            f"System One answer '{JEV_SYSTEMONE_QUESTION_KEY}.noul' must be numeric, got {raw_noul!r}"
+        )
+    p_val = float(raw_noul)
+    if not math.isfinite(p_val) or not (0.0 <= p_val <= 1.0):
+        raise ValueError(
+            f"System One answer '{JEV_SYSTEMONE_QUESTION_KEY}.noul' out of [0, 1]: {p_val!r}"
+        )
+
+    input_tokens = 0
+    output_tokens = 0
+    if "usage" in resp_obj and resp_obj["usage"] is not None:
+        usage = resp_obj["usage"]
+        if not isinstance(usage, Mapping):
+            raise ValueError("System One response 'usage' must be an object when present")
+        raw_in = usage.get("input_tokens", 0)
+        raw_out = usage.get("output_tokens", 0)
+        if isinstance(raw_in, bool) or not isinstance(raw_in, int) or raw_in < 0:
+            raise ValueError(f"System One 'usage.input_tokens' invalid: {raw_in!r}")
+        if isinstance(raw_out, bool) or not isinstance(raw_out, int) or raw_out < 0:
+            raise ValueError(f"System One 'usage.output_tokens' invalid: {raw_out!r}")
+        input_tokens = int(raw_in)
+        output_tokens = int(raw_out)
+
+    return p_val, service_build, input_tokens, output_tokens
+
 
 def _default_urllib_transport(
     url: str,
@@ -677,6 +806,128 @@ def _default_urllib_transport(
         return status, raw
 
 
+class SystemOneTransportAdapter:
+    """`HttpTransportFn` adapter mapping Appendix A payload <-> TypeSafe `/v1/systemone`.
+
+    Enforces single-build consistency (`BuildDriftError` if top-level response `model`
+    changes mid-batch) and collects `service_builds` + `usage.input_tokens` for the run manifest.
+    """
+
+    def __init__(
+        self,
+        inner_transport: HttpTransportFn = _default_urllib_transport,
+        *,
+        model: str = JEV_SYSTEMONE_MODEL,
+        initial_locked_build: str | None = None,
+    ) -> None:
+        self._inner = inner_transport
+        self._model = model
+        self._locked_build: str | None = (
+            initial_locked_build.strip()
+            if initial_locked_build is not None and initial_locked_build.strip()
+            else None
+        )
+        self._observed_builds: list[str] = (
+            [self._locked_build] if self._locked_build is not None else []
+        )
+        self._build_drift_detected: bool = False
+        self._total_input_tokens: int = 0
+        self._total_output_tokens: int = 0
+        self._last_call_meta: tuple[str, int, int] | None = None
+
+    @property
+    def requested_model(self) -> str:
+        return self._model
+
+    @property
+    def locked_build(self) -> str | None:
+        return self._locked_build
+
+    @property
+    def observed_builds(self) -> tuple[str, ...]:
+        return tuple(self._observed_builds)
+
+    @property
+    def build_drift_detected(self) -> bool:
+        return self._build_drift_detected
+
+    @property
+    def total_input_tokens(self) -> int:
+        return self._total_input_tokens
+
+    @property
+    def total_output_tokens(self) -> int:
+        return self._total_output_tokens
+
+    @property
+    def last_call_meta(self) -> tuple[str, int, int] | None:
+        return self._last_call_meta
+
+    def clear_last_call_meta(self) -> None:
+        self._last_call_meta = None
+
+    def seed_locked_build(self, prior_build: str) -> None:
+        """Seed baseline service build from previously cached live judgments (e.g. Smoke)."""
+        cleaned = prior_build.strip()
+        if not cleaned:
+            return
+        if cleaned not in self._observed_builds:
+            self._observed_builds.append(cleaned)
+        if self._locked_build is None:
+            self._locked_build = cleaned
+        elif self._locked_build != cleaned:
+            self._build_drift_detected = True
+            raise BuildDriftError(
+                f"Jev service build drift detected against cached build: "
+                f"locked={self._locked_build!r}, cached={cleaned!r}"
+            )
+
+    def __call__(
+        self,
+        url: str,
+        body_bytes: bytes,
+        headers: Mapping[str, str],
+        timeout_sec: float,
+    ) -> tuple[int, bytes]:
+        self._last_call_meta = None
+        payload = json.loads(body_bytes.decode("utf-8"))
+        wire_req = map_payload_to_systemone_request(payload, model=self._model)
+        wire_bytes = json.dumps(
+            wire_req,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+
+        status, raw_resp_bytes = self._inner(url, wire_bytes, headers, timeout_sec)
+        if status < 200 or status >= 300:
+            return status, raw_resp_bytes
+
+        resp_obj = json.loads(raw_resp_bytes.decode("utf-8"))
+        p_val, service_build, in_toks, out_toks = extract_systemone_response(resp_obj)
+
+        if service_build not in self._observed_builds:
+            self._observed_builds.append(service_build)
+        if self._locked_build is None:
+            self._locked_build = service_build
+        elif service_build != self._locked_build:
+            self._build_drift_detected = True
+            raise BuildDriftError(
+                f"Jev service build drift detected mid-batch: "
+                f"locked={self._locked_build!r}, observed={service_build!r}"
+            )
+
+        self._total_input_tokens += in_toks
+        self._total_output_tokens += out_toks
+        self._last_call_meta = (service_build, in_toks, out_toks)
+
+        wrapped_bytes = json.dumps(
+            {"p": p_val},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        return status, wrapped_bytes
+
+
 class JevClient:
     """Stateless, rate-limited, idempotent-caching client for Jev blind ticket judgment."""
 
@@ -692,10 +943,17 @@ class JevClient:
     ) -> None:
         self._config = config if config is not None else JevConfig.from_env()
         self._mock = bool(mock)
-        self._transport = transport if transport is not None else _default_urllib_transport
+        if transport is not None:
+            self._transport: HttpTransportFn = transport
+        elif self._mock:
+            self._transport = _default_urllib_transport
+        else:
+            self._transport = SystemOneTransportAdapter(_default_urllib_transport)
         self._sleep = sleep_fn
         self._monotonic = monotonic_fn
         self._last_call_mono: float | None = None
+        self._failed_calls: int = 0
+        self._retried_attempts: int = 0
         self._logger = logger if logger is not None else LOGGER
         if not any(isinstance(f, RedactingLogFilter) for f in self._logger.filters):
             self._logger.addFilter(
@@ -727,6 +985,10 @@ class JevClient:
     @property
     def mode(self) -> str:
         return "mock" if self._mock else "live"
+
+    @property
+    def transport(self) -> HttpTransportFn:
+        return self._transport
 
     def _respect_polite_interval(self) -> None:
         min_gap = max(0.0, float(self._config.min_interval_sec))
@@ -779,9 +1041,16 @@ class JevClient:
 
         max_attempts = max(1, int(self._config.max_retries) + 1)
         last_err_msg = "unknown error"
+        adapter = (
+            self._transport
+            if isinstance(self._transport, SystemOneTransportAdapter)
+            else None
+        )
 
         for attempt in range(max_attempts):
             self._respect_polite_interval()
+            if adapter is not None:
+                adapter.clear_last_call_meta()
             t0 = self._monotonic()
             try:
                 status, resp_bytes = self._transport(
@@ -792,6 +1061,7 @@ class JevClient:
                 )
                 dt_ms = max(0.0, (self._monotonic() - t0) * 1000.0)
                 if status in (429, 500, 502, 503, 504) and attempt + 1 < max_attempts:
+                    self._retried_attempts += 1
                     backoff = 0.4 * (2**attempt)
                     self._logger.warning(
                         "Jev transient HTTP %d on attempt %d/%d (endpoint=%s); retrying in %.2fs",
@@ -809,6 +1079,11 @@ class JevClient:
                     )
                 decoded = json.loads(resp_bytes.decode("utf-8"))
                 p_val = _extract_probability_from_response(decoded)
+                svc_build: str | None = None
+                in_toks: int | None = None
+                out_toks: int | None = None
+                if adapter is not None and adapter.last_call_meta is not None:
+                    svc_build, in_toks, out_toks = adapter.last_call_meta
                 return JudgmentCacheEntry(
                     candidate_id=str(candidate_id),
                     p_netr_gt_0=p_val,
@@ -817,14 +1092,25 @@ class JevClient:
                     payload_sha256=payload_sha,
                     latency_ms=dt_ms,
                     cached_at_utc=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    service_build=svc_build,
+                    input_tokens=in_toks,
+                    output_tokens=out_toks,
                 )
             except urllib.error.HTTPError as exc:
+                err_body = ""
+                try:
+                    raw_err = exc.read(240)
+                    if raw_err:
+                        err_body = f" ({raw_err.decode('utf-8', errors='replace').strip()})"
+                except Exception:
+                    err_body = ""
                 safe_msg = redact_sensitive_text(
-                    f"HTTP {exc.code}: {exc.reason}",
+                    f"HTTP {exc.code}: {exc.reason}{err_body}",
                     extra_secrets=self._secrets_tuple(),
                 )
                 last_err_msg = safe_msg
                 if exc.code in (429, 500, 502, 503, 504) and attempt + 1 < max_attempts:
+                    self._retried_attempts += 1
                     backoff = 0.4 * (2**attempt)
                     self._logger.warning(
                         "Jev HTTPError (%s) attempt %d/%d; retrying in %.2fs",
@@ -843,6 +1129,7 @@ class JevClient:
                 )
                 last_err_msg = safe_msg
                 if attempt + 1 < max_attempts:
+                    self._retried_attempts += 1
                     backoff = 0.4 * (2**attempt)
                     self._logger.warning(
                         "Jev network/timeout error (%s) attempt %d/%d; retrying in %.2fs",
@@ -854,13 +1141,22 @@ class JevClient:
                     self._sleep(backoff)
                     continue
                 break
+            except BuildDriftError as exc:
+                self._failed_calls += 1
+                safe_msg = redact_sensitive_text(
+                    str(exc),
+                    extra_secrets=self._secrets_tuple(),
+                )
+                raise BuildDriftError(safe_msg) from None
             except Exception as exc:
+                self._failed_calls += 1
                 safe_msg = redact_sensitive_text(
                     str(exc),
                     extra_secrets=self._secrets_tuple(),
                 )
                 raise RuntimeError(f"Jev invocation failed: {safe_msg}") from None
 
+        self._failed_calls += 1
         raise RuntimeError(
             redact_sensitive_text(
                 f"Jev invocation exhausted {max_attempts} attempts "
@@ -888,6 +1184,25 @@ class JevClient:
             1 for s in snapshots if str(s["candidate_id"]) in cache_map
         )
 
+        adapter = (
+            self._transport
+            if isinstance(self._transport, SystemOneTransportAdapter)
+            else None
+        )
+        cached_builds: list[str] = sorted(
+            {
+                e.service_build
+                for e in cache_map.values()
+                if e.service_build is not None and e.service_build
+            }
+        )
+        if len(cached_builds) > 1:
+            raise BuildDriftError(
+                f"existing judgment cache already mixes multiple service builds: {cached_builds}"
+            )
+        if len(cached_builds) == 1 and adapter is not None:
+            adapter.seed_locked_build(cached_builds[0])
+
         effective_cap = min(int(self._config.max_calls), MAX_TOTAL_JEV_CALLS)
         pending, truncated_count = select_and_shuffle_pending(
             snapshots,
@@ -899,59 +1214,113 @@ class JevClient:
 
         submitted_ids: list[str] = []
         new_completed = 0
+        start_failed = self._failed_calls
+        start_retried = self._retried_attempts
+        start_in_toks = adapter.total_input_tokens if adapter is not None else 0
 
-        if pending:
-            with cpath.open("a", encoding="utf-8") as fh:
-                for snap in pending:
-                    cid = str(snap["candidate_id"])
-                    payload = build_jev_payload(snap)
-                    entry = self.judge_single_stateless(cid, payload)
-                    fh.write(
-                        json.dumps(
-                            entry.to_dict(),
-                            ensure_ascii=False,
-                            separators=(",", ":"),
-                        )
-                        + "\n"
-                    )
-                    fh.flush()
-                    cache_map[cid] = entry
-                    submitted_ids.append(cid)
-                    new_completed += 1
+        def _build_and_write_manifest() -> JevRunManifest:
+            order_digest = hashlib.sha256(
+                "\n".join(submitted_ids).encode("utf-8")
+            ).hexdigest()
+            builds_union: list[str] = []
+            for b in cached_builds:
+                if b not in builds_union:
+                    builds_union.append(b)
+            if adapter is not None:
+                for b in adapter.observed_builds:
+                    if b not in builds_union:
+                        builds_union.append(b)
+            for e in cache_map.values():
+                if e.service_build and e.service_build not in builds_union:
+                    builds_union.append(e.service_build)
 
-        order_digest = hashlib.sha256(
-            "\n".join(submitted_ids).encode("utf-8")
-        ).hexdigest()
-        manifest = JevRunManifest(
-            mode=self.mode,
-            template_id=TEMPLATE_ID,
-            template_spec_sha256=compute_template_spec_sha256(),
-            shuffle_seed=int(shuffle_seed),
-            max_calls=effective_cap,
-            total_candidates_input=len(snapshots),
-            cached_hits=cached_hits,
-            selected_for_call=len(pending),
-            new_calls_completed=new_completed,
-            truncated_by_budget=truncated_count,
-            submitted_order_sha256=order_digest,
-            endpoint_host="mock://local-hmac-sha256"
-            if self._mock
-            else self._config.endpoint_host_label(),
-            created_at_utc=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        )
-        if manifest_path is not None:
-            mpath = Path(manifest_path)
-            mpath.parent.mkdir(parents=True, exist_ok=True)
-            mpath.write_text(
-                json.dumps(manifest.to_dict(), indent=2, ensure_ascii=False) + "\n",
-                encoding="utf-8",
+            total_in_toks = sum(
+                int(e.input_tokens)
+                for e in cache_map.values()
+                if e.input_tokens is not None
             )
+            total_out_toks = sum(
+                int(e.output_tokens)
+                for e in cache_map.values()
+                if e.output_tokens is not None
+            )
+            new_in_toks = (
+                (adapter.total_input_tokens - start_in_toks)
+                if adapter is not None
+                else 0
+            )
+            manifest_obj = JevRunManifest(
+                mode=self.mode,
+                template_id=TEMPLATE_ID,
+                template_spec_sha256=compute_template_spec_sha256(),
+                shuffle_seed=int(shuffle_seed),
+                max_calls=effective_cap,
+                total_candidates_input=len(snapshots),
+                cached_hits=cached_hits,
+                selected_for_call=len(pending),
+                new_calls_completed=new_completed,
+                truncated_by_budget=truncated_count,
+                submitted_order_sha256=order_digest,
+                endpoint_host="mock://local-hmac-sha256"
+                if self._mock
+                else self._config.endpoint_host_label(),
+                created_at_utc=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                requested_model=(
+                    adapter.requested_model
+                    if (not self._mock and adapter is not None)
+                    else ""
+                ),
+                service_builds=tuple(builds_union),
+                build_drift_detected=bool(
+                    adapter.build_drift_detected if adapter is not None else False
+                ),
+                total_input_tokens=total_in_toks,
+                total_output_tokens=total_out_toks,
+                new_input_tokens=new_in_toks,
+                failed_calls=self._failed_calls - start_failed,
+                retried_attempts=self._retried_attempts - start_retried,
+            )
+            if manifest_path is not None:
+                mpath = Path(manifest_path)
+                mpath.parent.mkdir(parents=True, exist_ok=True)
+                mpath.write_text(
+                    json.dumps(manifest_obj.to_dict(), indent=2, ensure_ascii=False) + "\n",
+                    encoding="utf-8",
+                )
+            return manifest_obj
+
+        manifest: JevRunManifest | None = None
+        try:
+            if pending:
+                with cpath.open("a", encoding="utf-8") as fh:
+                    for snap in pending:
+                        cid = str(snap["candidate_id"])
+                        payload = build_jev_payload(snap)
+                        entry = self.judge_single_stateless(cid, payload)
+                        fh.write(
+                            json.dumps(
+                                entry.to_dict(),
+                                ensure_ascii=False,
+                                separators=(",", ":"),
+                            )
+                            + "\n"
+                        )
+                        fh.flush()
+                        cache_map[cid] = entry
+                        submitted_ids.append(cid)
+                        new_completed += 1
+        finally:
+            manifest = _build_and_write_manifest()
+
+        assert manifest is not None
         self._logger.info(
-            "Jev batch complete: mode=%s total=%d cached=%d new=%d truncated=%d",
+            "Jev batch complete: mode=%s total=%d cached=%d new=%d truncated=%d builds=%s input_tokens=%d",
             self.mode,
             len(snapshots),
             cached_hits,
             new_completed,
             truncated_count,
+            list(manifest.service_builds),
+            manifest.total_input_tokens,
         )
         return cache_map, manifest
