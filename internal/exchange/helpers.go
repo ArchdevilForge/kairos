@@ -94,6 +94,9 @@ func sortCandlesAscending(candles []types.Candle) {
 	})
 }
 
+// parseOKXCandleRows decodes OKX /api/v5/market/candles (and history-candles)
+// string arrays: [tsMs, o, h, l, c, vol, volCcy, volCcyQuote, confirm].
+// row[5] stays mapped to Volume; row[7] (volCcyQuote) populates QuoteVol when present.
 func parseOKXCandleRows(rows [][]string) []types.Candle {
 	candles := make([]types.Candle, 0, len(rows))
 	for _, row := range rows {
@@ -101,6 +104,10 @@ func parseOKXCandleRows(rows [][]string) []types.Candle {
 			continue
 		}
 		ts, _ := strconv.ParseInt(row[0], 10, 64)
+		var quoteVol float64
+		if len(row) > 7 {
+			quoteVol = parseFloat(row[7])
+		}
 		candles = append(candles, types.Candle{
 			Timestamp: ts / 1000,
 			Open:      parseFloat(row[1]),
@@ -108,11 +115,16 @@ func parseOKXCandleRows(rows [][]string) []types.Candle {
 			Low:       parseFloat(row[3]),
 			Close:     parseFloat(row[4]),
 			Volume:    parseFloat(row[5]),
+			QuoteVol:  quoteVol,
 		})
 	}
 	return candles
 }
 
+// parseBinanceKlines decodes Binance USDS-M Futures /fapi/v1/klines arrays:
+// [openTimeMs, open, high, low, close, volume, closeTimeMs, quoteAssetVolume, ...].
+// row[5] stays mapped to Volume; row[7] (quote asset volume in USDT) populates
+// QuoteVol when present (left 0 on short test rows).
 func parseBinanceKlines(body []byte) ([]types.Candle, error) {
 	if len(body) > 0 && body[0] == '{' {
 		var errObj struct {
@@ -133,6 +145,10 @@ func parseBinanceKlines(body []byte) ([]types.Candle, error) {
 			continue
 		}
 		ts := int64(parseFloat(fmt.Sprint(row[0])))
+		var quoteVol float64
+		if len(row) > 7 {
+			quoteVol = parseFloat(fmt.Sprint(row[7]))
+		}
 		candles = append(candles, types.Candle{
 			Timestamp: ts / 1000,
 			Open:      parseFloat(fmt.Sprint(row[1])),
@@ -140,6 +156,7 @@ func parseBinanceKlines(body []byte) ([]types.Candle, error) {
 			Low:       parseFloat(fmt.Sprint(row[3])),
 			Close:     parseFloat(fmt.Sprint(row[4])),
 			Volume:    parseFloat(fmt.Sprint(row[5])),
+			QuoteVol:  quoteVol,
 		})
 	}
 	return candles, nil

@@ -219,6 +219,12 @@ func (b *bybitExchange) FetchOHLCV(ctx context.Context, symbol, timeframe string
 			continue
 		}
 		ts := int64(parseFloat(row[0]))
+		// Bybit /v5/market/kline?category=linear: [startTime, open, high, low, close, volume, turnover].
+		// row[6] is turnover in quote coin (USDT for linear USDT perpetuals).
+		var quoteVol float64
+		if len(row) > 6 {
+			quoteVol = parseFloat(row[6])
+		}
 		candles = append(candles, types.Candle{
 			Timestamp: ts / 1000,
 			Open:      parseFloat(row[1]),
@@ -226,6 +232,7 @@ func (b *bybitExchange) FetchOHLCV(ctx context.Context, symbol, timeframe string
 			Low:       parseFloat(row[3]),
 			Close:     parseFloat(row[4]),
 			Volume:    parseFloat(row[5]),
+			QuoteVol:  quoteVol,
 		})
 	}
 	sortCandlesAscending(candles)
