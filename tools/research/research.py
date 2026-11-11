@@ -357,6 +357,29 @@ def run_phase2b_ingest_cli(
     return 0
 
 
+def run_phase3a_cli(
+    db: str,
+    out_dir: str | None = None,
+    skip_anchor_check: bool = False,
+) -> int:
+    """Run Phase 3a BitLanglang validation suite (S1, S2, S3, F, L + Thermometer)."""
+    from phase3a_experiment import (
+        format_phase3a_summary_markdown,
+        run_phase3a_all,
+        write_phase3a_reports,
+    )
+
+    con = duckdb.connect(db)
+    suite = run_phase3a_all(con, enforce_anchor=not skip_anchor_check)
+    summary_md = format_phase3a_summary_markdown(suite)
+    print(summary_md)
+    if out_dir:
+        written = write_phase3a_reports(suite, out_dir)
+        for p in written:
+            print(f"已写入 Phase 3a 报告: {p}")
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(description="kairos research layer (JSONL → DuckDB)")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -406,6 +429,14 @@ def main():
     p_p2b.add_argument("--workers", type=int, default=8)
     p_p2b.add_argument("--batch-size", type=int, default=6)
     p_p2b.add_argument("--max-batches", type=int, default=10)
+    p_p3a = sub.add_parser("phase3a", help="Phase 3a Bit浪浪体系操作化与诚实验证 (S1/S2/S3/F/L/T)")
+    p_p3a.add_argument("--db", default="../../data/phase2b.duckdb")
+    p_p3a.add_argument("--out-dir", help="可选: 输出 7 份实验与总结报告目录")
+    p_p3a.add_argument(
+        "--skip-anchor-check",
+        action="store_true",
+        help="仅用于合成单测小库: 跳过 758,013 ± 2%% 锚点阻断",
+    )
     args = ap.parse_args()
 
     if args.cmd == "load":
@@ -438,6 +469,8 @@ def main():
             args.batch_size,
             args.max_batches,
         )
+    elif args.cmd == "phase3a":
+        return run_phase3a_cli(args.db, args.out_dir, args.skip_anchor_check)
 
 
 if __name__ == "__main__":
