@@ -1,0 +1,25 @@
+{
+  "mode": "live",
+  "template_id": "kairos.phase3bj.blind_judgment_payload.v1",
+  "template_spec_sha256": "e77cd51842062da704d61b42030b310adb0de17c7fc2a4923f50740a4c580f1c",
+  "shuffle_seed": 20261111,
+  "max_calls": 5000,
+  "total_candidates_input": 888,
+  "cached_hits": 3,
+  "selected_for_call": 885,
+  "new_calls_completed": 885,
+  "truncated_by_budget": 0,
+  "submitted_order_sha256": "dc03130fb07a5fb82e16ecdde2f0da06863d1a4dac757df6a438e383cd286e86",
+  "endpoint_host": "https://api.typesafe.ai",
+  "requested_model": "jev-latest",
+  "service_builds": [
+    "jev-1.14.0"
+  ],
+  "build_drift_detected": false,
+  "total_input_tokens": 1179644,
+  "total_output_tokens": 21312,
+  "new_input_tokens": 1175677,
+  "failed_calls": 0,
+  "retried_attempts": 0,
+  "created_at_utc": "2026-11-11T08:01:49Z"
+}
