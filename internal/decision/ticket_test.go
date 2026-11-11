@@ -1,6 +1,7 @@
 package decision
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -159,5 +160,101 @@ func TestExitReasonSingleKeyParser(t *testing.T) {
 	}
 	if _, ok := types.ParseExitReasonKey("invalid"); ok {
 		t.Fatal("invalid exit reason key must fail")
+	}
+}
+
+func TestBuildTicket_WinterDefenseHintShadowOnly(t *testing.T) {
+	match := types.PlaybookMatch{
+		PlaybookID:   types.PlaybookLeaderPullbackV1,
+		SessionID:    "s-win",
+		Symbol:       "SOL/USDT:USDT",
+		Matched:      true,
+		Grade:        types.TicketGradeA,
+		Direction:    types.CycleDirectionUp,
+		TradeClass:   types.TradeClassAlignedLong,
+		RiskTemplate: types.RiskTemplateAlignedSummer,
+	}
+
+	// 0. No cross-sectional input (SeasonRegime == ""), even if MarketCycle has winter nodes:
+	// BOTH season_regime and winter_defense_hint MUST be absent ("", omitted in JSON).
+	tUnmeasured := BuildTicket(BuildInput{
+		TicketID: "t-unmeasured",
+		Match:    match,
+		Context: types.PlaybookContext{
+			MarketCycle: types.CycleMap{
+				LegacyClimate: types.MarketPhaseWinter,
+				Nodes: map[string]types.CycleNode{
+					"15m": {Timeframe: "15m", Phase: types.WavePhaseWinter},
+				},
+			},
+		},
+		Invalidations: []string{"hl breaks"},
+		EntryPrice:    100,
+		StopPrice:     98,
+		Equity:        10_000,
+	})
+	if tUnmeasured.SeasonRegime != "" {
+		t.Fatalf("unmeasured SeasonRegime=%q, want empty", tUnmeasured.SeasonRegime)
+	}
+	if tUnmeasured.WinterDefenseHint != "" {
+		t.Fatalf("unmeasured WinterDefenseHint=%q, want empty", tUnmeasured.WinterDefenseHint)
+	}
+	rawUnmeasured, err := json.Marshal(tUnmeasured)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(rawUnmeasured), `"season_regime"`) ||
+		strings.Contains(string(rawUnmeasured), `"winter_defense_hint"`) {
+		t.Fatalf("unmeasured ticket JSON must omit both fields, got %s", string(rawUnmeasured))
+	}
+
+	// 1. Genuine WINTER regime: winter_defense_hint MUST be present, sizing MUST NOT change.
+	tWinter := BuildTicket(BuildInput{
+		TicketID:      "t-winter",
+		Match:         match,
+		Invalidations: []string{"hl breaks"},
+		EntryPrice:    100,
+		StopPrice:     98,
+		Equity:        10_000,
+		SeasonRegime:  types.SeasonRegimeWinter,
+	})
+	if tWinter.SeasonRegime != types.SeasonRegimeWinter {
+		t.Fatalf("SeasonRegime=%q, want WINTER", tWinter.SeasonRegime)
+	}
+	if !strings.Contains(tWinter.WinterDefenseHint, "0.25x") ||
+		!strings.Contains(tWinter.WinterDefenseHint, "winter tickets historically negative expectancy, defense sub-test passed twice") {
+		t.Fatalf("unexpected WinterDefenseHint=%q", tWinter.WinterDefenseHint)
+	}
+	if tUnmeasured.RiskPlan != tWinter.RiskPlan {
+		t.Fatalf("shadow red line violated: RiskPlan changed between unmeasured (%+v) and WINTER (%+v)",
+			tUnmeasured.RiskPlan, tWinter.RiskPlan)
+	}
+
+	// 2. Non-WINTER regimes (SPRING, SUMMER, AUTUMN): winter_defense_hint MUST be empty,
+	// and RiskPlan sizing MUST be byte-identical to WINTER.
+	for _, reg := range []types.SeasonRegime{
+		types.SeasonRegimeSpring,
+		types.SeasonRegimeSummer,
+		types.SeasonRegimeAutumn,
+	} {
+		tk := BuildTicket(BuildInput{
+			TicketID:      "t-other",
+			Match:         match,
+			Invalidations: []string{"hl breaks"},
+			EntryPrice:    100,
+			StopPrice:     98,
+			Equity:        10_000,
+			SeasonRegime:  reg,
+		})
+		if tk.SeasonRegime != reg {
+			t.Fatalf("SeasonRegime=%q, want %q", tk.SeasonRegime, reg)
+		}
+		if tk.WinterDefenseHint != "" {
+			t.Fatalf("non-WINTER regime %s must have empty WinterDefenseHint, got %q", reg, tk.WinterDefenseHint)
+		}
+		if tk.RiskPlan != tWinter.RiskPlan {
+			t.Fatalf("shadow red line violated: RiskPlan changed between %s (%+v) and WINTER (%+v)",
+				reg, tk.RiskPlan, tWinter.RiskPlan)
+		}
 	}
 }

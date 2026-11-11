@@ -126,6 +126,8 @@ func (j *Journal) SaveSession(s types.OpportunitySession) error {
 
 // SaveTicket persists a decision ticket (re-append updates status).
 func (j *Journal) SaveTicket(t types.DecisionTicket) error {
+	t.SeasonRegime = types.NormalizeSeasonRegime(t.SeasonRegime)
+	t.WinterDefenseHint = types.WinterDefenseHintFor(t.SeasonRegime)
 	return j.append(JournalKindTicket, t.ID, t)
 }
 
@@ -145,6 +147,11 @@ type CounterfactualOutcome struct {
 
 	Direction types.CycleDirection `json:"direction"`
 	Decision  types.HumanDecision  `json:"decision,omitempty"`
+
+	// Phase 2c shadow-only advisory fields (owner decision 2026-11-11).
+	// Populated ONLY when genuinely computed from faithful cross-sectional inputs.
+	SeasonRegime      types.SeasonRegime `json:"season_regime,omitempty"`
+	WinterDefenseHint string             `json:"winter_defense_hint,omitempty"`
 
 	Return5m  *float64 `json:"return_5m,omitempty"`
 	Return15m *float64 `json:"return_15m,omitempty"`
@@ -205,6 +212,8 @@ func (j *Journal) SaveOutcome(o CounterfactualOutcome) error {
 	if o.SchemaVersion == "" {
 		o.SchemaVersion = CounterfactualSchemaVersion
 	}
+	o.SeasonRegime = types.NormalizeSeasonRegime(o.SeasonRegime)
+	o.WinterDefenseHint = types.WinterDefenseHintFor(o.SeasonRegime)
 	return j.append(JournalKindOutcome, o.TicketID, o)
 }
 

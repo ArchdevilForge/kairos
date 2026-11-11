@@ -142,6 +142,8 @@ func (s *Service) TrackOutcomes(ctx context.Context, fetch OHLCVFetcher, cfg Out
 			CostPct:      cfg.CostPct,
 			TimeExitBars: hz.H1, // fixed 1h mechanical horizon on 5m
 		}, hz)
+		o.SeasonRegime = t.SeasonRegime
+		o.WinterDefenseHint = t.WinterDefenseHint
 		o.AsOfUnix = nowUnix
 
 		if prev, ok, _ := s.journal.GetOutcome(t.ID); ok {

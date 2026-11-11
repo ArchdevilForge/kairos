@@ -191,6 +191,12 @@ type DecisionTicket struct {
 
 	Status TicketStatus `json:"status" yaml:"status"`
 
+	// Phase 2c shadow-only advisory fields (owner decision 2026-11-11).
+	// Populated ONLY when genuinely computed from faithful cross-sectional inputs;
+	// omitted when unmeasured. Never alters sizing, filtering, or alert suppression.
+	SeasonRegime      SeasonRegime `json:"season_regime,omitempty" yaml:"season_regime,omitempty"`
+	WinterDefenseHint string       `json:"winter_defense_hint,omitempty" yaml:"winter_defense_hint,omitempty"`
+
 	// Additive close-out metadata (Work Item 11).
 	ExitReason         ExitReason `json:"exit_reason,omitempty" yaml:"exit_reason,omitempty"`
 	RealizedFundingUSD float64    `json:"realized_funding_usd,omitempty" yaml:"realized_funding_usd,omitempty"`

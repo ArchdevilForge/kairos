@@ -53,6 +53,11 @@ type EnrichRequest struct {
 	Fetcher OHLCVFetcher
 	Config  EnrichConfig
 	Equity  float64
+
+	// Phase 2c optional causal season inputs (shadow advisory only).
+	SeasonRegime    types.SeasonRegime
+	UniverseBars5m  map[string][]cycle.SeasonBar5m
+	UniverseFunding map[string]map[int64]float64
 }
 
 // EnrichAndEvaluate fetches OHLCV, measures features, detects pullback trigger, attaches tickets.
@@ -230,6 +235,11 @@ func (s *Service) EnrichAndEvaluate(ctx context.Context, req EnrichRequest) (Eva
 		return empty, nil
 	}
 
+	var seasonTimeline map[int64]cycle.SeasonObservation
+	if len(req.UniverseBars5m) >= cycle.DefaultSeasonMinValidSymbols {
+		seasonTimeline = cycle.BuildCausalSeasonTimeline(req.UniverseBars5m, req.UniverseFunding)
+	}
+
 	created := int64(req.Event.Timestamp)
 	if created <= 0 {
 		created = time.Now().Unix()
@@ -248,6 +258,8 @@ func (s *Service) EnrichAndEvaluate(ctx context.Context, req EnrichRequest) (Eva
 		EntryPrice:     entryPx,
 		StopPrice:      stopPx,
 		TriggeredAt:    triggeredAt,
+		SeasonRegime:   req.SeasonRegime,
+		SeasonTimeline: seasonTimeline,
 	})
 	return res, err
 }

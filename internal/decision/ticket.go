@@ -119,6 +119,10 @@ type BuildInput struct {
 	CreatedAt        int64
 	SignalAt         int64
 	EntryTriggeredAt int64
+
+	// SeasonRegime is the Phase 2c causal 4-season market state (SPRING/SUMMER/AUTUMN/WINTER).
+	// Shadow advisory only: never alters RiskPlan, sizing, or filtering.
+	SeasonRegime types.SeasonRegime
 }
 
 // BuildTicket creates a DecisionTicket from a playbook match.
@@ -203,6 +207,9 @@ func BuildTicket(in BuildInput) types.DecisionTicket {
 		signalAt = created
 	}
 
+	seasonRegime := types.NormalizeSeasonRegime(in.SeasonRegime)
+	winterHint := types.WinterDefenseHintFor(seasonRegime)
+
 	return types.DecisionTicket{
 		SchemaVersion: types.DecisionTicketSchemaVersion,
 		ID:            in.TicketID,
@@ -221,14 +228,16 @@ func BuildTicket(in BuildInput) types.DecisionTicket {
 			ZoneHigh: in.ZoneHigh,
 			Trigger:  in.Trigger,
 		},
-		RiskPlan:         risk,
-		Reasons:          reasons,
-		Warnings:         warnings,
-		Invalidations:    inv,
-		Status:           status,
-		CreatedAt:        created,
-		SignalAt:         signalAt,
-		EntryTriggeredAt: in.EntryTriggeredAt,
+		RiskPlan:          risk,
+		Reasons:           reasons,
+		Warnings:          warnings,
+		Invalidations:     inv,
+		Status:            status,
+		SeasonRegime:      seasonRegime,
+		WinterDefenseHint: winterHint,
+		CreatedAt:         created,
+		SignalAt:          signalAt,
+		EntryTriggeredAt:  in.EntryTriggeredAt,
 	}
 }
 

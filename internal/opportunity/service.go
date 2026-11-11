@@ -122,6 +122,11 @@ type EvaluateRequest struct {
 	EntryPrice  map[string]float64
 	StopPrice   map[string]float64
 	TriggeredAt map[string]int64
+
+	// Phase 2c causal SeasonRegime inputs (shadow advisory only).
+	SeasonRegime   types.SeasonRegime
+	SeasonRegimes  map[string]types.SeasonRegime
+	SeasonTimeline map[int64]cycle.SeasonObservation
 }
 
 // EvaluateResult is what one session produced.
@@ -360,6 +365,21 @@ func (s *Service) evaluate(req EvaluateRequest, attachExisting bool) (EvaluateRe
 		if signalAt == 0 {
 			signalAt = now
 		}
+		seasonRegime := req.SeasonRegime
+		if req.SeasonRegimes != nil {
+			if sr, ok := req.SeasonRegimes[cand.Symbol]; ok && sr != "" {
+				seasonRegime = sr
+			}
+		}
+		if seasonRegime == "" && len(req.SeasonTimeline) > 0 {
+			lookupTS := req.TriggeredAt[cand.Symbol]
+			if lookupTS <= 0 {
+				lookupTS = signalAt
+			}
+			if obs, ok := cycle.LatestSeasonObservationAtOrBefore(req.SeasonTimeline, lookupTS); ok {
+				seasonRegime = obs.SeasonRegime
+			}
+		}
 		t := decision.BuildTicket(decision.BuildInput{
 			TicketID:         fmt.Sprintf("tkt-%s-%d", sess.ID, len(tickets)+1),
 			Match:            m,
@@ -377,17 +397,20 @@ func (s *Service) evaluate(req EvaluateRequest, attachExisting bool) (EvaluateRe
 			CreatedAt:        now,
 			SignalAt:         signalAt,
 			EntryTriggeredAt: req.TriggeredAt[cand.Symbol],
+			SeasonRegime:     seasonRegime,
 		})
 		if err := s.persistTicket(t); err != nil {
 			return res, err
 		}
 		_ = s.persistOutcome(storage.CounterfactualOutcome{
-			SchemaVersion: storage.CounterfactualSchemaVersion,
-			TicketID:      t.ID,
-			SessionID:     sess.ID,
-			Symbol:        t.Symbol,
-			Direction:     t.Direction,
-			AsOfUnix:      now,
+			SchemaVersion:     storage.CounterfactualSchemaVersion,
+			TicketID:          t.ID,
+			SessionID:         sess.ID,
+			Symbol:            t.Symbol,
+			Direction:         t.Direction,
+			SeasonRegime:      t.SeasonRegime,
+			WinterDefenseHint: t.WinterDefenseHint,
+			AsOfUnix:          now,
 		})
 		tickets = append(tickets, t)
 	}

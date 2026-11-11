@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/ArchdevilForge/kairos/internal/cycle"
 	"github.com/ArchdevilForge/kairos/internal/ranker"
 	"github.com/ArchdevilForge/kairos/internal/storage"
 	"github.com/ArchdevilForge/kairos/internal/types"
@@ -248,5 +249,100 @@ func TestConfigFromTypes_RiskBudgets(t *testing.T) {
 	// Templates not in config keep the conservative fallback.
 	if got := cfg.RiskBudgets[types.RiskTemplateAlignedSummer]; got != 0.75 {
 		t.Fatalf("aligned summer budget: got %v", got)
+	}
+}
+
+func TestEvaluate_SeasonTimelineShadowAdvisory(t *testing.T) {
+	j := testJournal(t)
+	s := NewService(j, DefaultConfig())
+	mkt := cycleUp()
+
+	// 1. Without cross-sectional input: BOTH season_regime and winter_defense_hint MUST be absent.
+	resUnm, err := s.Evaluate(EvaluateRequest{
+		EventID:        "ev-season-unmeasured",
+		PulseState:     types.MarketStateImpulseUp,
+		PulseDirection: types.CycleDirectionUp,
+		MarketCycle:    mkt,
+		SymbolCycles:   map[string]types.CycleMap{"SOL/USDT:USDT": mkt},
+		RankInputs:     []ranker.Input{measuredInput("SOL/USDT:USDT", 6, 1)},
+		Invalidations:  map[string][]string{"SOL/USDT:USDT": {"5m hl breaks"}},
+		StructureValid: map[string]bool{"SOL/USDT:USDT": true},
+		EntryPrice:     map[string]float64{"SOL/USDT:USDT": 100},
+		StopPrice:      map[string]float64{"SOL/USDT:USDT": 98},
+		TriggeredAt:    map[string]int64{"SOL/USDT:USDT": 1_700_000_300},
+	})
+	if err != nil || len(resUnm.Tickets) != 1 {
+		t.Fatalf("unmeasured tickets=%d err=%v", len(resUnm.Tickets), err)
+	}
+	tkUnm := resUnm.Tickets[0]
+	if tkUnm.SeasonRegime != "" || tkUnm.WinterDefenseHint != "" {
+		t.Fatalf("unmeasured ticket must omit both fields, got SeasonRegime=%q WinterDefenseHint=%q",
+			tkUnm.SeasonRegime, tkUnm.WinterDefenseHint)
+	}
+	outUnm, ok, err := j.GetOutcome(tkUnm.ID)
+	if err != nil || !ok {
+		t.Fatalf("GetOutcome(unmeasured): ok=%v err=%v", ok, err)
+	}
+	if outUnm.SeasonRegime != "" || outUnm.WinterDefenseHint != "" {
+		t.Fatalf("unmeasured outcome must omit both fields, got SeasonRegime=%q WinterDefenseHint=%q",
+			outUnm.SeasonRegime, outUnm.WinterDefenseHint)
+	}
+
+	// 2. With genuine cross-sectional SeasonTimeline built via BuildCausalSeasonTimeline:
+	// WINTER regime populates both season_regime and winter_defense_hint with zero RiskPlan change.
+	syms := []string{"BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT", "XRP/USDT:USDT", "DOGE/USDT:USDT"}
+	universeBars := make(map[string][]cycle.SeasonBar5m, len(syms))
+	baseClose := int64(1_700_000_100)
+	for _, sym := range syms {
+		bars := make([]cycle.SeasonBar5m, 30)
+		for i := range bars {
+			bars[i] = cycle.SeasonBar5m{
+				CloseTS:  baseClose + int64(i*300),
+				Open:     100.0,
+				High:     100.1,
+				Low:      99.8,
+				Close:    99.9, // negative 5m returns -> low breadth -> WINTER
+				QuoteVol: 50_000,
+			}
+		}
+		universeBars[sym] = bars
+	}
+	timeline := cycle.BuildCausalSeasonTimeline(universeBars, nil)
+	trigTS := baseClose + int64(29*300)
+
+	res, err := s.Evaluate(EvaluateRequest{
+		EventID:        "ev-season-win",
+		PulseState:     types.MarketStateImpulseUp,
+		PulseDirection: types.CycleDirectionUp,
+		MarketCycle:    mkt,
+		SymbolCycles:   map[string]types.CycleMap{"SOL/USDT:USDT": mkt},
+		RankInputs:     []ranker.Input{measuredInput("SOL/USDT:USDT", 6, 1)},
+		Invalidations:  map[string][]string{"SOL/USDT:USDT": {"5m hl breaks"}},
+		StructureValid: map[string]bool{"SOL/USDT:USDT": true},
+		EntryPrice:     map[string]float64{"SOL/USDT:USDT": 100},
+		StopPrice:      map[string]float64{"SOL/USDT:USDT": 98},
+		TriggeredAt:    map[string]int64{"SOL/USDT:USDT": trigTS},
+		SeasonTimeline: timeline,
+	})
+	if err != nil || len(res.Tickets) != 1 {
+		t.Fatalf("tickets=%d err=%v", len(res.Tickets), err)
+	}
+	tk := res.Tickets[0]
+	if tk.SeasonRegime != types.SeasonRegimeWinter {
+		t.Fatalf("ticket SeasonRegime=%q, want WINTER", tk.SeasonRegime)
+	}
+	if tk.WinterDefenseHint != types.DefaultWinterDefenseHint {
+		t.Fatalf("ticket WinterDefenseHint=%q, want %q", tk.WinterDefenseHint, types.DefaultWinterDefenseHint)
+	}
+	if tk.RiskPlan != tkUnm.RiskPlan {
+		t.Fatalf("shadow red line violated: RiskPlan changed between unmeasured (%+v) and WINTER (%+v)",
+			tkUnm.RiskPlan, tk.RiskPlan)
+	}
+	out, ok, err := j.GetOutcome(tk.ID)
+	if err != nil || !ok {
+		t.Fatalf("GetOutcome: ok=%v err=%v", ok, err)
+	}
+	if out.SeasonRegime != types.SeasonRegimeWinter || out.WinterDefenseHint != types.DefaultWinterDefenseHint {
+		t.Fatalf("outcome SeasonRegime=%q WinterDefenseHint=%q", out.SeasonRegime, out.WinterDefenseHint)
 	}
 }
