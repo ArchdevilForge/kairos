@@ -290,6 +290,14 @@ func Validate(cfg *types.Config) error {
 		addf("riskGate.recentRiskSampleSize must be >= 0, got %d", cfg.RiskGate.RecentRiskSampleSize)
 	}
 
+	// --- notice (Phase 3c) ---------------------------------------------------
+	if cfg.Notice.SymbolCooldownMinutes < 0 {
+		addf("notice.symbolCooldownMinutes must be >= 0, got %d", cfg.Notice.SymbolCooldownMinutes)
+	}
+	if cfg.Notice.MaxNoticesPerDay < 0 {
+		addf("notice.maxNoticesPerDay must be >= 0, got %d", cfg.Notice.MaxNoticesPerDay)
+	}
+
 	if len(errs) == 0 {
 		return nil
 	}

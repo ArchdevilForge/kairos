@@ -322,3 +322,16 @@ opportunity:
   maxMajorLeverage: 10.0
   maxAltLeverage: 5.0
   trancheBaseUSD: 10000.0
+
+# ──────────────────────────────────────────────
+# Opportunity Notice Layer (Phase 3c — scene pointers & anomaly notices, never trade advice)
+# ──────────────────────────────────────────────
+notice:
+  enabled: false
+  # Per-symbol cooling window after a delivered notice (minutes; default 240 = 4h)
+  symbolCooldownMinutes: 240
+  # Rolling 24h cap across all symbols (default 12; suppressed notices only log to notice-journal.jsonl)
+  maxNoticesPerDay: 12
+  # Suppress notices when price sits inside a 4h consolidation box (default true)
+  suppressInsideBox: true
+

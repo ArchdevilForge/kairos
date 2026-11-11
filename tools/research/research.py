@@ -436,6 +436,32 @@ def run_phase3bj_cli(
     return 0
 
 
+def run_notice_eval_cli(
+    notice_journal: str,
+    trading_journal: str,
+    min_per_arm: int,
+    link_window_hours: float,
+    out: str | None,
+) -> int:
+    """Run Phase 3c offline Notice cohort comparison skeleton (count-only when sample insufficient)."""
+    from notice_eval import evaluate_notice_cohorts, format_notice_eval_markdown
+
+    summary = evaluate_notice_cohorts(
+        notice_journal,
+        trading_journal,
+        min_trades_per_arm=min_per_arm,
+        link_window_hours=link_window_hours,
+    )
+    md = format_notice_eval_markdown(summary)
+    print(md)
+    if out:
+        op = Path(out)
+        op.parent.mkdir(parents=True, exist_ok=True)
+        op.write_text(md + "\n", encoding="utf-8")
+        print(f"\n已写入: {op}")
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(description="kairos research layer (JSONL → DuckDB)")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -519,6 +545,15 @@ def main():
         action="store_true",
         help="仅用于合成单测小库: 跳过 758,013 ± 2%% 锚点阻断",
     )
+    p_neval = sub.add_parser(
+        "notice-eval",
+        help="Phase 3c 机会通知层离线对比骨架（数据不足时只报计数，不下结论）",
+    )
+    p_neval.add_argument("--notice-journal", default="../../data/notice-journal.jsonl")
+    p_neval.add_argument("--trading-journal", default="../../data/trading-journal.jsonl")
+    p_neval.add_argument("--min-per-arm", type=int, default=30)
+    p_neval.add_argument("--link-window-hours", type=float, default=4.0)
+    p_neval.add_argument("--out", help="可选: 输出离线对比报告 Markdown")
     args = ap.parse_args()
 
     if args.cmd == "load":
@@ -565,6 +600,14 @@ def main():
             args.cache_path,
             args.manifest_path,
             args.smoke_only,
+        )
+    elif args.cmd == "notice-eval":
+        return run_notice_eval_cli(
+            args.notice_journal,
+            args.trading_journal,
+            args.min_per_arm,
+            args.link_window_hours,
+            args.out,
         )
 
 

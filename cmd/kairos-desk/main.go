@@ -38,16 +38,32 @@ func run(args []string) error {
 	fs.SetOutput(os.Stderr)
 	cfgPath := fs.String("config", "config.yaml", "config file (storage path)")
 	journalPath := fs.String("journal", "", "override path to trading-journal.jsonl (or its directory)")
+	noticeJournalPath := fs.String("notice-journal", "", "override path to notice-journal.jsonl (or its directory)")
 	asJSON := fs.Bool("json", false, "JSON output")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	rest := fs.Args()
 	if len(rest) < 1 {
-		return fmt.Errorf("usage: kairos-desk [-config] <sessions|tickets|candidates|show|gate|accept|wait|reject|missed|close>")
+		return fmt.Errorf("usage: kairos-desk [-config] <sessions|tickets|candidates|show|gate|accept|wait|reject|missed|close|notices|feedback>")
 	}
 	cmd := rest[0]
 	cmdArgs := rest[1:]
+
+	switch cmd {
+	case "notices":
+		nj, err := openNoticeJournal(*cfgPath, *noticeJournalPath, *journalPath)
+		if err != nil {
+			return err
+		}
+		return runNotices(nj, cmdArgs, *asJSON)
+	case "feedback", "notice-feedback":
+		nj, err := openNoticeJournal(*cfgPath, *noticeJournalPath, *journalPath)
+		if err != nil {
+			return err
+		}
+		return runNoticeFeedback(nj, cmdArgs, *asJSON)
+	}
 
 	journal, err := openJournal(*cfgPath, *journalPath)
 	if err != nil {

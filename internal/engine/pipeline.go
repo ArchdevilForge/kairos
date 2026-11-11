@@ -31,6 +31,7 @@ import (
 	"github.com/ArchdevilForge/kairos/internal/data"
 	"github.com/ArchdevilForge/kairos/internal/detector"
 	"github.com/ArchdevilForge/kairos/internal/exchange"
+	"github.com/ArchdevilForge/kairos/internal/notice"
 	"github.com/ArchdevilForge/kairos/internal/notify"
 	"github.com/ArchdevilForge/kairos/internal/opportunity"
 	"github.com/ArchdevilForge/kairos/internal/storage"
@@ -93,6 +94,9 @@ type Pipeline struct {
 	opportunity *opportunity.Service
 	// oppCtx cancelled when pipeline stops — watch/enrich goroutines should honor it.
 	oppCtx context.Context
+
+	// Independent Phase 3c opportunity notice layer (notice-journal.jsonl + Telegram).
+	notice *notice.Service
 
 	// Cross-sectional closed 5m QuoteVol feed for causal SeasonRegime tagging (Phase 2d).
 	seasonFeed *seasonFeed
@@ -265,6 +269,8 @@ func NewPipeline(cfg *types.Config, tg *notify.TelegramClient) *Pipeline {
 				"assume_spread_ok", cfg.Opportunity.AssumeSpreadOK)
 		}
 	}
+
+	p.initNoticeService()
 
 	return p
 }
@@ -469,13 +475,13 @@ func (p *Pipeline) Start(ctx context.Context) error {
 			p.opportunity.RunOutcomeLoop(gCtx, ex, ocfg)
 			return nil
 		})
-		// 5i3. Cross-sectional 5m season feed for shadow SeasonRegime tagging.
-		if p.seasonFeed != nil {
-			g.Go(func() error {
-				p.seasonFeedLoop(gCtx)
-				return nil
-			})
-		}
+	}
+	// 5i3. Cross-sectional 5m season feed for causal SeasonRegime tagging (opportunity or notice).
+	if (p.opportunity != nil || p.notice != nil) && p.seasonFeed != nil {
+		g.Go(func() error {
+			p.seasonFeedLoop(gCtx)
+			return nil
+		})
 	}
 
 	// 5j. Market pulse evaluation loop + 60s calibration snapshot writer.
@@ -1251,7 +1257,7 @@ func (p *Pipeline) sendToChannels(ctx context.Context, alert types.AlertEvent) b
 // routes it through deliverEvent, so resonance obeys the same alert policy,
 // dedup/cooldown and delivery bookkeeping as every other event type.
 func (p *Pipeline) sendResonanceAlert(ctx context.Context, re detector.ResonanceEvent) {
-	if !p.hasDeliveryChannel() {
+	if !p.hasDeliveryChannel() && p.notice == nil {
 		return
 	}
 
@@ -1311,6 +1317,9 @@ func (p *Pipeline) telegramDeliverer(ctx context.Context, deliveryCh <-chan type
 }
 
 func (p *Pipeline) deliverEvent(ctx context.Context, evt types.AnomalyEvent) {
+	if p.notice != nil {
+		p.deliverNotice(ctx, evt)
+	}
 	if !p.hasDeliveryChannel() {
 		return
 	}

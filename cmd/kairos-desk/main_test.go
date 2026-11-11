@@ -347,3 +347,102 @@ func TestPhase3b_DeskGateShowAcceptFlow(t *testing.T) {
 		t.Fatalf("unexpected accept output: %q", outAccept)
 	}
 }
+
+func TestPhase3c_DeskNoticesAndFeedbackFlow(t *testing.T) {
+	dir := t.TempDir()
+	nj, err := storage.NewNoticeJournal(types.StorageConfig{DatabasePath: dir + "/kairos.db"})
+	if err != nil {
+		t.Fatalf("NewNoticeJournal: %v", err)
+	}
+
+	base := time.Date(2026, 11, 11, 12, 0, 0, 0, time.UTC)
+	origNow := deskNowFunc
+	deskNowFunc = func() time.Time { return base }
+	defer func() { deskNowFunc = origNow }()
+
+	for _, ntc := range []types.Notice{
+		{
+			NoticeID:  "ntc-a",
+			CreatedAt: base.Add(-2 * time.Hour),
+			Symbol:    "SOL/USDT:USDT",
+			TriggerFacts: types.NoticeTriggerFacts{
+				EventType:   "volume_spike",
+				Price:       185.0,
+				FactSummary: "5 分钟量 = 窗口基准 6.20×",
+			},
+			Env:            types.NoticeEnvTags{BoxState: types.NoticeBoxOutside},
+			DeliveryStatus: types.NoticeStatusSent,
+		},
+		{
+			NoticeID:  "ntc-b",
+			CreatedAt: base.Add(-1 * time.Hour),
+			Symbol:    "ETH/USDT:USDT",
+			TriggerFacts: types.NoticeTriggerFacts{
+				EventType:   "price_velocity",
+				Price:       3120.0,
+				FactSummary: "60 秒价格变动 +1.50%",
+			},
+			Env:            types.NoticeEnvTags{BoxState: types.NoticeBoxBoundary},
+			DeliveryStatus: types.NoticeStatusSent,
+		},
+		{
+			NoticeID:       "ntc-c",
+			CreatedAt:      base.Add(-30 * time.Minute),
+			Symbol:         "SUI/USDT:USDT",
+			TriggerFacts:   types.NoticeTriggerFacts{EventType: "open_interest_change", FactSummary: "持仓量 OI 变动 +5.80%"},
+			Env:            types.NoticeEnvTags{BoxState: types.NoticeBoxOutside},
+			DeliveryStatus: types.NoticeStatusSent,
+		},
+	} {
+		if err := nj.SaveNotice(ntc); err != nil {
+			t.Fatalf("SaveNotice %s: %v", ntc.NoticeID, err)
+		}
+	}
+
+	cases := []struct {
+		noticeID string
+		rawAct   string
+		ticketID string
+		wantAct  types.NoticeFeedbackAction
+		wantZH   string
+	}{
+		{noticeID: "ntc-a", rawAct: "看了", wantAct: types.NoticeFeedbackSeen, wantZH: "看了"},
+		{noticeID: "ntc-b", rawAct: "做了", ticketID: "tkt-eth-1", wantAct: types.NoticeFeedbackActed, wantZH: "做了"},
+		{noticeID: "ntc-c", rawAct: "忽略", wantAct: types.NoticeFeedbackIgnored, wantZH: "忽略"},
+	}
+
+	for _, tc := range cases {
+		args := []string{"-journal", dir, "feedback", "--action", tc.rawAct}
+		if tc.ticketID != "" {
+			args = append(args, "--ticket", tc.ticketID)
+		}
+		args = append(args, tc.noticeID)
+
+		out, err := captureStdout(t, func() error {
+			return run(args)
+		})
+		if err != nil {
+			t.Fatalf("feedback %s (%s) failed: %v", tc.noticeID, tc.rawAct, err)
+		}
+		if !strings.Contains(out, string(tc.wantAct)) || !strings.Contains(out, tc.wantZH) {
+			t.Fatalf("unexpected feedback output: %q", out)
+		}
+
+		fb, err := nj.GetFeedback(tc.noticeID)
+		if err != nil || fb == nil || fb.Action != tc.wantAct || fb.TicketID != tc.ticketID {
+			t.Fatalf("persisted feedback mismatch for %s: %+v (err=%v)", tc.noticeID, fb, err)
+		}
+	}
+
+	listOut, err := captureStdout(t, func() error {
+		return run([]string{"-journal", dir, "notices"})
+	})
+	if err != nil {
+		t.Fatalf("notices list failed: %v", err)
+	}
+	for _, want := range []string{"feedback=看了", "feedback=做了", "feedback=忽略"} {
+		if !strings.Contains(listOut, want) {
+			t.Fatalf("expected %q in notices output:\n%s", want, listOut)
+		}
+	}
+}

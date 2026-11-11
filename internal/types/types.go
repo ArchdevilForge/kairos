@@ -239,6 +239,7 @@ type Config struct {
 	MarketPulse     MarketPulseConfig     `mapstructure:"marketPulse" json:"marketPulse" yaml:"marketPulse"`
 	Opportunity     OpportunityConfig     `mapstructure:"opportunity" json:"opportunity" yaml:"opportunity"`
 	RiskGate        RiskGateConfig        `mapstructure:"riskGate" json:"riskGate" yaml:"riskGate"`
+	Notice          NoticeConfig          `mapstructure:"notice" json:"notice" yaml:"notice"`
 }
 
 // RiskGateConfig mechanizes KAIROS_DOCTRINE §9b behavior rules

@@ -306,6 +306,12 @@ func setDefaults(v *viper.Viper) {
 		"maxAltLeverage":   5.0,
 		"trancheBaseUSD":   10000.0,
 	})
+	v.SetDefault("notice", map[string]any{
+		"enabled":               false,
+		"symbolCooldownMinutes": 240,
+		"maxNoticesPerDay":      12,
+		"suppressInsideBox":     true,
+	})
 
 	// MarketPulse defaults: disabled unless explicitly enabled. Shadow mode is
 	// the safe first-run profile (compute + log, no Telegram policy change).
