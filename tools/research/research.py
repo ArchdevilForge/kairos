@@ -380,6 +380,56 @@ def run_phase3a_cli(
     return 0
 
 
+def run_phase3bj_cli(
+    db: str,
+    work_dir: str,
+    mock: bool,
+    seed: int,
+    out_report: str | None = None,
+    out_template: str | None = None,
+    skip_anchor_check: bool = False,
+) -> int:
+    """Run Phase 3b-J Jev blind judgment scaffold / evaluator (--mock for Stage 1)."""
+    from phase3bj_experiment import (
+        format_phase3bj_evaluation_markdown,
+        format_phase3bj_stage2_template_markdown,
+        run_phase3bj_pipeline,
+    )
+
+    con = duckdb.connect(db)
+    try:
+        bundle, suite_eval, snap_path, cache_path, manifest_path = run_phase3bj_pipeline(
+            con,
+            work_dir=work_dir,
+            mock=mock,
+            shuffle_seed=seed,
+            enforce_anchor=not skip_anchor_check,
+        )
+    finally:
+        con.close()
+
+    eval_md = format_phase3bj_evaluation_markdown(suite_eval)
+    print(eval_md)
+    print(
+        f"\n快照 JSONL: {snap_path}\n判断缓存 JSONL: {cache_path}\n运行清单 JSON: {manifest_path}"
+    )
+
+    if out_report:
+        rp = Path(out_report)
+        rp.parent.mkdir(parents=True, exist_ok=True)
+        rp.write_text(eval_md + "\n", encoding="utf-8")
+        print(f"已写入 Phase 3b-J 报表: {rp}")
+
+    if out_template:
+        tp = Path(out_template)
+        tp.parent.mkdir(parents=True, exist_ok=True)
+        tpl_md = format_phase3bj_stage2_template_markdown(bundle)
+        tp.write_text(tpl_md + "\n", encoding="utf-8")
+        print(f"已写入 Phase 3b-J Stage 2 空白模板: {tp}")
+
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser(description="kairos research layer (JSONL → DuckDB)")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -437,6 +487,25 @@ def main():
         action="store_true",
         help="仅用于合成单测小库: 跳过 758,013 ± 2%% 锚点阻断",
     )
+    p_p3bj = sub.add_parser(
+        "phase3bj",
+        help="Phase 3b-J Jev 盲判重验脚手架与评测器 (Stage 1 --mock / Stage 2 live)",
+    )
+    p_p3bj.add_argument("--db", default="../../data/phase2b.duckdb")
+    p_p3bj.add_argument("--work-dir", default="../../data/phase3bj")
+    p_p3bj.add_argument(
+        "--mock",
+        action="store_true",
+        help="Stage 1 确定性伪判断模式（按 candidate_id HMAC-SHA256 派生 p，零外部调用）",
+    )
+    p_p3bj.add_argument("--seed", type=int, default=20261111, help="随机提交序种子")
+    p_p3bj.add_argument("--out-report", help="可选: 输出评测/Mock 干跑报告 Markdown")
+    p_p3bj.add_argument("--out-template", help="可选: 输出 Stage 2 空白实测模板 Markdown")
+    p_p3bj.add_argument(
+        "--skip-anchor-check",
+        action="store_true",
+        help="仅用于合成单测小库: 跳过 758,013 ± 2%% 锚点阻断",
+    )
     args = ap.parse_args()
 
     if args.cmd == "load":
@@ -471,6 +540,16 @@ def main():
         )
     elif args.cmd == "phase3a":
         return run_phase3a_cli(args.db, args.out_dir, args.skip_anchor_check)
+    elif args.cmd == "phase3bj":
+        return run_phase3bj_cli(
+            args.db,
+            args.work_dir,
+            args.mock,
+            args.seed,
+            args.out_report,
+            args.out_template,
+            args.skip_anchor_check,
+        )
 
 
 if __name__ == "__main__":
