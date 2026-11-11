@@ -75,3 +75,45 @@ Using an 8-slice `PHASE2B_PREREG` dataset regenerated from OKX (`2025-11-09 -> 2
 | **5m Cross-Sectional Timeline (`SeasonObservation`)** | `1,511` (`WINTER: 976, SPRING: 30, SUMMER: 258, AUTUMN: 247`) | **`1,511 / 1,511`** | **`100.0000%`** | `>= 99.9%` | **`0`** |
 | **Candidate Ticket Decision Points (`SeasonRegime` at `entry_ts`)** | `423` (`WINTER: 269, SPRING: 6, SUMMER: 54, AUTUMN: 94`) | **`423 / 423`** | **`100.0000%`** | `>= 99.9%` | **`0`** |
 | **Continuous Aggregates (`breadth_fast`, `breadth_slow`, `volume_ratio`, `crowding_pct`)** | `1,511` | **`1,511 / 1,511`** (`\|diff\| < 1e-12`) | **`100.0000%`** | `>= 99.9%` | **`0`** |
+
+---
+
+## 5. Phase 2d — Live Cross-Sectional 5m Season Feed (`2026-11-11`)
+
+Phase 2c wired the causal classifier and shadow ticket fields while leaving live `UniverseBars5m` unpopulated until native 5m quote-volume (`volCcyQuote`) and a live cross-sectional window existed. Phase 2d supplies that faithful live input without relaxing any Phase 2c red line.
+
+### A. Feed Design (`seasonFeed` & Quote-Volume Plumbing)
+
+1. **Native Quote-Volume Plumbing (No `Close * Volume` Proxy)**:
+   - `types.Candle` adds `QuoteVol float64` (`internal/types/types.go:74`).
+   - Exchange OHLCV decoders populate `QuoteVol` from exchange-native quote-currency turnover while keeping `row[5] -> Volume` unchanged:
+     - **OKX** (`/api/v5/market/candles` & `history-candles`, `internal/exchange/helpers.go:100-122`): `row[7]` (`volCcyQuote`) -> `QuoteVol`.
+     - **Binance USDS-M** (`/fapi/v1/klines`, `internal/exchange/helpers.go:128-163`): `row[7]` (`quoteAssetVolume` in USDT) -> `QuoteVol` (`0` if absent on short synthetic rows).
+     - **Bybit Linear** (`/v5/market/kline?category=linear`, `internal/exchange/bybit.go:216-237`): `row[6]` (`turnover` in quote coin) -> `QuoteVol`.
+   - Single canonical bar converter `cycle.SeasonBar5mFromCandle` (`internal/cycle/season.go:98-111`) maps a closed 5m `types.Candle` (`Timestamp` = bar open) to `cycle.SeasonBar5m` with `CloseTS = openTS + 300`, matching `Build5mBarsFrom1m` (`internal/cycle/season.go:160-203`). `measureQuoteVolume`'s `Close * Volume` heuristic (`internal/opportunity/enrich.go:270-282`) is never used for season inputs.
+2. **Universe Definition & Single Source of Truth**:
+   - Universe = `tracked ∪ {"BTC/USDT:USDT"}` (`buildSeasonUniverse`, `internal/engine/season_feed.go:85-100`), where `tracked` comes directly from `Pipeline.symbolsByExchange` via `Pipeline.symbolsSnapshot` / `coinglassSymbols` (`internal/engine/season_feed.go:314-335, 368-377`) — the exact live watchlist discovered and refreshed by `Pipeline`.
+   - Each ticket evaluation snapshots the universe active at evaluation time (`WatchAndEnrich` via `EnrichRequest.UniverseBars5mSnapshot`, `internal/engine/pipeline.go:582-588`, `internal/opportunity/watch.go:29-35`); departed symbols have their 24-bar windows reclaimed on `refreshOnce` (`internal/engine/pipeline.go:1730-1732`) and `poll` (`internal/engine/season_feed.go:137`). No historical backfill or post-hoc cross-section reconstruction is performed.
+3. **Scheduling, Window, Freshness & Failure Semantics**:
+   - **Lifecycle Scheduling**: `seasonFeedLoop` runs inside `Pipeline.Start`'s existing `errgroup` (`5i3` at `internal/engine/pipeline.go:472-478`, active whenever `opportunity.enabled` is true) on a `2m` cadence (`defaultSeasonPollInterval`, aligned with `RunOutcomeLoop`).
+   - **Closed-Bar Window (`24` Bars = `2h`)**: Each poll requests `25` 5m candles via `FetchOHLCV(ctx, sym, "5m", 25, 0)`, sorts ascending, drops the unclosed forming tail bar (`ordered[:len(ordered)-1]`, `internal/engine/season_feed.go:180-182`, matching `internal/opportunity/enrich.go:174`), and retains at most the latest `24` closed `SeasonBar5m` per symbol.
+   - **Freshness & Minimum Breadth Gates (`snapshotAt`, `internal/engine/season_feed.go:260-310`)**: At evaluation time `asOf`, any symbol with `< 24` closed bars (`CloseTS <= asOf.Unix()`) or whose latest closed bar satisfies `asOf.Unix() - latest.CloseTS > 600s` (`> 10m`) is excluded. If fewer than `4` valid symbols remain (`cycle.DefaultSeasonMinValidSymbols`), `snapshotAt` returns `nil` and both ticket fields remain omitted.
+   - **Fail-Silent & Lock-Free I/O**: REST fetches run outside `seasonFeed.mu` with bounded concurrency (`4`) and per-symbol timeout (`10s`); any fetch or data failure degrades silently to absent shadow fields and never blocks or slows ticket generation.
+
+### B. Live Floating Universe vs. Research Fixed 27-Symbol Panel
+
+- **Research (`tools/research/h1_experiment.py`, Phase 2b)**: Used a fixed 27-symbol point-in-time perp universe (`PHASE2B_27_SWAP_INST_IDS`, always containing `BTC-USDT-SWAP`) held constant across the 12-month replay.
+- **Live Engine (`kairosd`)**: Tracks a dynamic top-liquidity perp watchlist (`DataManager.TopSymbols`, periodically re-discovered in `Pipeline.refreshOnce`) unioned with `BTC/USDT:USDT`. As market liquidity rotates, symbols enter and leave the tracked set, so the live cross-section naturally floats with the engine's real-time watchlist rather than freezing a static list. Every emitted label is causally computed from the genuine closed-bar cross-section active at the moment of evaluation (`<= TriggeredAt`).
+
+### C. Funding Checkpoint Audit (`EnrichRequest.UniverseFunding`)
+
+We audited `BuildCausalSeasonTimeline(bars, req.UniverseFunding)` to verify whether omitting `UniverseFunding` alters `season_regime` or `winter_defense_hint`:
+1. `fundingBySym` is aggregated solely into `fundingHistoryMeans` (`internal/cycle/season.go:264-303`).
+2. `rawSeason` and `activeSeason` (`SeasonObservation.SeasonRegime`) are computed exclusively from `(bFast, bSlow, vRatio)` via `ClassifySeasonWithThresholds` (`internal/cycle/season.go:140-156`, invoked at `internal/cycle/season.go:392-412`) with 2-bar hysteresis — `fundingHistoryMeans` is never read in season classification.
+3. `fundingHistoryMeans` is consumed only at `internal/cycle/season.go:443-462` to compute `SeasonObservation.CrowdingPct` (an H1b diagnostic metric, mirroring `tools/research/h1_experiment.py:308-326, 345-357`).
+4. Ticket enrichment (`internal/opportunity/service.go:374-382`) and ticket construction (`internal/decision/ticket.go:83-85`) read only `obs.SeasonRegime` (and derive `WinterDefenseHint` via `types.WinterDefenseHintFor`), never reading `CrowdingPct`.
+5. Verified mechanically by `TestBuildCausalSeasonTimeline_FundingDoesNotAffectSeasonRegime` (`internal/cycle/season_test.go:322-375`): `nil` funding and extreme positive/negative funding schedules produce identical `SeasonRegime` labels at every timestamp. Live funding history feed is therefore out of scope for Phase 2d with zero approximation.
+
+### D. Status Summary
+
+Once deployed, `season_regime` (and `winter_defense_hint` during `WINTER`) will genuinely appear on live tickets whenever a valid, fresh cross-section exists and remain absent otherwise — **this does not change Phase 2c's positioning**: parent hypothesis H1a remains **FAIL**, and these fields remain shadow-only human prompts rather than automated trading or sizing rules.
