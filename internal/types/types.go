@@ -239,6 +239,7 @@ type Config struct {
 	MarketPulse     MarketPulseConfig     `mapstructure:"marketPulse" json:"marketPulse" yaml:"marketPulse"`
 	Opportunity     OpportunityConfig     `mapstructure:"opportunity" json:"opportunity" yaml:"opportunity"`
 	RiskGate        RiskGateConfig        `mapstructure:"riskGate" json:"riskGate" yaml:"riskGate"`
+	Notice          NoticeConfig          `mapstructure:"notice" json:"notice" yaml:"notice"`
 }
 
 // RiskGateConfig mechanizes KAIROS_DOCTRINE §9b behavior rules
@@ -257,6 +258,16 @@ type RiskGateConfig struct {
 	MaxMajorLeverage   float64 `mapstructure:"maxMajorLeverage" json:"maxMajorLeverage,omitempty" yaml:"maxMajorLeverage,omitempty"`
 	MaxAltLeverage     float64 `mapstructure:"maxAltLeverage" json:"maxAltLeverage,omitempty" yaml:"maxAltLeverage,omitempty"`
 	TrancheBaseUSD     float64 `mapstructure:"trancheBaseUSD" json:"trancheBaseUSD,omitempty" yaml:"trancheBaseUSD,omitempty"`
+	// Phase 3b A1: 同点位试错预算上限(默认 3,即滚动窗口内第 4 张票硬拒;默认窗口 24h)。
+	TrialBudgetMax         int     `mapstructure:"trialBudgetMax" json:"trialBudgetMax,omitempty" yaml:"trialBudgetMax,omitempty"`
+	TrialBudgetWindowHours float64 `mapstructure:"trialBudgetWindowHours" json:"trialBudgetWindowHours,omitempty" yaml:"trialBudgetWindowHours,omitempty"`
+	// Phase 3b A4: STRATEGY §12 犯病图谱事实警告阈值(只警告、永不拦截)。
+	TiltReverseMinutes    int     `mapstructure:"tiltReverseMinutes" json:"tiltReverseMinutes,omitempty" yaml:"tiltReverseMinutes,omitempty"`
+	ChurnConsecutiveStops int     `mapstructure:"churnConsecutiveStops" json:"churnConsecutiveStops,omitempty" yaml:"churnConsecutiveStops,omitempty"`
+	ChurnWindowMinutes    int     `mapstructure:"churnWindowMinutes" json:"churnWindowMinutes,omitempty" yaml:"churnWindowMinutes,omitempty"`
+	ChurnTicketCount      int     `mapstructure:"churnTicketCount" json:"churnTicketCount,omitempty" yaml:"churnTicketCount,omitempty"`
+	SizeEscalationMult    float64 `mapstructure:"sizeEscalationMult" json:"sizeEscalationMult,omitempty" yaml:"sizeEscalationMult,omitempty"`
+	RecentRiskSampleSize  int     `mapstructure:"recentRiskSampleSize" json:"recentRiskSampleSize,omitempty" yaml:"recentRiskSampleSize,omitempty"`
 }
 
 // OpportunityConfig gates the decision-desk path off MarketPulse.

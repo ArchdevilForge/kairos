@@ -135,6 +135,93 @@ const (
 	RiskTemplateNoTrade       = "no_trade"
 )
 
+// SetupPoint enumerates the 6 fixed logical points from Bit浪浪 STRATEGY §3.
+// Unlabeled tickets keep SetupPoint == "" (never fabricated).
+type SetupPoint string
+
+const (
+	SetupPoint1Breakout    SetupPoint = "POINT_1_BREAKOUT"      // 点位 1：大级别平台/箱体突破启动
+	SetupPoint2MinorDiv    SetupPoint = "POINT_2_MINOR_DIV"     // 点位 2：主升途中回踩（小分歧承接）
+	SetupPoint3MidTopShort SetupPoint = "POINT_3_MID_TOP_SHORT" // 点位 3：主升途中逆势摸顶空
+	SetupPoint4SecondWave  SetupPoint = "POINT_4_SECOND_WAVE"   // 点位 4：大分歧后二波
+	SetupPoint5EndTopShort SetupPoint = "POINT_5_END_TOP_SHORT" // 点位 5：主升结束摸顶空
+	SetupPoint6BoxBounce   SetupPoint = "POINT_6_BOX_BOUNCE"    // 点位 6：箱体内反弹
+)
+
+var validSetupPoints = []SetupPoint{
+	SetupPoint1Breakout,
+	SetupPoint2MinorDiv,
+	SetupPoint3MidTopShort,
+	SetupPoint4SecondWave,
+	SetupPoint5EndTopShort,
+	SetupPoint6BoxBounce,
+}
+
+// ValidSetupPoints returns all 6 canonical setup point enums in §3 order.
+func ValidSetupPoints() []SetupPoint {
+	return append([]SetupPoint(nil), validSetupPoints...)
+}
+
+// IsValidSetupPoint reports whether p is one of the 6 canonical §3 setup points.
+func IsValidSetupPoint(p SetupPoint) bool {
+	for _, v := range validSetupPoints {
+		if p == v {
+			return true
+		}
+	}
+	return false
+}
+
+// NormalizeSetupPoint trims/uppercases p and returns "" if it is not a canonical SetupPoint.
+func NormalizeSetupPoint(p SetupPoint) SetupPoint {
+	s := SetupPoint(strings.TrimSpace(strings.ToUpper(string(p))))
+	if IsValidSetupPoint(s) {
+		return s
+	}
+	return ""
+}
+
+// ParseSetupPoint parses a canonical enum name or shorthand ("1".."6" / "POINT_1".."POINT_6").
+func ParseSetupPoint(raw string) (SetupPoint, bool) {
+	s := strings.TrimSpace(strings.ToUpper(raw))
+	switch s {
+	case "1", "POINT_1", string(SetupPoint1Breakout):
+		return SetupPoint1Breakout, true
+	case "2", "POINT_2", string(SetupPoint2MinorDiv):
+		return SetupPoint2MinorDiv, true
+	case "3", "POINT_3", string(SetupPoint3MidTopShort):
+		return SetupPoint3MidTopShort, true
+	case "4", "POINT_4", string(SetupPoint4SecondWave):
+		return SetupPoint4SecondWave, true
+	case "5", "POINT_5", string(SetupPoint5EndTopShort):
+		return SetupPoint5EndTopShort, true
+	case "6", "POINT_6", string(SetupPoint6BoxBounce):
+		return SetupPoint6BoxBounce, true
+	default:
+		return "", false
+	}
+}
+
+// SetupPointLabelZH returns the Chinese label for a canonical SetupPoint.
+func SetupPointLabelZH(p SetupPoint) string {
+	switch p {
+	case SetupPoint1Breakout:
+		return "点位1(平台突破启动)"
+	case SetupPoint2MinorDiv:
+		return "点位2(主升小分歧回踩)"
+	case SetupPoint3MidTopShort:
+		return "点位3(主升途中摸顶空)"
+	case SetupPoint4SecondWave:
+		return "点位4(大分歧后二波)"
+	case SetupPoint5EndTopShort:
+		return "点位5(主升结束摸顶空)"
+	case SetupPoint6BoxBounce:
+		return "点位6(箱体内反弹)"
+	default:
+		return ""
+	}
+}
+
 // EntryPlan is the structured entry intent on a ticket.
 type EntryPlan struct {
 	Mode     string   `json:"mode" yaml:"mode"` // e.g. closed_bar | intrabar
@@ -169,11 +256,12 @@ type RiskPlan struct {
 type DecisionTicket struct {
 	SchemaVersion string `json:"schema_version" yaml:"schema_version"`
 
-	ID            string `json:"id" yaml:"id"`
-	SessionID     string `json:"session_id" yaml:"session_id"`
-	WaveClusterID string `json:"wave_cluster_id,omitempty" yaml:"wave_cluster_id,omitempty"`
-	Symbol        string `json:"symbol" yaml:"symbol"`
-	PlaybookID    string `json:"playbook_id" yaml:"playbook_id"`
+	ID            string     `json:"id" yaml:"id"`
+	SessionID     string     `json:"session_id" yaml:"session_id"`
+	WaveClusterID string     `json:"wave_cluster_id,omitempty" yaml:"wave_cluster_id,omitempty"`
+	Symbol        string     `json:"symbol" yaml:"symbol"`
+	PlaybookID    string     `json:"playbook_id" yaml:"playbook_id"`
+	SetupPoint    SetupPoint `json:"setup_point,omitempty" yaml:"setup_point,omitempty"`
 
 	Direction  CycleDirection `json:"direction" yaml:"direction"`
 	Grade      TicketGrade    `json:"grade" yaml:"grade"`
@@ -185,6 +273,7 @@ type DecisionTicket struct {
 	EntryPlan EntryPlan `json:"entry_plan" yaml:"entry_plan"`
 	RiskPlan  RiskPlan  `json:"risk_plan" yaml:"risk_plan"`
 
+	StopBasis     string   `json:"stop_basis,omitempty" yaml:"stop_basis,omitempty"`
 	Reasons       []string `json:"reasons" yaml:"reasons"`
 	Warnings      []string `json:"warnings" yaml:"warnings"`
 	Invalidations []string `json:"invalidations" yaml:"invalidations"`
@@ -209,6 +298,44 @@ type DecisionTicket struct {
 	EntryTriggeredAt int64 `json:"entry_triggered_at,omitempty" yaml:"entry_triggered_at,omitempty"` // mechanical trigger bar
 }
 
+// StopBasisText returns the explicit structural stop basis annotation, falling
+// back to non-empty Invalidations lines when StopBasis was not set separately.
+func (t DecisionTicket) StopBasisText() string {
+	if s := strings.TrimSpace(t.StopBasis); s != "" {
+		return s
+	}
+	var parts []string
+	for _, inv := range t.Invalidations {
+		if s := strings.TrimSpace(inv); s != "" {
+			parts = append(parts, s)
+		}
+	}
+	return strings.Join(parts, "; ")
+}
+
+// OneRPriceDistance returns |EntryPrice - StopPrice| when both are > 0, else 0.
+func (t DecisionTicket) OneRPriceDistance() float64 {
+	if t.RiskPlan.EntryPrice <= 0 || t.RiskPlan.StopPrice <= 0 {
+		return 0
+	}
+	d := t.RiskPlan.EntryPrice - t.RiskPlan.StopPrice
+	if d < 0 {
+		d = -d
+	}
+	return d
+}
+
+// OneRPct returns the 1R stop distance in percent.
+func (t DecisionTicket) OneRPct() float64 {
+	if t.RiskPlan.StopDistancePct > 0 {
+		return t.RiskPlan.StopDistancePct
+	}
+	if t.RiskPlan.EntryPrice > 0 && t.RiskPlan.StopPrice > 0 {
+		return t.OneRPriceDistance() / t.RiskPlan.EntryPrice * 100
+	}
+	return 0
+}
+
 // DecisionRecord is the persisted human decision on a ticket.
 type DecisionRecord struct {
 	SchemaVersion string `json:"schema_version" yaml:"schema_version"`
@@ -219,9 +346,10 @@ type DecisionRecord struct {
 	ReasonCodes []string `json:"reason_codes" yaml:"reason_codes"`
 	Note        string   `json:"note" yaml:"note"`
 
-	PlannedEntry *float64 `json:"planned_entry,omitempty" yaml:"planned_entry,omitempty"`
-	PlannedStop  *float64 `json:"planned_stop,omitempty" yaml:"planned_stop,omitempty"`
-	PlannedRiskR *float64 `json:"planned_risk_r,omitempty" yaml:"planned_risk_r,omitempty"`
+	PlannedEntry      *float64 `json:"planned_entry,omitempty" yaml:"planned_entry,omitempty"`
+	PlannedStop       *float64 `json:"planned_stop,omitempty" yaml:"planned_stop,omitempty"`
+	PlannedRiskR      *float64 `json:"planned_risk_r,omitempty" yaml:"planned_risk_r,omitempty"`
+	PlannedMaxLossUSD *float64 `json:"planned_max_loss_usd,omitempty" yaml:"planned_max_loss_usd,omitempty"`
 
 	// Additive close-out metadata (Work Item 11).
 	ExitReason         ExitReason `json:"exit_reason,omitempty" yaml:"exit_reason,omitempty"`

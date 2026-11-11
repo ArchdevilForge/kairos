@@ -23,6 +23,7 @@ func passInput() GateInput {
 		MarginMode:       MarginModeIsolated,
 		StopPrice:        3500,
 		LiquidationPrice: 3100,
+		StopBasis:        "15m HL structure low",
 		MaxLossUSD:       3,
 		ContextDirection: types.CycleDirectionUp,
 		RankSupported:    true,
@@ -81,7 +82,7 @@ func TestEvaluateBehaviorGate_Table(t *testing.T) {
 		{"loss budget over cap", func(in *GateInput) { in.MaxLossUSD = 5 }, []string{GateRiskTooLarge}},
 		{"loss budget undefined", func(in *GateInput) { in.MaxLossUSD = 0 }, []string{GateRiskTooLarge}},
 
-		// 规则 7: liquidation ≠ stop
+		// 规则 7a: liquidation ≠ stop
 		{"no stop", func(in *GateInput) { in.StopPrice = 0 }, []string{GateNoStop}},
 		{"stop equals liquidation", func(in *GateInput) {
 			in.StopPrice = in.LiquidationPrice
@@ -89,6 +90,24 @@ func TestEvaluateBehaviorGate_Table(t *testing.T) {
 		{"stop within 0.5% of liquidation", func(in *GateInput) {
 			in.StopPrice = in.LiquidationPrice * 1.004
 		}, []string{GateNoStop}},
+
+		// 规则 7b (Phase 3b A2): 无结构依据注释也拒绝
+		{"missing stop basis rejected", func(in *GateInput) {
+			in.StopBasis = ""
+		}, []string{GateNoStopBasis}},
+		{"whitespace-only stop basis rejected", func(in *GateInput) {
+			in.StopBasis = "   \t\n "
+		}, []string{GateNoStopBasis}},
+
+		// 规则 11 (Phase 3b A1): 同点位试错预算 <= 3 (第 4 张硬拒)
+		{"3rd same-setup ticket passes", func(in *GateInput) {
+			in.SetupPoint = types.SetupPoint1Breakout
+			in.SameSetupTrialsInWindow = 2
+		}, nil},
+		{"4th same-setup ticket hard rejected", func(in *GateInput) {
+			in.SetupPoint = types.SetupPoint1Breakout
+			in.SameSetupTrialsInWindow = 3
+		}, []string{GateSetupTrialBudget}},
 	}
 
 	for _, tc := range cases {
@@ -320,17 +339,25 @@ func TestPhase1AuditExitMatrix(t *testing.T) {
 	// 4. BehaviorGateConfigFrom mapping + short preset stop price touch + >0.5R structural exit + unexcused <5m loss
 	on := true
 	mapped := BehaviorGateConfigFrom(types.RiskGateConfig{
-		Enabled:            true,
-		CooldownMinutes:    30,
-		WindowStartHour:    19,
-		WindowEndHour:      2,
-		MaxLossUSD:         10,
-		EnforceLeverageCap: &on,
-		MaxMajorLeverage:   10,
-		MaxAltLeverage:     5,
-		TrancheBaseUSD:     10_000,
+		Enabled:                true,
+		CooldownMinutes:        30,
+		WindowStartHour:        19,
+		WindowEndHour:          2,
+		MaxLossUSD:             10,
+		EnforceLeverageCap:     &on,
+		MaxMajorLeverage:       10,
+		MaxAltLeverage:         5,
+		TrancheBaseUSD:         10_000,
+		TrialBudgetMax:         3,
+		TrialBudgetWindowHours: 24,
+		TiltReverseMinutes:     25,
+		ChurnConsecutiveStops:  2,
+		ChurnWindowMinutes:     45,
+		ChurnTicketCount:       3,
+		SizeEscalationMult:     1.6,
+		RecentRiskSampleSize:   12,
 	})
-	if !mapped.LeverageCapEnabled() || mapped.MaxMajorLeverage != 10 || mapped.MaxAltLeverage != 5 {
+	if !mapped.LeverageCapEnabled() || mapped.MaxMajorLeverage != 10 || mapped.MaxAltLeverage != 5 || mapped.TiltReverseMinutes != 25 {
 		t.Fatalf("BehaviorGateConfigFrom=%+v", mapped)
 	}
 
@@ -362,4 +389,125 @@ func TestPhase1AuditExitMatrix(t *testing.T) {
 	if resTargetFast.IsViolation || resTargetFast.Verdict != VerdictCompliant {
 		t.Fatalf(">0.5R target exit <5m must be compliant: %+v", resTargetFast)
 	}
+}
+
+// TestPhase3b_A1UnlabeledDowngradeAndA4RelapseWarnings verifies:
+//   - A1 unlabeled ticket (>=4th on same symbol without SetupPoint) downgrades to warning only, never blocks.
+//   - A4 STRATEGY §12 relapse patterns (上头反手 / 连错刷单 / 亏后加码) emit factual warnings and NEVER block.
+func TestPhase3b_A1UnlabeledDowngradeAndA4RelapseWarnings(t *testing.T) {
+	cfg := DefaultBehaviorGateConfig()
+
+	cases := []struct {
+		name         string
+		mutate       func(*GateInput)
+		wantWarnings []string
+		forbidWarn   []string
+	}{
+		{
+			name: "A1 unlabeled 4th ticket on same symbol warns without blocking",
+			mutate: func(in *GateInput) {
+				in.SetupPoint = "" // must NOT fabricate setup identity
+				in.SameSymbolTrialsInWindow = 3
+			},
+			wantWarnings: []string{WarnUnlabeledTrialBudget, "第 4 张票"},
+		},
+		{
+			name: "A4(i) tilt reverse within 30m after stop warns without blocking",
+			mutate: func(in *GateInput) {
+				in.Direction = types.CycleDirectionUp
+				in.ContextDirection = types.CycleDirectionUp
+				in.LastStopSameSymbolAt = in.Now.Add(-15 * time.Minute)
+				in.LastStopSameSymbolDirection = types.CycleDirectionDown
+			},
+			wantWarnings: []string{WarnTiltReverse, "上头反手", "15.0 分钟"},
+		},
+		{
+			name: "A4(i) same-direction after stop does NOT warn tilt reverse",
+			mutate: func(in *GateInput) {
+				in.LastStopSameSymbolAt = in.Now.Add(-15 * time.Minute)
+				in.LastStopSameSymbolDirection = types.CycleDirectionUp
+			},
+			forbidWarn: []string{WarnTiltReverse},
+		},
+		{
+			name: "A4(i) reverse after >30m does NOT warn tilt reverse",
+			mutate: func(in *GateInput) {
+				in.LastStopSameSymbolAt = in.Now.Add(-31 * time.Minute)
+				in.LastStopSameSymbolDirection = types.CycleDirectionDown
+			},
+			forbidWarn: []string{WarnTiltReverse},
+		},
+		{
+			name: "A4(ii) consecutive stops + high-frequency tickets warns 连错刷单 without blocking",
+			mutate: func(in *GateInput) {
+				in.GlobalConsecutiveStops = 2
+				in.RecentTicketsInChurnWindow = 2 // +1 current = 3rd ticket in 60m
+			},
+			wantWarnings: []string{WarnLossStreakChurn, "连错刷单", "连续止损 2 笔", "第 3 张票"},
+		},
+		{
+			name: "A4(iii) post-loss risk >= 1.5x personal median warns 亏后加码 without blocking",
+			mutate: func(in *GateInput) {
+				in.LastOutcomeWasLoss = true
+				in.MaxLossUSD = 3.6
+				in.RecentPersonalRiskUSD = []float64{2.0, 2.0, 2.2, 1.8} // median = 2.0 -> 3.6 = 1.80x
+			},
+			wantWarnings: []string{WarnLossSizeEscalation, "亏后加码", "1.80×"},
+		},
+		{
+			name: "A4(iii) <3 historical samples does NOT fabricate median",
+			mutate: func(in *GateInput) {
+				in.LastOutcomeWasLoss = true
+				in.MaxLossUSD = 3.9
+				in.RecentPersonalRiskUSD = []float64{1.0, 1.0}
+			},
+			forbidWarn: []string{WarnLossSizeEscalation},
+		},
+		{
+			name: "A4(iii) prior outcome win does NOT warn 亏后加码",
+			mutate: func(in *GateInput) {
+				in.LastOutcomeWasLoss = false
+				in.MaxLossUSD = 3.9
+				in.RecentPersonalRiskUSD = []float64{1.5, 1.5, 1.5}
+			},
+			forbidWarn: []string{WarnLossSizeEscalation},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			in := passInput()
+			tc.mutate(&in)
+			got := EvaluateBehaviorGate(cfg, in)
+			if !got.LiveEligible || len(got.Rejections) != 0 {
+				t.Fatalf("warnings must NEVER block: got LiveEligible=%v Rejections=%v", got.LiveEligible, got.Rejections)
+			}
+			joined := ""
+			for _, w := range got.Warnings {
+				joined += w + "\n"
+			}
+			for _, sub := range tc.wantWarnings {
+				if !slices.ContainsFunc(got.Warnings, func(w string) bool { return containsStr(w, sub) }) {
+					t.Fatalf("missing warning substring %q in %q", sub, joined)
+				}
+			}
+			for _, sub := range tc.forbidWarn {
+				if slices.ContainsFunc(got.Warnings, func(w string) bool { return containsStr(w, sub) }) {
+					t.Fatalf("unexpected warning substring %q in %q", sub, joined)
+				}
+			}
+		})
+	}
+}
+
+func containsStr(s, sub string) bool {
+	if len(sub) == 0 {
+		return true
+	}
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
 }

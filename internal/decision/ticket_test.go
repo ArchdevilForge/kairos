@@ -258,3 +258,109 @@ func TestBuildTicket_WinterDefenseHintShadowOnly(t *testing.T) {
 		}
 	}
 }
+
+func TestPhase3b_SetupPointEnumAndTicketFormatting(t *testing.T) {
+	if len(types.ValidSetupPoints()) != 6 {
+		t.Fatalf("want 6 fixed §3 setup points, got %d", len(types.ValidSetupPoints()))
+	}
+	for i, want := range types.ValidSetupPoints() {
+		shorthand := string(rune('1' + i))
+		got, ok := types.ParseSetupPoint(shorthand)
+		if !ok || got != want {
+			t.Fatalf("ParseSetupPoint(%q) = (%q, %v), want (%q, true)", shorthand, got, ok, want)
+		}
+		if types.SetupPointLabelZH(want) == "" {
+			t.Fatalf("SetupPointLabelZH(%q) empty", want)
+		}
+	}
+	if _, ok := types.ParseSetupPoint("POINT_9_MADE_UP"); ok {
+		t.Fatal("unknown setup point must fail")
+	}
+
+	match := types.PlaybookMatch{
+		PlaybookID:   types.PlaybookLeaderPullbackV1,
+		SessionID:    "s-3b",
+		Symbol:       "SOL/USDT:USDT",
+		Matched:      true,
+		Grade:        types.TicketGradeA,
+		Direction:    types.CycleDirectionUp,
+		TradeClass:   types.TradeClassAlignedLong,
+		RiskTemplate: types.RiskTemplateAlignedSpring,
+	}
+	tk := BuildTicket(BuildInput{
+		TicketID:       "t-3b",
+		Match:          match,
+		SetupPoint:     types.SetupPoint2MinorDiv,
+		StopBasis:      "15m HL swing low 97.50",
+		Invalidations:  []string{"15m close < 97.50"},
+		EntryPrice:     100.0,
+		StopPrice:      97.5,
+		Equity:         10_000,
+		TrancheBaseUSD: 10_000,
+		CreatedAt:      1_700_000_000,
+		SignalAt:       1_700_000_000,
+	})
+
+	warn := []string{"WARN_TILT_REVERSE [上头反手]: 同币 SOL/USDT:USDT 止损后 12.0 分钟内反手开票"}
+	cliCard := FormatTicketWithWarnings(tk, warn)
+	for _, want := range []string{
+		"setup=POINT_2_MINOR_DIV(点位2(主升小分歧回踩))",
+		"stop: entry=100.0000  stop_price=97.5000  1R=2.5000 (2.50%)  basis=15m HL swing low 97.50",
+		"tranche: base=$10000.00  max_lev=5.0x  suggested_notional=$3000.00  max_notional=$3750.00",
+		"behavior_warnings: WARN_TILT_REVERSE [上头反手]",
+	} {
+		if !strings.Contains(cliCard, want) {
+			t.Fatalf("FormatTicketWithWarnings missing %q in:\n%s", want, cliCard)
+		}
+	}
+
+	tgCard := FormatTicketTelegram(tk, warn)
+	for _, want := range []string{
+		"非入场指令，决定权在你。",
+		"<b>点位标签</b>: POINT_2_MINOR_DIV (点位2(主升小分歧回踩))",
+		"<b>结构止损</b>: 损 97.5000 (入 100.0000) | 1R=2.5000 (2.50%) | 依据: 15m HL swing low 97.50",
+		"<b>分仓计划</b>: 基数 $10000 | 杠杆上限 <=5.0x | 建议名义 $3000.00 (上限 $3750.00)",
+		"⚠ <b>行为提示</b>: WARN_TILT_REVERSE [上头反手]",
+	} {
+		if !strings.Contains(tgCard, want) {
+			t.Fatalf("FormatTicketTelegram missing %q in:\n%s", want, tgCard)
+		}
+	}
+}
+
+// TestDecisionTicket_ByteLevelStreamRegression verifies §4 acceptance:
+// existing ticket stream without new Phase 3b fields produces byte-identical JSON
+// to the pre-Phase-3b baseline, and never fabricates setup_point or stop_basis.
+func TestDecisionTicket_ByteLevelStreamRegression(t *testing.T) {
+	match := types.PlaybookMatch{
+		PlaybookID:   types.PlaybookLeaderPullbackV1,
+		SessionID:    "sess-reg",
+		Symbol:       "ETH/USDT:USDT",
+		Matched:      true,
+		Grade:        types.TicketGradeA,
+		Direction:    types.CycleDirectionUp,
+		TradeClass:   types.TradeClassAlignedLong,
+		Reasons:      []string{"leader rank 1"},
+		RiskTemplate: types.RiskTemplateAlignedSpring,
+	}
+	tk := BuildTicket(BuildInput{
+		TicketID:       "tkt-sess-reg-1",
+		Match:          match,
+		Invalidations:  []string{"15m hl breaks"},
+		EntryPrice:     2500,
+		StopPrice:      2450,
+		Equity:         10_000,
+		TrancheBaseUSD: 10_000,
+		Trigger:        "leader_pullback restart",
+		CreatedAt:      1_720_000_000,
+		SignalAt:       1_720_000_000,
+	})
+	gotBytes, err := json.Marshal(tk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const wantBaselineJSON = `{"schema_version":"decision_ticket.v1","id":"tkt-sess-reg-1","session_id":"sess-reg","symbol":"ETH/USDT:USDT","playbook_id":"leader_pullback_v1","direction":"up","grade":"A","trade_class":"aligned_long","market_cycle":{"schema_version":"","as_of_unix":0,"legacy_climate":"","nodes":null,"primary_direction":"","alignment":"","trade_class":"","summary":null},"symbol_cycle":{"schema_version":"","as_of_unix":0,"legacy_climate":"","nodes":null,"primary_direction":"","alignment":"","trade_class":"","summary":null},"entry_plan":{"mode":"closed_bar","zone_low":0,"zone_high":0,"trigger":"leader_pullback restart"},"risk_plan":{"template_id":"aligned_spring","risk_budget_pct":0.75,"entry_price":2500,"stop_price":2450,"stop_distance_pct":2,"effective_stop_pct":2,"suggested_notional":3750,"max_notional":4687.5,"max_leverage":10,"tranche_base_usd":10000,"add_on_allowed":true},"reasons":["leader rank 1"],"warnings":[],"invalidations":["15m hl breaks"],"status":"open","created_at":1720000000,"signal_at":1720000000}`
+	if string(gotBytes) != wantBaselineJSON {
+		t.Fatalf("ticket stream byte regression failed:\ngot:  %s\nwant: %s", string(gotBytes), wantBaselineJSON)
+	}
+}

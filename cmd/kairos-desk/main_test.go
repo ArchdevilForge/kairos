@@ -1,13 +1,35 @@
 package main
 
 import (
+	"bytes"
+	"io"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/ArchdevilForge/kairos/internal/opportunity"
 	"github.com/ArchdevilForge/kairos/internal/storage"
 	"github.com/ArchdevilForge/kairos/internal/types"
 )
+
+func captureStdout(t *testing.T, fn func() error) (string, error) {
+	t.Helper()
+	orig := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	runErr := fn()
+	_ = w.Close()
+	os.Stdout = orig
+	var buf bytes.Buffer
+	_, _ = io.Copy(&buf, r)
+	_ = r.Close()
+	return buf.String(), runErr
+}
 
 func TestOpenJournalAndRejectFlow(t *testing.T) {
 	dir := t.TempDir()
@@ -144,5 +166,283 @@ func TestCloseWithSingleKeyExitReasonAndFunding(t *testing.T) {
 	}
 	if gotTkt.ExitReason != types.ExitReasonProtectiveStop || gotTkt.RealizedFundingUSD != 2.5 {
 		t.Fatalf("ticket ExitReason=%q RealizedFundingUSD=%v", gotTkt.ExitReason, gotTkt.RealizedFundingUSD)
+	}
+}
+
+func TestPhase3b_DeskGateShowAcceptFlow(t *testing.T) {
+	loc := time.FixedZone("UTC+8", 8*3600)
+	fixedNow := time.Date(2026, 11, 11, 20, 30, 0, 0, loc)
+	origNow := deskNowFunc
+	deskNowFunc = func() time.Time { return fixedNow }
+	defer func() { deskNowFunc = origNow }()
+
+	dir := t.TempDir()
+	j, err := storage.NewJournal(types.StorageConfig{DatabasePath: filepath.Join(dir, "kairos.db")})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. Ticket missing stop basis -> rejected with GATE_NO_STOP_BASIS; passes when --stop-basis supplied.
+	tNoBasis := types.DecisionTicket{
+		SchemaVersion: types.DecisionTicketSchemaVersion,
+		ID:            "t-nobasis",
+		SessionID:     "s1",
+		Symbol:        "ETH/USDT:USDT",
+		PlaybookID:    types.PlaybookLeaderPullbackV1,
+		Grade:         types.TicketGradeA,
+		Direction:     types.CycleDirectionUp,
+		Status:        types.TicketStatusOpen,
+		MarketCycle:   types.CycleMap{PrimaryDirection: types.CycleDirectionUp},
+		RiskPlan: types.RiskPlan{
+			EntryPrice:        2500,
+			StopPrice:         2450,
+			StopDistancePct:   2.0,
+			SuggestedNotional: 150,
+			MaxNotional:       200,
+			MaxLeverage:       10,
+			TrancheBaseUSD:    10_000,
+		},
+		CreatedAt: fixedNow.Unix(),
+	}
+	if err := j.SaveTicket(tNoBasis); err != nil {
+		t.Fatal(err)
+	}
+	outRej, err := captureStdout(t, func() error {
+		return run([]string{"-journal", dir, "gate", "--margin", "isolated", "--max-loss", "3", "t-nobasis"})
+	})
+	if err != nil || !strings.Contains(outRej, "REJECT GATE_NO_STOP_BASIS") {
+		t.Fatalf("expected REJECT GATE_NO_STOP_BASIS, got out=%q err=%v", outRej, err)
+	}
+	outPass, err := captureStdout(t, func() error {
+		return run([]string{"-journal", dir, "gate", "--margin", "isolated", "--max-loss", "3", "--stop-basis", "15m HL swing low", "t-nobasis"})
+	})
+	if err != nil || !strings.Contains(outPass, "PASS live_eligible=true") ||
+		!strings.Contains(outPass, "basis=15m HL swing low") || !strings.Contains(outPass, "tranche: base=$10000.00") {
+		t.Fatalf("expected PASS + stop/tranche display, got out=%q err=%v", outPass, err)
+	}
+
+	// 2. A1 trial budget: 3 prior POINT_1_BREAKOUT tickets on SOL -> 4th rejected with GATE_SETUP_TRIAL_BUDGET.
+	for i := 1; i <= 3; i++ {
+		prior := types.DecisionTicket{
+			SchemaVersion: types.DecisionTicketSchemaVersion,
+			ID:            "sol-p1-" + string(rune('0'+i)),
+			SessionID:     "s1",
+			Symbol:        "SOL/USDT:USDT",
+			PlaybookID:    types.PlaybookLeaderPullbackV1,
+			SetupPoint:    types.SetupPoint1Breakout,
+			Grade:         types.TicketGradeA,
+			Direction:     types.CycleDirectionUp,
+			Status:        types.TicketStatusAccepted,
+			CreatedAt:     fixedNow.Add(-time.Duration(i) * time.Hour).Unix(),
+		}
+		if err := j.SaveTicket(prior); err != nil {
+			t.Fatal(err)
+		}
+		ml := 2.0
+		_ = j.SaveDecision(types.DecisionRecord{
+			TicketID: prior.ID, Decision: types.DecisionAccepted,
+			PlannedMaxLossUSD: &ml, DecidedAt: prior.CreatedAt,
+		})
+	}
+	tSol4 := types.DecisionTicket{
+		SchemaVersion: types.DecisionTicketSchemaVersion,
+		ID:            "sol-p1-4",
+		SessionID:     "s1",
+		Symbol:        "SOL/USDT:USDT",
+		PlaybookID:    types.PlaybookLeaderPullbackV1,
+		Grade:         types.TicketGradeA,
+		Direction:     types.CycleDirectionUp,
+		Status:        types.TicketStatusOpen,
+		MarketCycle:   types.CycleMap{PrimaryDirection: types.CycleDirectionUp},
+		Invalidations: []string{"box high breaks"},
+		RiskPlan:      types.RiskPlan{EntryPrice: 100, StopPrice: 98, StopDistancePct: 2, SuggestedNotional: 180, MaxLeverage: 5, TrancheBaseUSD: 10_000},
+		CreatedAt:     fixedNow.Unix(),
+	}
+	_ = j.SaveTicket(tSol4)
+
+	// Unlabeled: warns WARN_UNLABELED_TRIAL_BUDGET, does NOT block!
+	outUnlabeled, err := captureStdout(t, func() error {
+		return run([]string{"-journal", dir, "gate", "--margin", "isolated", "--max-loss", "3", "sol-p1-4"})
+	})
+	if err != nil || !strings.Contains(outUnlabeled, "PASS live_eligible=true") ||
+		!strings.Contains(outUnlabeled, "WARN_UNLABELED_TRIAL_BUDGET") {
+		t.Fatalf("unlabeled 4th ticket must warn without blocking, got out=%q err=%v", outUnlabeled, err)
+	}
+
+	// Labeled via --setup-point 1: hard-blocks with GATE_SETUP_TRIAL_BUDGET!
+	outLabeled, err := captureStdout(t, func() error {
+		return run([]string{"-journal", dir, "gate", "--margin", "isolated", "--max-loss", "3", "--setup-point", "1", "sol-p1-4"})
+	})
+	if err != nil || !strings.Contains(outLabeled, "REJECT GATE_SETUP_TRIAL_BUDGET") {
+		t.Fatalf("labeled 4th ticket must hard-reject with GATE_SETUP_TRIAL_BUDGET, got out=%q err=%v", outLabeled, err)
+	}
+
+	// 3. A4 relapse warnings on `show` & `accept`: prior short stop 10m ago on BTC + 3 risk samples ($2) + current long $3.5
+	// (with --structural-confirm unlocking normal cooldown) -> emits 上头反手 & 亏后加码 warnings WITHOUT blocking accept!
+	tPriorStop := types.DecisionTicket{
+		SchemaVersion: types.DecisionTicketSchemaVersion,
+		ID:            "btc-stop-1",
+		SessionID:     "s1",
+		Symbol:        "BTC/USDT:USDT",
+		PlaybookID:    types.PlaybookLeaderPullbackV1,
+		Grade:         types.TicketGradeA,
+		Direction:     types.CycleDirectionDown,
+		Status:        types.TicketStatusClosed,
+		ExitReason:    types.ExitReasonProtectiveStop,
+		ClosedAt:      fixedNow.Add(-10 * time.Minute).Unix(),
+		CreatedAt:     fixedNow.Add(-20 * time.Minute).Unix(),
+	}
+	_ = j.SaveTicket(tPriorStop)
+	_ = j.SaveOutcome(storage.CounterfactualOutcome{
+		TicketID:     "btc-stop-1",
+		SessionID:    "s1",
+		Symbol:       "BTC/USDT:USDT",
+		Direction:    types.CycleDirectionDown,
+		Decision:     types.DecisionAccepted,
+		NetR:         -1.0,
+		StopHitFirst: true,
+		Finalized:    true,
+		PathEndUnix:  fixedNow.Add(-10 * time.Minute).Unix(),
+	})
+	tBtcRev := types.DecisionTicket{
+		SchemaVersion: types.DecisionTicketSchemaVersion,
+		ID:            "btc-rev-2",
+		SessionID:     "s1",
+		Symbol:        "BTC/USDT:USDT",
+		PlaybookID:    types.PlaybookLeaderPullbackV1,
+		Grade:         types.TicketGradeA,
+		Direction:     types.CycleDirectionUp,
+		Status:        types.TicketStatusOpen,
+		MarketCycle:   types.CycleMap{PrimaryDirection: types.CycleDirectionUp},
+		Invalidations: []string{"15m HL 68000"},
+		RiskPlan:      types.RiskPlan{EntryPrice: 69000, StopPrice: 68000, StopDistancePct: 1.45, SuggestedNotional: 250, MaxLeverage: 10, TrancheBaseUSD: 10_000},
+		CreatedAt:     fixedNow.Unix(),
+	}
+	_ = j.SaveTicket(tBtcRev)
+
+	outShow, err := captureStdout(t, func() error {
+		return run([]string{"-journal", dir, "show", "btc-rev-2"})
+	})
+	if err != nil || !strings.Contains(outShow, "WARN_TILT_REVERSE [上头反手]") || !strings.Contains(outShow, "WARN_LOSS_SIZE_ESCALATION [亏后加码]") {
+		t.Fatalf("show must render A4 warnings, got out=%q err=%v", outShow, err)
+	}
+
+	outAccept, err := captureStdout(t, func() error {
+		return run([]string{
+			"-journal", dir, "accept",
+			"--reason", "structure_good",
+			"--margin", "isolated",
+			"--max-loss", "3.5",
+			"--structural-confirm",
+			"--setup-point", "2",
+			"btc-rev-2",
+		})
+	})
+	if err != nil {
+		t.Fatalf("A4 warnings must NEVER block accept: %v (out=%q)", err, outAccept)
+	}
+	if !strings.Contains(outAccept, "WARN_TILT_REVERSE [上头反手]") ||
+		!strings.Contains(outAccept, "WARN_LOSS_SIZE_ESCALATION [亏后加码]") ||
+		!strings.Contains(outAccept, "ok btc-rev-2 accepted") {
+		t.Fatalf("unexpected accept output: %q", outAccept)
+	}
+}
+
+func TestPhase3c_DeskNoticesAndFeedbackFlow(t *testing.T) {
+	dir := t.TempDir()
+	nj, err := storage.NewNoticeJournal(types.StorageConfig{DatabasePath: dir + "/kairos.db"})
+	if err != nil {
+		t.Fatalf("NewNoticeJournal: %v", err)
+	}
+
+	base := time.Date(2026, 11, 11, 12, 0, 0, 0, time.UTC)
+	origNow := deskNowFunc
+	deskNowFunc = func() time.Time { return base }
+	defer func() { deskNowFunc = origNow }()
+
+	for _, ntc := range []types.Notice{
+		{
+			NoticeID:  "ntc-a",
+			CreatedAt: base.Add(-2 * time.Hour),
+			Symbol:    "SOL/USDT:USDT",
+			TriggerFacts: types.NoticeTriggerFacts{
+				EventType:   "volume_spike",
+				Price:       185.0,
+				FactSummary: "5 分钟量 = 窗口基准 6.20×",
+			},
+			Env:            types.NoticeEnvTags{BoxState: types.NoticeBoxOutside},
+			DeliveryStatus: types.NoticeStatusSent,
+		},
+		{
+			NoticeID:  "ntc-b",
+			CreatedAt: base.Add(-1 * time.Hour),
+			Symbol:    "ETH/USDT:USDT",
+			TriggerFacts: types.NoticeTriggerFacts{
+				EventType:   "price_velocity",
+				Price:       3120.0,
+				FactSummary: "60 秒价格变动 +1.50%",
+			},
+			Env:            types.NoticeEnvTags{BoxState: types.NoticeBoxBoundary},
+			DeliveryStatus: types.NoticeStatusSent,
+		},
+		{
+			NoticeID:       "ntc-c",
+			CreatedAt:      base.Add(-30 * time.Minute),
+			Symbol:         "SUI/USDT:USDT",
+			TriggerFacts:   types.NoticeTriggerFacts{EventType: "open_interest_change", FactSummary: "持仓量 OI 变动 +5.80%"},
+			Env:            types.NoticeEnvTags{BoxState: types.NoticeBoxOutside},
+			DeliveryStatus: types.NoticeStatusSent,
+		},
+	} {
+		if err := nj.SaveNotice(ntc); err != nil {
+			t.Fatalf("SaveNotice %s: %v", ntc.NoticeID, err)
+		}
+	}
+
+	cases := []struct {
+		noticeID string
+		rawAct   string
+		ticketID string
+		wantAct  types.NoticeFeedbackAction
+		wantZH   string
+	}{
+		{noticeID: "ntc-a", rawAct: "看了", wantAct: types.NoticeFeedbackSeen, wantZH: "看了"},
+		{noticeID: "ntc-b", rawAct: "做了", ticketID: "tkt-eth-1", wantAct: types.NoticeFeedbackActed, wantZH: "做了"},
+		{noticeID: "ntc-c", rawAct: "忽略", wantAct: types.NoticeFeedbackIgnored, wantZH: "忽略"},
+	}
+
+	for _, tc := range cases {
+		args := []string{"-journal", dir, "feedback", "--action", tc.rawAct}
+		if tc.ticketID != "" {
+			args = append(args, "--ticket", tc.ticketID)
+		}
+		args = append(args, tc.noticeID)
+
+		out, err := captureStdout(t, func() error {
+			return run(args)
+		})
+		if err != nil {
+			t.Fatalf("feedback %s (%s) failed: %v", tc.noticeID, tc.rawAct, err)
+		}
+		if !strings.Contains(out, string(tc.wantAct)) || !strings.Contains(out, tc.wantZH) {
+			t.Fatalf("unexpected feedback output: %q", out)
+		}
+
+		fb, err := nj.GetFeedback(tc.noticeID)
+		if err != nil || fb == nil || fb.Action != tc.wantAct || fb.TicketID != tc.ticketID {
+			t.Fatalf("persisted feedback mismatch for %s: %+v (err=%v)", tc.noticeID, fb, err)
+		}
+	}
+
+	listOut, err := captureStdout(t, func() error {
+		return run([]string{"-journal", dir, "notices"})
+	})
+	if err != nil {
+		t.Fatalf("notices list failed: %v", err)
+	}
+	for _, want := range []string{"feedback=看了", "feedback=做了", "feedback=忽略"} {
+		if !strings.Contains(listOut, want) {
+			t.Fatalf("expected %q in notices output:\n%s", want, listOut)
+		}
 	}
 }

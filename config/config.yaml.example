@@ -282,14 +282,22 @@ charts:
 # Rejected tickets stay in the journal as shadow/counterfactual records.
 riskGate:
   enabled: true
-  cooldownMinutes: 45     # same-symbol reentry cooldown after a loss (30-60)
-  windowStartHour: 18     # live window start, local hour (UTC+8)
-  windowEndHour: 1        # live window end (wraps past midnight)
-  maxLossUSD: 4           # per-trade max predefined loss ($100 challenge scale)
-  enforceLeverageCap: true # mechanical leverage caps (BTC/ETH <=10x, alts <=5x)
+  cooldownMinutes: 45        # same-symbol reentry cooldown after a loss (30-60)
+  windowStartHour: 18        # live window start, local hour (UTC+8)
+  windowEndHour: 1           # live window end (wraps past midnight)
+  maxLossUSD: 4              # per-trade max predefined loss ($100 challenge scale)
+  enforceLeverageCap: true   # mechanical leverage caps (BTC/ETH <=10x, alts <=5x)
   maxMajorLeverage: 10.0
   maxAltLeverage: 5.0
-  trancheBaseUSD: 10000.0 # fixed tranche base for leverage/notional bound
+  trancheBaseUSD: 10000.0    # fixed tranche base for leverage/notional bound
+  trialBudgetMax: 3          # A1: max trials per (symbol, setup_point) in rolling window (4th blocked)
+  trialBudgetWindowHours: 24 # A1: rolling window hours for trial budget
+  tiltReverseMinutes: 30     # A4(i): warn on same-coin reverse ticket within N min after stop-loss
+  churnConsecutiveStops: 2   # A4(ii): warn when consecutive stops >= N and burst tickets >= churnTicketCount
+  churnWindowMinutes: 60     # A4(ii): burst ticket window in minutes
+  churnTicketCount: 3        # A4(ii): burst ticket count threshold (including current ticket)
+  sizeEscalationMult: 1.5    # A4(iii): warn when post-loss risk >= mult * personal recent median
+  recentRiskSampleSize: 10   # A4(iii): personal recent risk sample window (min 3 required)
 
 # Shadow: sessions+rank board+journal; tickets only when enrich passes real gates.
 # assumeSpreadOK: only for shadow without L2; production must leave false.
@@ -314,3 +322,16 @@ opportunity:
   maxMajorLeverage: 10.0
   maxAltLeverage: 5.0
   trancheBaseUSD: 10000.0
+
+# ──────────────────────────────────────────────
+# Opportunity Notice Layer (Phase 3c — scene pointers & anomaly notices, never trade advice)
+# ──────────────────────────────────────────────
+notice:
+  enabled: false
+  # Per-symbol cooling window after a delivered notice (minutes; default 240 = 4h)
+  symbolCooldownMinutes: 240
+  # Rolling 24h cap across all symbols (default 12; suppressed notices only log to notice-journal.jsonl)
+  maxNoticesPerDay: 12
+  # Suppress notices when price sits inside a 4h consolidation box (default true)
+  suppressInsideBox: true
+

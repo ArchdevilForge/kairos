@@ -128,6 +128,7 @@ func (j *Journal) SaveSession(s types.OpportunitySession) error {
 func (j *Journal) SaveTicket(t types.DecisionTicket) error {
 	t.SeasonRegime = types.NormalizeSeasonRegime(t.SeasonRegime)
 	t.WinterDefenseHint = types.WinterDefenseHintFor(t.SeasonRegime)
+	t.SetupPoint = types.NormalizeSetupPoint(t.SetupPoint)
 	return j.append(JournalKindTicket, t.ID, t)
 }
 
@@ -566,6 +567,326 @@ func (j *Journal) ListOutcomes() ([]CounterfactualOutcome, error) {
 		out = append(out, latest[order[i]])
 	}
 	return out, nil
+}
+
+// ListDecisions returns the latest human decision record per ticket id, oldest-first.
+func (j *Journal) ListDecisions() (map[string]types.DecisionRecord, error) {
+	lines, err := j.readAll()
+	if err != nil {
+		return nil, err
+	}
+	latest := make(map[string]types.DecisionRecord)
+	for _, ln := range lines {
+		if ln.Kind != JournalKindDecision {
+			continue
+		}
+		var d types.DecisionRecord
+		if err := json.Unmarshal(ln.Payload, &d); err != nil {
+			continue
+		}
+		id := d.TicketID
+		if id == "" {
+			id = ln.ID
+		}
+		if id == "" {
+			continue
+		}
+		latest[id] = d
+	}
+	return latest, nil
+}
+
+// TrialBudgetStats counts active/accepted/closed trial tickets in [now-window, now] for Phase 3b A1.
+// Explicitly rejected, missed, or expired candidate tickets do not consume the owner's 3-trial budget.
+func (j *Journal) TrialBudgetStats(
+	symbol string,
+	setupPoint types.SetupPoint,
+	excludeTicketID string,
+	now time.Time,
+	window time.Duration,
+) (sameSetup int, sameSymbol int, err error) {
+	if j == nil {
+		return 0, 0, nil
+	}
+	tickets, err := j.ListTickets("")
+	if err != nil {
+		return 0, 0, err
+	}
+	if window <= 0 {
+		window = 24 * time.Hour
+	}
+	nowUnix := now.Unix()
+	cutoffUnix := now.Add(-window).Unix()
+	normTarget := types.NormalizeSetupPoint(setupPoint)
+
+	for _, t := range tickets {
+		if t.ID == excludeTicketID || t.Symbol != symbol {
+			continue
+		}
+		if t.Status == types.TicketStatusRejected ||
+			t.Status == types.TicketStatusMissed ||
+			t.Status == types.TicketStatusExpired {
+			continue
+		}
+		ts := t.CreatedAt
+		if ts == 0 {
+			ts = t.SignalAt
+		}
+		if !now.IsZero() && ts > 0 && (ts < cutoffUnix || ts > nowUnix) {
+			continue
+		}
+		sameSymbol++
+		if normTarget != "" && types.NormalizeSetupPoint(t.SetupPoint) == normTarget {
+			sameSetup++
+		}
+	}
+	return sameSetup, sameSymbol, nil
+}
+
+// RelapseStats carries pure journal-derived facts for STRATEGY §12 relapse warnings (Phase 3b A4).
+type RelapseStats struct {
+	LastStopSameSymbolAt        time.Time
+	LastStopSameSymbolDirection types.CycleDirection
+	GlobalConsecutiveStops      int
+	RecentTicketsInChurnWindow  int
+	LastOutcomeWasLoss          bool
+	RecentPersonalRiskUSD       []float64
+}
+
+// RelapseHistoryStats computes STRATEGY §12 relapse warning inputs from the journal as of now.
+func (j *Journal) RelapseHistoryStats(
+	symbol string,
+	excludeTicketID string,
+	now time.Time,
+	churnWindow time.Duration,
+	recentSampleSize int,
+) (RelapseStats, error) {
+	var stats RelapseStats
+	if j == nil {
+		return stats, nil
+	}
+	tickets, err := j.ListTickets("")
+	if err != nil {
+		return stats, err
+	}
+	outcomes, err := j.ListOutcomes()
+	if err != nil {
+		return stats, err
+	}
+	decisions, err := j.ListDecisions()
+	if err != nil {
+		return stats, err
+	}
+
+	ticketByID := make(map[string]types.DecisionTicket, len(tickets))
+	for _, t := range tickets {
+		ticketByID[t.ID] = t
+	}
+
+	type closedTrade struct {
+		ticketID string
+		symbol   string
+		dir      types.CycleDirection
+		endUnix  int64
+		isStop   bool
+		isLoss   bool
+	}
+	closedMap := make(map[string]closedTrade)
+
+	for _, o := range outcomes {
+		if o.TicketID == excludeTicketID || o.Decision != types.DecisionAccepted || !o.Finalized {
+			continue
+		}
+		end := o.PathEndUnix
+		if end == 0 {
+			end = o.AsOfUnix
+		}
+		if !now.IsZero() && end > 0 && end > now.Unix() {
+			continue
+		}
+		isLoss := o.NetR < 0
+		isStop := isLoss || o.StopHitFirst ||
+			o.ExitReason == types.ExitReasonProtectiveStop ||
+			o.ExitReason == types.ExitReasonFakeoutAbort
+		closedMap[o.TicketID] = closedTrade{
+			ticketID: o.TicketID,
+			symbol:   o.Symbol,
+			dir:      o.Direction,
+			endUnix:  end,
+			isStop:   isStop,
+			isLoss:   isLoss,
+		}
+	}
+
+	// Also merge tickets closed via `kairos-desk close` when outcome tracker has not finalized yet.
+	for _, t := range tickets {
+		if t.ID == excludeTicketID || t.Status != types.TicketStatusClosed {
+			continue
+		}
+		if _, exists := closedMap[t.ID]; exists {
+			continue
+		}
+		end := t.ClosedAt
+		if end == 0 {
+			end = t.CreatedAt
+		}
+		if !now.IsZero() && end > 0 && end > now.Unix() {
+			continue
+		}
+		isStop := t.ExitReason == types.ExitReasonProtectiveStop ||
+			t.ExitReason == types.ExitReasonFakeoutAbort
+		isLoss := isStop
+		if t.ExitPrice > 0 && t.RiskPlan.EntryPrice > 0 {
+			switch t.Direction {
+			case types.CycleDirectionUp:
+				if t.ExitPrice < t.RiskPlan.EntryPrice {
+					isLoss = true
+				}
+			case types.CycleDirectionDown:
+				if t.ExitPrice > t.RiskPlan.EntryPrice {
+					isLoss = true
+				}
+			}
+			if isLoss && (t.ExitReason == "" || t.RiskPlan.StopPrice > 0) {
+				if (t.Direction == types.CycleDirectionUp && t.ExitPrice <= t.RiskPlan.StopPrice*1.0005) ||
+					(t.Direction == types.CycleDirectionDown && t.ExitPrice >= t.RiskPlan.StopPrice*0.9995) {
+					isStop = true
+				}
+			}
+		}
+		closedMap[t.ID] = closedTrade{
+			ticketID: t.ID,
+			symbol:   t.Symbol,
+			dir:      t.Direction,
+			endUnix:  end,
+			isStop:   isStop,
+			isLoss:   isLoss,
+		}
+	}
+
+	closedList := make([]closedTrade, 0, len(closedMap))
+	for _, ct := range closedMap {
+		closedList = append(closedList, ct)
+	}
+	sort.Slice(closedList, func(i, k int) bool {
+		if closedList[i].endUnix != closedList[k].endUnix {
+			return closedList[i].endUnix < closedList[k].endUnix
+		}
+		return closedList[i].ticketID < closedList[k].ticketID
+	})
+
+	for _, ct := range closedList {
+		if ct.symbol == symbol && ct.isStop && ct.endUnix > 0 {
+			stats.LastStopSameSymbolAt = time.Unix(ct.endUnix, 0)
+			stats.LastStopSameSymbolDirection = ct.dir
+		}
+	}
+	for i := len(closedList) - 1; i >= 0; i-- {
+		if closedList[i].isStop {
+			stats.GlobalConsecutiveStops++
+		} else {
+			break
+		}
+	}
+	if len(closedList) > 0 {
+		stats.LastOutcomeWasLoss = closedList[len(closedList)-1].isLoss
+	}
+
+	if churnWindow <= 0 {
+		churnWindow = 60 * time.Minute
+	}
+	if recentSampleSize <= 0 {
+		recentSampleSize = 10
+	}
+	cutoffChurn := now.Add(-churnWindow).Unix()
+
+	type timedRisk struct {
+		at      int64
+		id      string
+		riskUSD float64
+	}
+	var riskRows []timedRisk
+
+	for _, t := range tickets {
+		if t.ID == excludeTicketID {
+			continue
+		}
+		if t.Status == types.TicketStatusRejected ||
+			t.Status == types.TicketStatusMissed ||
+			t.Status == types.TicketStatusExpired {
+			continue
+		}
+		ticketTS := t.CreatedAt
+		if ticketTS == 0 {
+			ticketTS = t.SignalAt
+		}
+		if ticketTS == 0 {
+			if dec, ok := decisions[t.ID]; ok && dec.DecidedAt > 0 {
+				ticketTS = dec.DecidedAt
+			}
+		}
+		if !now.IsZero() && ticketTS > 0 && ticketTS >= cutoffChurn && ticketTS <= now.Unix() {
+			stats.RecentTicketsInChurnWindow++
+		}
+
+		// Collect personal historical risk USD from accepted/closed trades.
+		dec, hasDec := decisions[t.ID]
+		ts := ticketTS
+		if hasDec && dec.DecidedAt > 0 {
+			ts = dec.DecidedAt
+		}
+		isTraded := t.Status == types.TicketStatusAccepted ||
+			t.Status == types.TicketStatusClosed ||
+			(hasDec && dec.Decision == types.DecisionAccepted)
+		if !isTraded {
+			continue
+		}
+		if !now.IsZero() && ts > 0 && ts > now.Unix() {
+			continue
+		}
+		riskUSD := 0.0
+		if hasDec && dec.PlannedMaxLossUSD != nil && *dec.PlannedMaxLossUSD > 0 {
+			riskUSD = *dec.PlannedMaxLossUSD
+		} else if t.RiskPlan.SuggestedNotional > 0 {
+			stopPct := t.RiskPlan.EffectiveStopPct
+			if stopPct <= 0 {
+				stopPct = t.RiskPlan.StopDistancePct
+			}
+			if stopPct > 0 {
+				riskUSD = t.RiskPlan.SuggestedNotional * (stopPct / 100.0)
+			}
+		}
+		if riskUSD > 0 {
+			riskRows = append(riskRows, timedRisk{at: ts, id: t.ID, riskUSD: riskUSD})
+		}
+	}
+	// Also check decisions whose ticket might only have PlannedMaxLossUSD without ticket status update.
+	for id, dec := range decisions {
+		if id == excludeTicketID || dec.Decision != types.DecisionAccepted {
+			continue
+		}
+		if _, exists := ticketByID[id]; exists {
+			continue
+		}
+		if dec.PlannedMaxLossUSD != nil && *dec.PlannedMaxLossUSD > 0 {
+			riskRows = append(riskRows, timedRisk{at: dec.DecidedAt, id: id, riskUSD: *dec.PlannedMaxLossUSD})
+		}
+	}
+
+	sort.Slice(riskRows, func(i, k int) bool {
+		if riskRows[i].at != riskRows[k].at {
+			return riskRows[i].at < riskRows[k].at
+		}
+		return riskRows[i].id < riskRows[k].id
+	})
+	if len(riskRows) > recentSampleSize {
+		riskRows = riskRows[len(riskRows)-recentSampleSize:]
+	}
+	for _, r := range riskRows {
+		stats.RecentPersonalRiskUSD = append(stats.RecentPersonalRiskUSD, r.riskUSD)
+	}
+
+	return stats, nil
 }
 
 // DetectGitSHA returns the current commit revision: build-info vcs.revision
