@@ -27,7 +27,11 @@ func (s *Service) WatchAndEnrich(ctx context.Context, req EnrichRequest) {
 	deadline := time.Now().Add(ttl)
 
 	try := func() bool {
-		res, err := s.EnrichAndEvaluate(ctx, req)
+		evalReq := req
+		if evalReq.UniverseBars5mSnapshot != nil {
+			evalReq.UniverseBars5m = evalReq.UniverseBars5mSnapshot()
+		}
+		res, err := s.EnrichAndEvaluate(ctx, evalReq)
 		if err != nil {
 			s.log.Warn("watch enrich failed", "error", err)
 			return false

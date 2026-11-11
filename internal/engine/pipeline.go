@@ -94,6 +94,11 @@ type Pipeline struct {
 	// oppCtx cancelled when pipeline stops — watch/enrich goroutines should honor it.
 	oppCtx context.Context
 
+	// Cross-sectional closed 5m QuoteVol feed for causal SeasonRegime tagging (Phase 2d).
+	seasonFeed *seasonFeed
+	// seasonPollInterval overrides defaultSeasonPollInterval when non-zero (test seam).
+	seasonPollInterval time.Duration
+
 	// Delivery gating state. dedupLast is attempt-level per event key
 	// ("symbol__event_type[__direction]") and commits on every attempt so a
 	// failing channel cannot be hammered. cooldownLast is per symbol and
@@ -173,6 +178,7 @@ func NewPipeline(cfg *types.Config, tg *notify.TelegramClient) *Pipeline {
 		marketCapByCoin:       make(map[string]float64),
 		tg:                    tg,
 		blacklist:             utils.NewBlacklist(),
+		seasonFeed:            newSeasonFeed(log),
 		dedupWindowSeconds:    5,
 		symbolCooldownSeconds: 1800,
 	}
@@ -463,6 +469,13 @@ func (p *Pipeline) Start(ctx context.Context) error {
 			p.opportunity.RunOutcomeLoop(gCtx, ex, ocfg)
 			return nil
 		})
+		// 5i3. Cross-sectional 5m season feed for shadow SeasonRegime tagging.
+		if p.seasonFeed != nil {
+			g.Go(func() error {
+				p.seasonFeedLoop(gCtx)
+				return nil
+			})
+		}
 	}
 
 	// 5j. Market pulse evaluation loop + 60s calibration snapshot writer.
@@ -567,9 +580,11 @@ func (p *Pipeline) enrichOpportunityAsync(evt types.AnomalyEvent) {
 		}
 		// Watch loop respects pipeline cancel + session TTL inside WatchAndEnrich.
 		p.opportunity.WatchAndEnrich(base, opportunity.EnrichRequest{
-			Event:   evt,
-			Fetcher: fetch,
-			Config:  ecfg,
+			Event:                  evt,
+			Fetcher:                fetch,
+			Config:                 ecfg,
+			UniverseBars5m:         p.seasonBarsSnapshot(),
+			UniverseBars5mSnapshot: p.seasonBarsSnapshot,
 		})
 		// seed/refresh outcomes after watch returns (tickets or expiry)
 		ctx, cancel := context.WithTimeout(base, 25*time.Second)
@@ -1711,6 +1726,9 @@ func (p *Pipeline) refreshOnce(ctx context.Context) {
 		)
 		if p.marketPulseDet != nil && name == primary {
 			p.marketPulseDet.UpdateUniverse(newSymbols)
+		}
+		if p.seasonFeed != nil && name == primary {
+			p.seasonFeed.pruneUniverse(buildSeasonUniverse(newSymbols))
 		}
 		if es := p.exchangeStates[name]; es != nil {
 			select {
