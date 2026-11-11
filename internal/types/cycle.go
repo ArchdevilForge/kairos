@@ -28,6 +28,64 @@ const (
 	WavePhaseWinter WavePhase = "winter" // no direction / reset / garbage chop
 )
 
+// SeasonRegime is the causal cross-sectional 4-season market state ported from
+// tools/research/h1_experiment.py (Phase 2c shadow advisory only).
+// Values when present are strictly uppercase: SPRING / SUMMER / AUTUMN / WINTER.
+// Empty ("") means cross-sectional inputs were not supplied; never map from
+// CycleMap or default to WINTER when unmeasured (owner decision 2026-11-11).
+type SeasonRegime string
+
+const (
+	SeasonRegimeSpring SeasonRegime = "SPRING"
+	SeasonRegimeSummer SeasonRegime = "SUMMER"
+	SeasonRegimeAutumn SeasonRegime = "AUTUMN"
+	SeasonRegimeWinter SeasonRegime = "WINTER"
+)
+
+// DefaultWinterDefenseHint is the human-facing advisory attached ONLY when
+// SeasonRegime == SeasonRegimeWinter from genuine cross-sectional calculation
+// (Phase 2c owner decision 2026-11-11).
+// Parent hypothesis H1a failed its joint bar; this hint rests solely on the
+// Winter Defense sub-test passing across two independent samples.
+const DefaultWinterDefenseHint = "advisory: consider 0.25x risk scaling (winter tickets historically negative expectancy, defense sub-test passed twice); human decides position size"
+
+// IsValidSeasonRegime reports whether r is one of SPRING, SUMMER, AUTUMN, WINTER.
+func IsValidSeasonRegime(r SeasonRegime) bool {
+	switch r {
+	case SeasonRegimeSpring, SeasonRegimeSummer, SeasonRegimeAutumn, SeasonRegimeWinter:
+		return true
+	default:
+		return false
+	}
+}
+
+// NormalizeSeasonRegime canonicalizes a valid SeasonRegime value into
+// SPRING/SUMMER/AUTUMN/WINTER, or returns "" when empty/unrecognized.
+// Never defaults to WINTER when unmeasured.
+func NormalizeSeasonRegime(r SeasonRegime) SeasonRegime {
+	switch r {
+	case SeasonRegimeSpring, SeasonRegime("spring"):
+		return SeasonRegimeSpring
+	case SeasonRegimeSummer, SeasonRegime("summer"):
+		return SeasonRegimeSummer
+	case SeasonRegimeAutumn, SeasonRegime("autumn"):
+		return SeasonRegimeAutumn
+	case SeasonRegimeWinter, SeasonRegime("winter"):
+		return SeasonRegimeWinter
+	default:
+		return ""
+	}
+}
+
+// WinterDefenseHintFor returns DefaultWinterDefenseHint if and only if
+// NormalizeSeasonRegime(regime) == SeasonRegimeWinter; otherwise returns "".
+func WinterDefenseHintFor(regime SeasonRegime) string {
+	if NormalizeSeasonRegime(regime) == SeasonRegimeWinter {
+		return DefaultWinterDefenseHint
+	}
+	return ""
+}
+
 // TimeframeRole is one of the three fixed hierarchy roles.
 type TimeframeRole string
 
