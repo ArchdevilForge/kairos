@@ -253,13 +253,21 @@ func (nj *NoticeJournal) GetFeedback(noticeID string) (*types.NoticeFeedback, er
 }
 
 // NoticeBudgetStats summarizes delivery & suppression counts from notice-journal.jsonl (§3 B4).
+//
+// Accepted* counts every notice that consumed owner attention (sent, dry_run,
+// failed); Sent* only counts actual deliveries. Cooldown and the daily cap read
+// the Accepted* fields so a missing/failing delivery channel cannot silently
+// disable them.
 type NoticeBudgetStats struct {
-	LastSentSymbolAt   time.Time
-	SentInDayWindow    int
-	TotalNotices       int
-	SentTotal          int
-	SuppressedTotal    int
-	SuppressedByReason map[string]int
+	LastSentSymbolAt     time.Time
+	LastAcceptedSymbolAt time.Time
+	SentInDayWindow      int
+	AcceptedInDayWindow  int
+	TotalNotices         int
+	SentTotal            int
+	AcceptedTotal        int
+	SuppressedTotal      int
+	SuppressedByReason   map[string]int
 }
 
 // BudgetStats computes symbol cooldown timestamp, rolling day-window sent count,
@@ -278,6 +286,15 @@ func (nj *NoticeJournal) BudgetStats(symbol string, now time.Time, dayWindow tim
 	cutoff := now.Add(-dayWindow)
 	stats.TotalNotices = len(notices)
 	for _, n := range notices {
+		if n.DeliveryStatus.Accepted() {
+			stats.AcceptedTotal++
+			if !n.CreatedAt.After(now) && !n.CreatedAt.Before(cutoff) {
+				stats.AcceptedInDayWindow++
+			}
+			if symbol != "" && n.Symbol == symbol && !n.CreatedAt.After(now) && n.CreatedAt.After(stats.LastAcceptedSymbolAt) {
+				stats.LastAcceptedSymbolAt = n.CreatedAt
+			}
+		}
 		switch n.DeliveryStatus {
 		case types.NoticeStatusSent:
 			stats.SentTotal++
@@ -297,4 +314,32 @@ func (nj *NoticeJournal) BudgetStats(symbol string, now time.Time, dayWindow tim
 		}
 	}
 	return stats, nil
+}
+
+// LastAcceptedEvent returns the most recent accepted notice for symbol+eventType
+// created at or after since. Suppressed records are skipped: a suppressed
+// window never represents an event, so it must not dedup a later one.
+func (nj *NoticeJournal) LastAcceptedEvent(symbol, eventType string, since time.Time) (types.Notice, bool, error) {
+	if nj == nil {
+		return types.Notice{}, false, nil
+	}
+	notices, _, err := nj.readAll()
+	if err != nil {
+		return types.Notice{}, false, err
+	}
+	var best types.Notice
+	found := false
+	for _, n := range notices {
+		if !n.DeliveryStatus.Accepted() || n.Symbol != symbol {
+			continue
+		}
+		if n.TriggerFacts.EventType != eventType || n.CreatedAt.Before(since) {
+			continue
+		}
+		if !found || n.CreatedAt.After(best.CreatedAt) {
+			best = n
+			found = true
+		}
+	}
+	return best, found, nil
 }

@@ -2,6 +2,8 @@ package notice
 
 import (
 	"context"
+	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -493,6 +495,213 @@ func TestService_SuppressionCooldownAndDailyCap(t *testing.T) {
 		stats.SuppressedByReason[types.NoticeSuppressSymbolCooldown] != 1 ||
 		stats.SuppressedByReason[types.NoticeSuppressDailyCap] != 1 {
 		t.Fatalf("unexpected suppression breakdown: %+v", stats.SuppressedByReason)
+	}
+}
+
+// Production evidence this table locks down (2026-11-11/12 kairosd run):
+//   - notice.symbolCooldownMinutes=240 never fired without a Telegram channel:
+//     AKE emitted at 04:30, 05:27 and 07:56.
+//   - AAVE's single -2.12% move shipped twice in the same minute because the 60s
+//     and 120s velocity windows both triggered.
+func TestService_AcceptedBudgetAndEventDedup_Table(t *testing.T) {
+	type step struct {
+		symbol     string
+		at         time.Time
+		changePct  float64
+		windowSecs int
+	}
+	base := time.Date(2026, 11, 11, 4, 30, 0, 0, time.UTC)
+
+	cases := []struct {
+		name       string
+		cfg        types.NoticeConfig
+		sender     TextSender
+		steps      []step
+		wantStatus []types.NoticeDeliveryStatus
+		wantReason []string
+		// wantAccepted is the accepted-notice count the journal must report, i.e.
+		// how many notices the owner actually paid attention to.
+		wantAccepted int
+	}{
+		{
+			name: "no telegram channel still runs the 4h symbol cooldown",
+			cfg: types.NoticeConfig{
+				Enabled:               true,
+				SymbolCooldownMinutes: 240,
+				MaxNoticesPerDay:      12,
+			},
+			sender: nil,
+			steps: []step{
+				{symbol: "AKE/USDT:USDT", at: base, changePct: -2.40, windowSecs: 60},
+				{symbol: "AKE/USDT:USDT", at: base.Add(57 * time.Minute), changePct: 2.10, windowSecs: 60},
+				{symbol: "AKE/USDT:USDT", at: base.Add(3*time.Hour + 26*time.Minute), changePct: -1.90, windowSecs: 60},
+			},
+			wantStatus: []types.NoticeDeliveryStatus{
+				types.NoticeStatusDryRun,
+				types.NoticeStatusSuppressed,
+				types.NoticeStatusSuppressed,
+			},
+			wantReason:   []string{"", types.NoticeSuppressSymbolCooldown, types.NoticeSuppressSymbolCooldown},
+			wantAccepted: 1,
+		},
+		{
+			name: "same move on 60s and 120s windows ships one notice",
+			cfg: types.NoticeConfig{
+				Enabled:               true,
+				SymbolCooldownMinutes: 240,
+				MaxNoticesPerDay:      12,
+			},
+			sender: &fakeSender{},
+			steps: []step{
+				{symbol: "AAVE/USDT:USDT", at: base, changePct: -2.12, windowSecs: 60},
+				{symbol: "AAVE/USDT:USDT", at: base.Add(40 * time.Second), changePct: -2.12, windowSecs: 120},
+			},
+			wantStatus: []types.NoticeDeliveryStatus{
+				types.NoticeStatusSent,
+				types.NoticeStatusSuppressed,
+			},
+			wantReason:   []string{"", types.NoticeSuppressDuplicateEvent},
+			wantAccepted: 1,
+		},
+		{
+			name: "failed delivery still consumes cooldown",
+			cfg: types.NoticeConfig{
+				Enabled:               true,
+				SymbolCooldownMinutes: 240,
+				MaxNoticesPerDay:      12,
+			},
+			sender: &fakeSender{err: errors.New("telegram 500")},
+			steps: []step{
+				{symbol: "SUI/USDT:USDT", at: base, changePct: 2.50, windowSecs: 60},
+				{symbol: "SUI/USDT:USDT", at: base.Add(30 * time.Minute), changePct: -2.60, windowSecs: 60},
+			},
+			wantStatus: []types.NoticeDeliveryStatus{
+				types.NoticeStatusFailed,
+				types.NoticeStatusSuppressed,
+			},
+			wantReason:   []string{"", types.NoticeSuppressSymbolCooldown},
+			wantAccepted: 1,
+		},
+		{
+			name: "daily cap counts accepted dry-run notices",
+			cfg: types.NoticeConfig{
+				Enabled:               true,
+				SymbolCooldownMinutes: 240,
+				MaxNoticesPerDay:      2,
+			},
+			sender: nil,
+			steps: []step{
+				{symbol: "SOL/USDT:USDT", at: base, changePct: 1.80, windowSecs: 60},
+				{symbol: "ETH/USDT:USDT", at: base.Add(10 * time.Minute), changePct: -1.70, windowSecs: 60},
+				{symbol: "XRP/USDT:USDT", at: base.Add(20 * time.Minute), changePct: 2.20, windowSecs: 60},
+			},
+			wantStatus: []types.NoticeDeliveryStatus{
+				types.NoticeStatusDryRun,
+				types.NoticeStatusDryRun,
+				types.NoticeStatusSuppressed,
+			},
+			wantReason:   []string{"", "", types.NoticeSuppressDailyCap},
+			wantAccepted: 2,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			nj, err := storage.NewNoticeJournal(types.StorageConfig{DatabasePath: filepath.Join(dir, "kairos.db")})
+			if err != nil {
+				t.Fatalf("NewNoticeJournal: %v", err)
+			}
+			svc := NewService(tc.cfg, nj, tc.sender)
+
+			last := base
+			for i, st := range tc.steps {
+				evt := types.AnomalyEvent{
+					Symbol:    st.symbol,
+					EventType: "price_velocity",
+					Timestamp: float64(st.at.Unix()),
+					Data: map[string]any{
+						"price_to":       109.4,
+						"change_pct":     st.changePct,
+						"window_seconds": st.windowSecs,
+					},
+				}
+				got, err := svc.ProcessAnomaly(context.Background(), ProcessRequest{
+					Event:     evt,
+					Candles4h: makePoint1Candles(),
+				})
+				// A failed send returns the notice together with the error; the
+				// journal record is what matters for budget accounting.
+				if err != nil && (got == nil || got.DeliveryStatus != types.NoticeStatusFailed) {
+					t.Fatalf("step %d (%s): %v", i, st.symbol, err)
+				}
+				if got == nil {
+					t.Fatalf("step %d (%s): nil notice", i, st.symbol)
+				}
+				if got.DeliveryStatus != tc.wantStatus[i] {
+					t.Fatalf("step %d (%s): status = %q, want %q (reason=%q detail=%q)",
+						i, st.symbol, got.DeliveryStatus, tc.wantStatus[i], got.SuppressReason, got.SuppressDetail)
+				}
+				if got.SuppressReason != tc.wantReason[i] {
+					t.Fatalf("step %d (%s): suppress_reason = %q, want %q", i, st.symbol, got.SuppressReason, tc.wantReason[i])
+				}
+				if got.DeliveryStatus == types.NoticeStatusSuppressed && strings.TrimSpace(got.SuppressDetail) == "" {
+					t.Fatalf("step %d (%s): suppressed notice must carry a journal-visible detail", i, st.symbol)
+				}
+				if st.at.After(last) {
+					last = st.at
+				}
+			}
+
+			stats, err := nj.BudgetStats("", last, 24*time.Hour)
+			if err != nil {
+				t.Fatalf("BudgetStats: %v", err)
+			}
+			if stats.AcceptedTotal != tc.wantAccepted {
+				t.Fatalf("accepted notices = %d, want %d (stats=%+v)", stats.AcceptedTotal, tc.wantAccepted, stats)
+			}
+			if stats.TotalNotices != len(tc.steps) {
+				t.Fatalf("journaled notices = %d, want %d (nothing may be dropped silently)", stats.TotalNotices, len(tc.steps))
+			}
+		})
+	}
+}
+
+// The 120s record must name the accepted window so the comparison is auditable.
+func TestService_DuplicateEventDetailNamesRepresentative(t *testing.T) {
+	dir := t.TempDir()
+	nj, err := storage.NewNoticeJournal(types.StorageConfig{DatabasePath: filepath.Join(dir, "kairos.db")})
+	if err != nil {
+		t.Fatalf("NewNoticeJournal: %v", err)
+	}
+	svc := NewService(types.NoticeConfig{Enabled: true, SymbolCooldownMinutes: 240, MaxNoticesPerDay: 12}, nj, &fakeSender{})
+	base := time.Date(2026, 11, 11, 9, 0, 0, 0, time.UTC)
+
+	first, err := svc.ProcessAnomaly(context.Background(), ProcessRequest{
+		Event: types.AnomalyEvent{
+			Symbol: "AAVE/USDT:USDT", EventType: "price_velocity", Timestamp: float64(base.Unix()),
+			Data: map[string]any{"price_to": 109.4, "change_pct": -2.12, "window_seconds": 120},
+		},
+		Candles4h: makePoint1Candles(),
+	})
+	if err != nil || first.DeliveryStatus != types.NoticeStatusSent {
+		t.Fatalf("first window: %+v err=%v", first, err)
+	}
+	second, err := svc.ProcessAnomaly(context.Background(), ProcessRequest{
+		Event: types.AnomalyEvent{
+			Symbol: "AAVE/USDT:USDT", EventType: "price_velocity", Timestamp: float64(base.Add(30 * time.Second).Unix()),
+			Data: map[string]any{"price_to": 109.4, "change_pct": -1.95, "window_seconds": 60},
+		},
+		Candles4h: makePoint1Candles(),
+	})
+	if err != nil || second.DeliveryStatus != types.NoticeStatusSuppressed ||
+		second.SuppressReason != types.NoticeSuppressDuplicateEvent {
+		t.Fatalf("second window: %+v err=%v", second, err)
+	}
+	if !strings.Contains(second.SuppressDetail, first.NoticeID) ||
+		!strings.Contains(second.SuppressDetail, "120 秒") ||
+		!strings.Contains(second.SuppressDetail, "信息量更低") {
+		t.Fatalf("duplicate detail must name the representative window/notice, got %q", second.SuppressDetail)
 	}
 }
 

@@ -304,6 +304,9 @@ func Validate(cfg *types.Config) error {
 	if cfg.Notice.MaxNoticesPerDay < 0 {
 		addf("notice.maxNoticesPerDay must be >= 0, got %d", cfg.Notice.MaxNoticesPerDay)
 	}
+	if cfg.Notice.EventDedupSeconds < 0 {
+		addf("notice.eventDedupSeconds must be >= 0, got %d", cfg.Notice.EventDedupSeconds)
+	}
 
 	if len(errs) == 0 {
 		return nil

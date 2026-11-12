@@ -333,10 +333,17 @@ opportunity:
 # ──────────────────────────────────────────────
 notice:
   enabled: false
-  # Per-symbol cooling window after a delivered notice (minutes; default 240 = 4h)
+  # Per-symbol cooling window after an ACCEPTED notice (minutes; default 240 = 4h).
+  # "Accepted" = journaled and marked for delivery: it holds with no Telegram
+  # channel configured and after a failed send, not only on successful delivery.
   symbolCooldownMinutes: 240
-  # Rolling 24h cap across all symbols (default 12; suppressed notices only log to notice-journal.jsonl)
+  # Rolling 24h cap across all symbols (default 12), counted on accepted notices.
+  # Suppressed notices only log to notice-journal.jsonl (status/reason/detail).
   maxNoticesPerDay: 12
+  # Collapse the same underlying move reported by several velocity windows
+  # (60s then 120s) into one notice; the extra windows are journaled as
+  # suppressed/duplicate_event (seconds; default 300, 0 disables).
+  eventDedupSeconds: 300
   # Suppress notices when price sits inside a 4h consolidation box (default true)
   suppressInsideBox: true
 
