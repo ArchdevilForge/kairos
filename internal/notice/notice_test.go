@@ -1081,10 +1081,12 @@ func TestService_Coalescing_FlushReportsJournalFailure(t *testing.T) {
 	}, nj, sender)
 
 	saveFailing := true
+	writes := map[string]int{}
 	svc.save = func(n types.Notice) error {
 		if saveFailing {
 			return errors.New("disk full")
 		}
+		writes[n.NoticeID]++
 		return nj.SaveNotice(n)
 	}
 
@@ -1130,6 +1132,29 @@ func TestService_Coalescing_FlushReportsJournalFailure(t *testing.T) {
 	}
 	if len(notices) != 2 {
 		t.Fatalf("retry must journal 1 accepted + 1 displaced record, got %d: %+v", len(notices), notices)
+	}
+	var sent, displaced int
+	for _, n := range notices {
+		switch n.DeliveryStatus {
+		case types.NoticeStatusSent:
+			sent++
+		case types.NoticeStatusSuppressed:
+			displaced++
+			if n.SuppressReason != types.NoticeSuppressDuplicateEvent {
+				t.Fatalf("displaced record has reason %q, want duplicate_event", n.SuppressReason)
+			}
+		}
+	}
+	if sent != 1 || displaced != 1 {
+		t.Fatalf("journal statuses sent=%d displaced=%d, want 1/1: %+v", sent, displaced, notices)
+	}
+	for id, n := range writes {
+		if n != 1 {
+			t.Fatalf("notice %s journaled %d times, want exactly 1", id, n)
+		}
+	}
+	if _, still := svc.pending["SOL/USDT:USDT|price_velocity"]; still {
+		t.Fatal("bucket must be released once every record is journaled")
 	}
 }
 
@@ -1185,5 +1210,109 @@ func TestService_Coalescing_DryRunWriteFailureIsRetried(t *testing.T) {
 	}
 	if len(notices) != 1 || notices[0].DeliveryStatus != types.NoticeStatusDryRun {
 		t.Fatalf("retry must journal the dry-run notice exactly once, got %+v", notices)
+	}
+	if _, still := svc.pending["SOL/USDT:USDT|price_velocity"]; still {
+		t.Fatal("bucket must be released once the dry-run record is journaled")
+	}
+}
+
+// A candidate that arrives after a failed flush must not displace the already
+// attempted representative: the representative is frozen, the newcomer is
+// journaled as a suppressed duplicate, and no record is lost or double-written.
+func TestService_Coalescing_FrozenRepresentativeAfterFailedFlush(t *testing.T) {
+	dir := t.TempDir()
+	nj, err := storage.NewNoticeJournal(types.StorageConfig{DatabasePath: filepath.Join(dir, "kairos.db")})
+	if err != nil {
+		t.Fatalf("NewNoticeJournal: %v", err)
+	}
+	sender := &fakeSender{}
+	svc := NewService(types.NoticeConfig{
+		Enabled:               true,
+		SymbolCooldownMinutes: 240,
+		MaxNoticesPerDay:      12,
+		EventDedupSeconds:     300,
+		EventCoalesceSeconds:  3600,
+	}, nj, sender)
+
+	saveFailing := true
+	writes := map[string]int{}
+	svc.save = func(n types.Notice) error {
+		if saveFailing {
+			return errors.New("disk full")
+		}
+		writes[n.NoticeID]++
+		return nj.SaveNotice(n)
+	}
+
+	base := time.Date(2026, 11, 11, 10, 0, 0, 0, time.UTC)
+	submit := func(at time.Time, chg float64) *types.Notice {
+		t.Helper()
+		got, err := svc.ProcessAnomaly(context.Background(), ProcessRequest{
+			Event: types.AnomalyEvent{
+				Symbol: "AAVE/USDT:USDT", EventType: "price_velocity", Timestamp: float64(at.Unix()),
+				Data: map[string]any{"price_to": 109.4, "change_pct": chg, "window_seconds": 60},
+			},
+			Candles4h: makePoint1Candles(),
+		})
+		if err != nil {
+			t.Fatalf("ProcessAnomaly: %v", err)
+		}
+		return got
+	}
+
+	first := submit(base, -1.2) // representative A
+	if err := svc.Close(); err == nil {
+		t.Fatal("Close must report the failed journal write")
+	}
+	if len(sender.sent) != 1 {
+		t.Fatalf("A must be delivered exactly once, got %d", len(sender.sent))
+	}
+
+	// Much more informative newcomer arrives while the bucket is retained.
+	saveFailing = false
+	newcomer := submit(base.Add(20*time.Second), -3.5)
+	if newcomer.DeliveryStatus != types.NoticeStatusSuppressed ||
+		newcomer.SuppressReason != types.NoticeSuppressDuplicateEvent {
+		t.Fatalf("newcomer must be suppressed against the frozen representative, got %+v", newcomer)
+	}
+	if !strings.Contains(newcomer.SuppressDetail, first.NoticeID) {
+		t.Fatalf("newcomer detail must name the frozen representative %s, got %q", first.NoticeID, newcomer.SuppressDetail)
+	}
+
+	if err := svc.Close(); err != nil {
+		t.Fatalf("retry Close: %v", err)
+	}
+	if len(sender.sent) != 1 {
+		t.Fatalf("retry must not resend, got %d sends", len(sender.sent))
+	}
+	notices, err := nj.ListNotices()
+	if err != nil {
+		t.Fatalf("ListNotices: %v", err)
+	}
+	if len(notices) != 2 {
+		t.Fatalf("expected representative + suppressed newcomer, got %+v", notices)
+	}
+	var sent, suppressed int
+	for _, n := range notices {
+		switch n.DeliveryStatus {
+		case types.NoticeStatusSent:
+			sent++
+		case types.NoticeStatusSuppressed:
+			suppressed++
+			if !strings.Contains(n.SuppressDetail, first.NoticeID) {
+				t.Fatalf("suppressed record must name the representative, got %q", n.SuppressDetail)
+			}
+		}
+	}
+	if sent != 1 || suppressed != 1 {
+		t.Fatalf("journal statuses sent=%d suppressed=%d, want 1/1", sent, suppressed)
+	}
+	for id, n := range writes {
+		if n != 1 {
+			t.Fatalf("notice %s journaled %d times, want exactly 1", id, n)
+		}
+	}
+	if _, still := svc.pending["AAVE/USDT:USDT|price_velocity"]; still {
+		t.Fatal("bucket must be released once every record is journaled")
 	}
 }

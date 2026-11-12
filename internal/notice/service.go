@@ -302,6 +302,14 @@ func (s *Service) coalesceCandidate(ntc types.Notice) (*types.Notice, error) {
 		ntc.DeliveryStatus = types.NoticeStatusCoalescing
 		return &ntc, nil
 	}
+	// Freeze the representative once its delivery decision ran (even a failed
+	// flush keeps the bucket for a journal retry). Replacing it then would leave
+	// the attempted record and the new candidate in an inconsistent settlement.
+	if g.repAttempted {
+		loser := suppressedDuplicate(ntc, g.representative())
+		g.extras = append(g.extras, ntc)
+		return &loser, nil
+	}
 	if moreInformative(ntc.TriggerFacts, g.best.TriggerFacts) {
 		// Keep the raw displaced candidate: its duplicate detail is rendered at
 		// flush time against the FINAL representative, so a chain A -> B -> C never
@@ -314,6 +322,14 @@ func (s *Service) coalesceCandidate(ntc types.Notice) (*types.Notice, error) {
 	loser := suppressedDuplicate(ntc, g.best)
 	g.extras = append(g.extras, ntc)
 	return &loser, nil
+}
+
+// representative is the settled record when one exists, otherwise the pending best.
+func (g *pendingNotice) representative() types.Notice {
+	if g.repRecord != nil {
+		return *g.repRecord
+	}
+	return g.best
 }
 
 // flush delivers the coalesced representative and journals the windows it displaced.
