@@ -175,12 +175,32 @@ func (s *Service) ProcessAnomaly(ctx context.Context, req ProcessRequest) (*type
 	if s.journal != nil && s.coalesce > 0 {
 		return s.coalesceCandidate(ntc)
 	}
-	return s.deliverLocked(ctx, ntc, now)
+	return s.deliverNow(ctx, ntc, now)
+}
+
+// deliverOutcome separates "the record is durable" from "a delivery was attempted".
+// A bucket may retry the journal write, but must never resend a notice that a
+// previous flush already handed to the delivery channel.
+type deliverOutcome struct {
+	notice    types.Notice // record to journal
+	attempted bool         // gate/dry-run/send decision already ran; do not recompute
+	journaled bool         // the record durably reached the journal
+	err       error
+}
+
+// deliverNow is the synchronous entry point: it delivers and maps the outcome back
+// onto the (*Notice, error) contract used by callers.
+func (s *Service) deliverNow(ctx context.Context, ntc types.Notice, now time.Time) (*types.Notice, error) {
+	out := s.deliverLocked(ctx, ntc, now)
+	if !out.attempted {
+		return nil, out.err
+	}
+	return &out.notice, out.err
 }
 
 // deliverLocked applies the same-event dedup, symbol cooldown and daily cap gates
 // to ntc and delivers it. The caller must hold s.mu.
-func (s *Service) deliverLocked(ctx context.Context, ntc types.Notice, now time.Time) (*types.Notice, error) {
+func (s *Service) deliverLocked(ctx context.Context, ntc types.Notice, now time.Time) deliverOutcome {
 	// Gate 3: Same-event dedup — one underlying move reported by several velocity
 	// windows (60s and 120s) becomes one Notice; the rest stay in the journal as
 	// suppressed so the accounting is auditable instead of silently dropped.
@@ -188,11 +208,11 @@ func (s *Service) deliverLocked(ctx context.Context, ntc types.Notice, now time.
 		since := now.Add(-time.Duration(s.cfg.EventDedupSeconds) * time.Second)
 		rep, found, err := s.journal.LastAcceptedEvent(ntc.Symbol, ntc.TriggerFacts.EventType, since, now)
 		if err != nil {
-			return nil, fmt.Errorf("notice event dedup: %w", err)
+			// Nothing was decided or sent: the caller may safely retry from scratch.
+			return deliverOutcome{err: fmt.Errorf("notice event dedup: %w", err)}
 		}
 		if found {
-			loser := suppressedDuplicate(ntc, rep)
-			return s.persistOnly(loser)
+			return s.recordOutcome(suppressedDuplicate(ntc, rep))
 		}
 	}
 
@@ -201,7 +221,7 @@ func (s *Service) deliverLocked(ctx context.Context, ntc types.Notice, now time.
 	if s.journal != nil {
 		stats, err := s.journal.BudgetStats(ntc.Symbol, now, 24*time.Hour)
 		if err != nil {
-			return nil, fmt.Errorf("notice budget stats: %w", err)
+			return deliverOutcome{err: fmt.Errorf("notice budget stats: %w", err)}
 		}
 		cooldown := time.Duration(s.cfg.SymbolCooldownMinutes) * time.Minute
 		if cooldown > 0 && !stats.LastAcceptedSymbolAt.IsZero() {
@@ -210,39 +230,55 @@ func (s *Service) deliverLocked(ctx context.Context, ntc types.Notice, now time.
 				ntc.DeliveryStatus = types.NoticeStatusSuppressed
 				ntc.SuppressReason = types.NoticeSuppressSymbolCooldown
 				ntc.SuppressDetail = fmt.Sprintf("同币冷却未满 (%s < %s)", elapsed.Round(time.Minute), cooldown)
-				return s.persistOnly(ntc)
+				return s.recordOutcome(ntc)
 			}
 		}
 		if s.cfg.MaxNoticesPerDay > 0 && stats.AcceptedInDayWindow >= s.cfg.MaxNoticesPerDay {
 			ntc.DeliveryStatus = types.NoticeStatusSuppressed
 			ntc.SuppressReason = types.NoticeSuppressDailyCap
 			ntc.SuppressDetail = fmt.Sprintf("24h 通知预算已满 (%d/%d)", stats.AcceptedInDayWindow, s.cfg.MaxNoticesPerDay)
-			return s.persistOnly(ntc)
+			return s.recordOutcome(ntc)
 		}
 	}
 
 	if s.sender == nil {
 		ntc.DeliveryStatus = types.NoticeStatusDryRun
-		return s.persistOnly(ntc)
+		return s.recordOutcome(ntc)
 	}
 
 	if err := s.sender.SendText(ctx, ntc.RenderedTelegram); err != nil {
 		ntc.DeliveryStatus = types.NoticeStatusFailed
 		ntc.DeliveryError = err.Error()
-		_ = s.saveNotice(ntc)
-		return &ntc, fmt.Errorf("send notice telegram: %w", err)
+		out := s.recordOutcome(ntc)
+		out.err = errors.Join(fmt.Errorf("send notice telegram: %w", err), out.err)
+		return out
 	}
 
 	ntc.DeliveryStatus = types.NoticeStatusSent
-	return s.persistOnly(ntc)
+	return s.recordOutcome(ntc)
+}
+
+// recordOutcome journals ntc and reports whether the write actually landed.
+func (s *Service) recordOutcome(ntc types.Notice) deliverOutcome {
+	if err := s.saveNotice(ntc); err != nil {
+		return deliverOutcome{notice: ntc, attempted: true, journaled: false, err: err}
+	}
+	return deliverOutcome{notice: ntc, attempted: true, journaled: true}
 }
 
 // pendingNotice is one coalescing bucket: the most informative candidate so far
 // plus the windows it displaced. Nothing is journaled until the bucket flushes.
 type pendingNotice struct {
 	best   types.Notice
-	extras []types.Notice
+	extras []types.Notice // displaced candidates not yet journaled
 	timer  *time.Timer
+
+	// repAttempted/repJournaled track the representative independently of the
+	// displaced records: a retry may write the journal again, but must never
+	// resend a notice that already reached the delivery channel.
+	repAttempted bool
+	repJournaled bool
+	repRecord    *types.Notice
 }
 
 // coalesceCandidate buckets ntc by symbol+event type for the coalescing interval.
@@ -295,7 +331,11 @@ func (s *Service) flush(key string, ctx context.Context) error {
 	}
 
 	var errs []error
-	if remaining := g.extras[:0]; len(g.extras) > 0 {
+
+	// 1. Retry the displaced records; keep the ones that still fail so the next
+	// flush (or Close) can persist them instead of losing the trace.
+	if len(g.extras) > 0 {
+		remaining := make([]types.Notice, 0, len(g.extras))
 		for _, loser := range g.extras {
 			if err := s.saveNotice(suppressedDuplicate(loser, g.best)); err != nil {
 				errs = append(errs, fmt.Errorf("journal displaced notice %s: %w", loser.NoticeID, err))
@@ -305,21 +345,31 @@ func (s *Service) flush(key string, ctx context.Context) error {
 		g.extras = remaining
 	}
 
-	// Gates are evaluated against the representative window event time, exactly
-	// as the immediate path does.
-	ntc, err := s.deliverLocked(ctx, g.best, g.best.CreatedAt)
+	// 2. Settle the representative exactly once. Gates are evaluated against the
+	// representative window event time, as the immediate path does.
 	switch {
-	case err == nil:
+	case !g.repAttempted:
+		out := s.deliverLocked(ctx, g.best, g.best.CreatedAt)
+		if out.attempted {
+			g.repAttempted = true
+			rec := out.notice
+			g.repRecord = &rec
+			g.repJournaled = out.journaled
+		}
+		if out.err != nil {
+			errs = append(errs, fmt.Errorf("deliver notice %s: %w", g.best.NoticeID, out.err))
+		}
+	case !g.repJournaled && g.repRecord != nil:
+		// Delivery already happened; only the journal write is outstanding.
+		if err := s.saveNotice(*g.repRecord); err != nil {
+			errs = append(errs, fmt.Errorf("journal notice %s: %w", g.best.NoticeID, err))
+		} else {
+			g.repJournaled = true
+		}
+	}
+
+	if g.repJournaled && len(g.extras) == 0 {
 		delete(s.pending, key)
-	case ntc != nil:
-		// Delivery failed but the notice is journaled as failed, so the bucket is
-		// settled: only report (a retry would deliver twice).
-		delete(s.pending, key)
-		errs = append(errs, fmt.Errorf("deliver notice %s: %w", g.best.NoticeID, err))
-	default:
-		// Nothing was persisted (journal read failure): keep the bucket so the
-		// shutdown flush can retry without sending a duplicate.
-		errs = append(errs, fmt.Errorf("deliver notice %s: %w", g.best.NoticeID, err))
 	}
 	return errors.Join(errs...)
 }

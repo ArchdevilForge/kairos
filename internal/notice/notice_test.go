@@ -1064,7 +1064,7 @@ func TestService_Coalescing_DisplacedRecordsNameFinalRepresentative(t *testing.T
 }
 
 // A failed journal write must surface through Close instead of being swallowed by
-// the asynchronous flush.
+// the asynchronous flush, and the unsettled records must stay queued for a retry.
 func TestService_Coalescing_FlushReportsJournalFailure(t *testing.T) {
 	dir := t.TempDir()
 	nj, err := storage.NewNoticeJournal(types.StorageConfig{DatabasePath: filepath.Join(dir, "kairos.db")})
@@ -1079,7 +1079,14 @@ func TestService_Coalescing_FlushReportsJournalFailure(t *testing.T) {
 		EventDedupSeconds:     300,
 		EventCoalesceSeconds:  3600,
 	}, nj, sender)
-	svc.save = func(types.Notice) error { return errors.New("disk full") }
+
+	saveFailing := true
+	svc.save = func(n types.Notice) error {
+		if saveFailing {
+			return errors.New("disk full")
+		}
+		return nj.SaveNotice(n)
+	}
 
 	base := time.Date(2026, 11, 11, 8, 0, 0, 0, time.UTC)
 	for i, chg := range []float64{-1.2, -1.8} {
@@ -1099,9 +1106,84 @@ func TestService_Coalescing_FlushReportsJournalFailure(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "journal displaced notice") {
 		t.Fatalf("Close must report the failed journal write, got %v", err)
 	}
-	// The representative is still delivered; losing the journal write must not
-	// silently downgrade the primary path.
 	if len(sender.sent) != 1 {
 		t.Fatalf("representative must still be delivered once, got %d", len(sender.sent))
+	}
+	if _, still := svc.pending["SOL/USDT:USDT|price_velocity"]; !still {
+		t.Fatal("bucket with unjournaled records must be retained for a retry")
+	}
+
+	// Journal recovers: the retry persists both records and must not resend.
+	saveFailing = false
+	if err := svc.Close(); err != nil {
+		t.Fatalf("retry Close: %v", err)
+	}
+	if len(sender.sent) != 1 {
+		t.Fatalf("retry must not resend the delivered notice, got %d sends", len(sender.sent))
+	}
+	if _, still := svc.pending["SOL/USDT:USDT|price_velocity"]; still {
+		t.Fatal("bucket must be released once every record is journaled")
+	}
+	notices, err := nj.ListNotices()
+	if err != nil {
+		t.Fatalf("ListNotices: %v", err)
+	}
+	if len(notices) != 2 {
+		t.Fatalf("retry must journal 1 accepted + 1 displaced record, got %d: %+v", len(notices), notices)
+	}
+}
+
+// A dry-run write failure must keep the candidate queued (no channel involved) so a
+// later flush journals it instead of dropping it.
+func TestService_Coalescing_DryRunWriteFailureIsRetried(t *testing.T) {
+	dir := t.TempDir()
+	nj, err := storage.NewNoticeJournal(types.StorageConfig{DatabasePath: filepath.Join(dir, "kairos.db")})
+	if err != nil {
+		t.Fatalf("NewNoticeJournal: %v", err)
+	}
+	svc := NewService(types.NoticeConfig{
+		Enabled:               true,
+		SymbolCooldownMinutes: 240,
+		MaxNoticesPerDay:      12,
+		EventDedupSeconds:     300,
+		EventCoalesceSeconds:  3600,
+	}, nj, nil) // no delivery channel → dry_run
+
+	saveFailing := true
+	svc.save = func(n types.Notice) error {
+		if saveFailing {
+			return errors.New("disk full")
+		}
+		return nj.SaveNotice(n)
+	}
+
+	base := time.Date(2026, 11, 11, 9, 0, 0, 0, time.UTC)
+	if _, err := svc.ProcessAnomaly(context.Background(), ProcessRequest{
+		Event: types.AnomalyEvent{
+			Symbol: "SOL/USDT:USDT", EventType: "price_velocity", Timestamp: float64(base.Unix()),
+			Data: map[string]any{"price_to": 109.4, "change_pct": 1.9, "window_seconds": 60},
+		},
+		Candles4h: makePoint1Candles(),
+	}); err != nil {
+		t.Fatalf("ProcessAnomaly: %v", err)
+	}
+
+	if err := svc.Close(); err == nil {
+		t.Fatal("Close must report the failed dry-run journal write")
+	}
+	if _, still := svc.pending["SOL/USDT:USDT|price_velocity"]; !still {
+		t.Fatal("unjournaled dry-run notice must stay queued")
+	}
+
+	saveFailing = false
+	if err := svc.Close(); err != nil {
+		t.Fatalf("retry Close: %v", err)
+	}
+	notices, err := nj.ListNotices()
+	if err != nil {
+		t.Fatalf("ListNotices: %v", err)
+	}
+	if len(notices) != 1 || notices[0].DeliveryStatus != types.NoticeStatusDryRun {
+		t.Fatalf("retry must journal the dry-run notice exactly once, got %+v", notices)
 	}
 }
