@@ -96,6 +96,7 @@ func setDefaults(v *viper.Viper) {
 		"refreshIntervalHours":  4,
 		"dedupWindowSeconds":    5,
 		"symbolCooldownMinutes": 45,
+		"feedSilentWarnSeconds": 300,
 	})
 
 	v.SetDefault("alertPolicy", map[string]any{
@@ -310,6 +311,8 @@ func setDefaults(v *viper.Viper) {
 		"enabled":               false,
 		"symbolCooldownMinutes": 240,
 		"maxNoticesPerDay":      12,
+		"eventDedupSeconds":     300,
+		"eventCoalesceSeconds":  60,
 		"suppressInsideBox":     true,
 	})
 

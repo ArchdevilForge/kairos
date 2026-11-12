@@ -2,6 +2,8 @@ package notice
 
 import (
 	"context"
+	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -496,6 +498,242 @@ func TestService_SuppressionCooldownAndDailyCap(t *testing.T) {
 	}
 }
 
+// Production evidence this table locks down (2026-11-11/12 kairosd run):
+//   - notice.symbolCooldownMinutes=240 never fired without a Telegram channel:
+//     AKE emitted at 04:30, 05:27 and 07:56.
+//   - AAVE's single -2.12% move shipped twice in the same minute because the 60s
+//     and 120s velocity windows both triggered.
+func TestService_AcceptedBudgetAndEventDedup_Table(t *testing.T) {
+	type step struct {
+		symbol     string
+		at         time.Time
+		changePct  float64
+		windowSecs int
+	}
+	base := time.Date(2026, 11, 11, 4, 30, 0, 0, time.UTC)
+
+	cases := []struct {
+		name       string
+		cfg        types.NoticeConfig
+		sender     TextSender
+		steps      []step
+		wantStatus []types.NoticeDeliveryStatus
+		wantReason []string
+		// wantAccepted is the accepted-notice count the journal must report, i.e.
+		// how many notices the owner actually paid attention to.
+		wantAccepted int
+	}{
+		{
+			name: "no telegram channel still runs the 4h symbol cooldown",
+			cfg: types.NoticeConfig{
+				Enabled:               true,
+				SymbolCooldownMinutes: 240,
+				MaxNoticesPerDay:      12,
+			},
+			sender: nil,
+			steps: []step{
+				{symbol: "AKE/USDT:USDT", at: base, changePct: -2.40, windowSecs: 60},
+				{symbol: "AKE/USDT:USDT", at: base.Add(57 * time.Minute), changePct: 2.10, windowSecs: 60},
+				{symbol: "AKE/USDT:USDT", at: base.Add(3*time.Hour + 26*time.Minute), changePct: -1.90, windowSecs: 60},
+			},
+			wantStatus: []types.NoticeDeliveryStatus{
+				types.NoticeStatusDryRun,
+				types.NoticeStatusSuppressed,
+				types.NoticeStatusSuppressed,
+			},
+			wantReason:   []string{"", types.NoticeSuppressSymbolCooldown, types.NoticeSuppressSymbolCooldown},
+			wantAccepted: 1,
+		},
+		{
+			name: "same move on 60s and 120s windows ships one notice",
+			cfg: types.NoticeConfig{
+				Enabled:               true,
+				SymbolCooldownMinutes: 240,
+				MaxNoticesPerDay:      12,
+				EventDedupSeconds:     300,
+			},
+			sender: &fakeSender{},
+			steps: []step{
+				{symbol: "AAVE/USDT:USDT", at: base, changePct: -2.12, windowSecs: 60},
+				{symbol: "AAVE/USDT:USDT", at: base.Add(40 * time.Second), changePct: -2.12, windowSecs: 120},
+			},
+			wantStatus: []types.NoticeDeliveryStatus{
+				types.NoticeStatusSent,
+				types.NoticeStatusSuppressed,
+			},
+			wantReason:   []string{"", types.NoticeSuppressDuplicateEvent},
+			wantAccepted: 1,
+		},
+		{
+			name: "explicit eventDedupSeconds=0 disables event dedup",
+			cfg: types.NoticeConfig{
+				Enabled:               true,
+				SymbolCooldownMinutes: 240,
+				MaxNoticesPerDay:      12,
+				EventDedupSeconds:     0,
+			},
+			sender: &fakeSender{},
+			steps: []step{
+				{symbol: "AAVE/USDT:USDT", at: base, changePct: -2.12, windowSecs: 60},
+				{symbol: "AAVE/USDT:USDT", at: base.Add(40 * time.Second), changePct: -2.12, windowSecs: 120},
+			},
+			// No dedup: the second window lands inside the 4h cooldown instead,
+			// proving 0 really turns the event gate off rather than silently
+			// falling back to the 300s default.
+			wantStatus: []types.NoticeDeliveryStatus{
+				types.NoticeStatusSent,
+				types.NoticeStatusSuppressed,
+			},
+			wantReason:   []string{"", types.NoticeSuppressSymbolCooldown},
+			wantAccepted: 1,
+		},
+		{
+			name: "failed delivery still consumes cooldown",
+			cfg: types.NoticeConfig{
+				Enabled:               true,
+				SymbolCooldownMinutes: 240,
+				MaxNoticesPerDay:      12,
+			},
+			sender: &fakeSender{err: errors.New("telegram 500")},
+			steps: []step{
+				{symbol: "SUI/USDT:USDT", at: base, changePct: 2.50, windowSecs: 60},
+				{symbol: "SUI/USDT:USDT", at: base.Add(30 * time.Minute), changePct: -2.60, windowSecs: 60},
+			},
+			wantStatus: []types.NoticeDeliveryStatus{
+				types.NoticeStatusFailed,
+				types.NoticeStatusSuppressed,
+			},
+			wantReason:   []string{"", types.NoticeSuppressSymbolCooldown},
+			wantAccepted: 1,
+		},
+		{
+			name: "daily cap counts accepted dry-run notices",
+			cfg: types.NoticeConfig{
+				Enabled:               true,
+				SymbolCooldownMinutes: 240,
+				MaxNoticesPerDay:      2,
+			},
+			sender: nil,
+			steps: []step{
+				{symbol: "SOL/USDT:USDT", at: base, changePct: 1.80, windowSecs: 60},
+				{symbol: "ETH/USDT:USDT", at: base.Add(10 * time.Minute), changePct: -1.70, windowSecs: 60},
+				{symbol: "XRP/USDT:USDT", at: base.Add(20 * time.Minute), changePct: 2.20, windowSecs: 60},
+			},
+			wantStatus: []types.NoticeDeliveryStatus{
+				types.NoticeStatusDryRun,
+				types.NoticeStatusDryRun,
+				types.NoticeStatusSuppressed,
+			},
+			wantReason:   []string{"", "", types.NoticeSuppressDailyCap},
+			wantAccepted: 2,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			nj, err := storage.NewNoticeJournal(types.StorageConfig{DatabasePath: filepath.Join(dir, "kairos.db")})
+			if err != nil {
+				t.Fatalf("NewNoticeJournal: %v", err)
+			}
+			svc := NewService(tc.cfg, nj, tc.sender)
+
+			last := base
+			for i, st := range tc.steps {
+				evt := types.AnomalyEvent{
+					Symbol:    st.symbol,
+					EventType: "price_velocity",
+					Timestamp: float64(st.at.Unix()),
+					Data: map[string]any{
+						"price_to":       109.4,
+						"change_pct":     st.changePct,
+						"window_seconds": st.windowSecs,
+					},
+				}
+				got, err := svc.ProcessAnomaly(context.Background(), ProcessRequest{
+					Event:     evt,
+					Candles4h: makePoint1Candles(),
+				})
+				// A failed send returns the notice together with the error; the
+				// journal record is what matters for budget accounting.
+				if err != nil && (got == nil || got.DeliveryStatus != types.NoticeStatusFailed) {
+					t.Fatalf("step %d (%s): %v", i, st.symbol, err)
+				}
+				if got == nil {
+					t.Fatalf("step %d (%s): nil notice", i, st.symbol)
+				}
+				if got.DeliveryStatus != tc.wantStatus[i] {
+					t.Fatalf("step %d (%s): status = %q, want %q (reason=%q detail=%q)",
+						i, st.symbol, got.DeliveryStatus, tc.wantStatus[i], got.SuppressReason, got.SuppressDetail)
+				}
+				if got.SuppressReason != tc.wantReason[i] {
+					t.Fatalf("step %d (%s): suppress_reason = %q, want %q", i, st.symbol, got.SuppressReason, tc.wantReason[i])
+				}
+				if got.DeliveryStatus == types.NoticeStatusSuppressed && strings.TrimSpace(got.SuppressDetail) == "" {
+					t.Fatalf("step %d (%s): suppressed notice must carry a journal-visible detail", i, st.symbol)
+				}
+				if st.at.After(last) {
+					last = st.at
+				}
+			}
+
+			stats, err := nj.BudgetStats("", last, 24*time.Hour)
+			if err != nil {
+				t.Fatalf("BudgetStats: %v", err)
+			}
+			if stats.AcceptedTotal != tc.wantAccepted {
+				t.Fatalf("accepted notices = %d, want %d (stats=%+v)", stats.AcceptedTotal, tc.wantAccepted, stats)
+			}
+			if stats.TotalNotices != len(tc.steps) {
+				t.Fatalf("journaled notices = %d, want %d (nothing may be dropped silently)", stats.TotalNotices, len(tc.steps))
+			}
+		})
+	}
+}
+
+// The 120s record must name the accepted window so the comparison is auditable.
+func TestService_DuplicateEventDetailNamesRepresentative(t *testing.T) {
+	dir := t.TempDir()
+	nj, err := storage.NewNoticeJournal(types.StorageConfig{DatabasePath: filepath.Join(dir, "kairos.db")})
+	if err != nil {
+		t.Fatalf("NewNoticeJournal: %v", err)
+	}
+	svc := NewService(types.NoticeConfig{
+		Enabled:               true,
+		SymbolCooldownMinutes: 240,
+		MaxNoticesPerDay:      12,
+		EventDedupSeconds:     300,
+	}, nj, &fakeSender{})
+	base := time.Date(2026, 11, 11, 9, 0, 0, 0, time.UTC)
+
+	first, err := svc.ProcessAnomaly(context.Background(), ProcessRequest{
+		Event: types.AnomalyEvent{
+			Symbol: "AAVE/USDT:USDT", EventType: "price_velocity", Timestamp: float64(base.Unix()),
+			Data: map[string]any{"price_to": 109.4, "change_pct": -2.12, "window_seconds": 120},
+		},
+		Candles4h: makePoint1Candles(),
+	})
+	if err != nil || first.DeliveryStatus != types.NoticeStatusSent {
+		t.Fatalf("first window: %+v err=%v", first, err)
+	}
+	second, err := svc.ProcessAnomaly(context.Background(), ProcessRequest{
+		Event: types.AnomalyEvent{
+			Symbol: "AAVE/USDT:USDT", EventType: "price_velocity", Timestamp: float64(base.Add(30 * time.Second).Unix()),
+			Data: map[string]any{"price_to": 109.4, "change_pct": -1.95, "window_seconds": 60},
+		},
+		Candles4h: makePoint1Candles(),
+	})
+	if err != nil || second.DeliveryStatus != types.NoticeStatusSuppressed ||
+		second.SuppressReason != types.NoticeSuppressDuplicateEvent {
+		t.Fatalf("second window: %+v err=%v", second, err)
+	}
+	if !strings.Contains(second.SuppressDetail, first.NoticeID) ||
+		!strings.Contains(second.SuppressDetail, "120 秒") ||
+		!strings.Contains(second.SuppressDetail, "信息量更低") {
+		t.Fatalf("duplicate detail must name the representative window/notice, got %q", second.SuppressDetail)
+	}
+}
+
 func TestService_ConfigAllowInsideBox_BTCStateAndPlainFormat(t *testing.T) {
 	allowInside := false
 	sender := &fakeSender{}
@@ -530,5 +768,559 @@ func TestService_ConfigAllowInsideBox_BTCStateAndPlainFormat(t *testing.T) {
 	})
 	if !strings.Contains(plain, "做了") || !strings.Contains(plain, types.NoticeDisclaimerLine) {
 		t.Fatalf("unexpected plain output:\n%s", plain)
+	}
+}
+
+// The ticket asks the more informative window to represent the move, not whichever
+// fires first. Coalescing holds the candidate briefly, then ships the winner and
+// journals the displaced windows as suppressed.
+func TestService_Coalescing_PicksMostInformativeWindow_Table(t *testing.T) {
+	type window struct {
+		changePct float64
+		secs      int
+	}
+	cases := []struct {
+		name     string
+		steps    []window
+		wantSecs int
+		wantChg  float64
+	}{
+		{
+			name:     "60s then equal-move 120s: longer window represents",
+			steps:    []window{{-2.12, 60}, {-2.12, 120}},
+			wantSecs: 120,
+			wantChg:  -2.12,
+		},
+		{
+			name:     "120s then 60s: 120s keeps representing",
+			steps:    []window{{-2.12, 120}, {-2.12, 60}},
+			wantSecs: 120,
+			wantChg:  -2.12,
+		},
+		{
+			name:     "smaller later window does not displace the bigger move",
+			steps:    []window{{-2.12, 60}, {-1.50, 120}},
+			wantSecs: 60,
+			wantChg:  -2.12,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			nj, err := storage.NewNoticeJournal(types.StorageConfig{DatabasePath: filepath.Join(dir, "kairos.db")})
+			if err != nil {
+				t.Fatalf("NewNoticeJournal: %v", err)
+			}
+			sender := &fakeSender{}
+			svc := NewService(types.NoticeConfig{
+				Enabled:               true,
+				SymbolCooldownMinutes: 240,
+				MaxNoticesPerDay:      12,
+				EventDedupSeconds:     300,
+				// Long hold so the test flushes deterministically via Close.
+				EventCoalesceSeconds: 3600,
+			}, nj, sender)
+			t.Cleanup(func() { _ = svc.Close() })
+
+			base := time.Date(2026, 11, 11, 4, 30, 0, 0, time.UTC)
+			for i, w := range tc.steps {
+				at := base.Add(time.Duration(i) * 40 * time.Second)
+				got, err := svc.ProcessAnomaly(context.Background(), ProcessRequest{
+					Event: types.AnomalyEvent{
+						Symbol: "AAVE/USDT:USDT", EventType: "price_velocity", Timestamp: float64(at.Unix()),
+						Data: map[string]any{"price_to": 109.4, "change_pct": w.changePct, "window_seconds": w.secs},
+					},
+					Candles4h: makePoint1Candles(),
+				})
+				if err != nil {
+					t.Fatalf("step %d: %v", i, err)
+				}
+				if got.DeliveryStatus != types.NoticeStatusCoalescing && got.DeliveryStatus != types.NoticeStatusSuppressed {
+					t.Fatalf("step %d: status = %q, want coalescing/suppressed before flush", i, got.DeliveryStatus)
+				}
+			}
+
+			// Nothing may be delivered or journaled while the bucket is open.
+			if len(sender.sent) != 0 {
+				t.Fatalf("no delivery before flush, got %d", len(sender.sent))
+			}
+			if pre, err := nj.ListNotices(); err != nil || len(pre) != 0 {
+				t.Fatalf("no journal before flush, got %d err=%v", len(pre), err)
+			}
+
+			if err := svc.Close(); err != nil {
+				t.Fatalf("Close: %v", err)
+			}
+
+			if len(sender.sent) != 1 {
+				t.Fatalf("exactly one notice must be delivered, got %d", len(sender.sent))
+			}
+			notices, err := nj.ListNotices()
+			if err != nil {
+				t.Fatalf("ListNotices: %v", err)
+			}
+			accepted, suppressed := 0, 0
+			for _, n := range notices {
+				switch n.DeliveryStatus {
+				case types.NoticeStatusSent:
+					accepted++
+					if n.TriggerFacts.VelocityWindowSec != tc.wantSecs || n.TriggerFacts.PriceChangePct != tc.wantChg {
+						t.Fatalf("representative window = %ds/%.2f%%, want %ds/%.2f%%",
+							n.TriggerFacts.VelocityWindowSec, n.TriggerFacts.PriceChangePct, tc.wantSecs, tc.wantChg)
+					}
+				case types.NoticeStatusSuppressed:
+					suppressed++
+					if n.SuppressReason != types.NoticeSuppressDuplicateEvent || strings.TrimSpace(n.SuppressDetail) == "" {
+						t.Fatalf("displaced window must be journaled as duplicate_event with detail, got %+v", n)
+					}
+				default:
+					t.Fatalf("unexpected journal status %q", n.DeliveryStatus)
+				}
+			}
+			if accepted != 1 || suppressed != len(tc.steps)-1 {
+				t.Fatalf("journal accepted=%d suppressed=%d, want 1 and %d", accepted, suppressed, len(tc.steps)-1)
+			}
+		})
+	}
+}
+
+// Shutdown must flush the open bucket exactly once, never drop it, and be idempotent.
+func TestService_Coalescing_CloseFlushesOnce(t *testing.T) {
+	dir := t.TempDir()
+	nj, err := storage.NewNoticeJournal(types.StorageConfig{DatabasePath: filepath.Join(dir, "kairos.db")})
+	if err != nil {
+		t.Fatalf("NewNoticeJournal: %v", err)
+	}
+	sender := &fakeSender{}
+	svc := NewService(types.NoticeConfig{
+		Enabled:               true,
+		SymbolCooldownMinutes: 240,
+		MaxNoticesPerDay:      12,
+		EventDedupSeconds:     300,
+		EventCoalesceSeconds:  3600,
+	}, nj, sender)
+
+	base := time.Date(2026, 11, 11, 6, 0, 0, 0, time.UTC)
+	if _, err := svc.ProcessAnomaly(context.Background(), ProcessRequest{
+		Event: types.AnomalyEvent{
+			Symbol: "SOL/USDT:USDT", EventType: "price_velocity", Timestamp: float64(base.Unix()),
+			Data: map[string]any{"price_to": 109.4, "change_pct": 1.8, "window_seconds": 60},
+		},
+		Candles4h: makePoint1Candles(),
+	}); err != nil {
+		t.Fatalf("ProcessAnomaly: %v", err)
+	}
+
+	if err := svc.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if err := svc.Close(); err != nil { // idempotent: no duplicate delivery, no duplicate journal line
+		t.Fatalf("second Close: %v", err)
+	}
+
+	if len(sender.sent) != 1 {
+		t.Fatalf("Close must deliver the pending notice exactly once, got %d", len(sender.sent))
+	}
+	notices, err := nj.ListNotices()
+	if err != nil {
+		t.Fatalf("ListNotices: %v", err)
+	}
+	if len(notices) != 1 || notices[0].DeliveryStatus != types.NoticeStatusSent {
+		t.Fatalf("pending notice must be journaled on Close, got %+v", notices)
+	}
+}
+
+// Shutdown must flush pending buckets oldest-event-first; Go map order could let a
+// later bucket consume the daily cap and then push the earlier one past it too.
+func TestService_Coalescing_CloseFlushesOldestFirst(t *testing.T) {
+	dir := t.TempDir()
+	nj, err := storage.NewNoticeJournal(types.StorageConfig{DatabasePath: filepath.Join(dir, "kairos.db")})
+	if err != nil {
+		t.Fatalf("NewNoticeJournal: %v", err)
+	}
+	sender := &fakeSender{}
+	svc := NewService(types.NoticeConfig{
+		Enabled:               true,
+		SymbolCooldownMinutes: 240,
+		MaxNoticesPerDay:      1, // one slot only
+		EventDedupSeconds:     300,
+		EventCoalesceSeconds:  3600,
+	}, nj, sender)
+
+	base := time.Date(2026, 11, 11, 4, 30, 0, 0, time.UTC)
+	submit := func(symbol string, at time.Time) {
+		t.Helper()
+		if _, err := svc.ProcessAnomaly(context.Background(), ProcessRequest{
+			Event: types.AnomalyEvent{
+				Symbol: symbol, EventType: "price_velocity", Timestamp: float64(at.Unix()),
+				Data: map[string]any{"price_to": 109.4, "change_pct": 1.9, "window_seconds": 60},
+			},
+			Candles4h: makePoint1Candles(),
+		}); err != nil {
+			t.Fatalf("ProcessAnomaly %s: %v", symbol, err)
+		}
+	}
+	submit("SOL/USDT:USDT", base)
+	submit("ETH/USDT:USDT", base.Add(10*time.Second))
+
+	if err := svc.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if len(sender.sent) != 1 {
+		t.Fatalf("daily cap 1 must deliver exactly one notice, got %d", len(sender.sent))
+	}
+	notices, err := nj.ListNotices()
+	if err != nil {
+		t.Fatalf("ListNotices: %v", err)
+	}
+	var sent, capped []types.Notice
+	for _, n := range notices {
+		switch {
+		case n.DeliveryStatus == types.NoticeStatusSent:
+			sent = append(sent, n)
+		case n.SuppressReason == types.NoticeSuppressDailyCap:
+			capped = append(capped, n)
+		}
+	}
+	if len(sent) != 1 || sent[0].Symbol != "SOL/USDT:USDT" {
+		t.Fatalf("expected the earliest event (SOL) to win the slot, got %+v", sent)
+	}
+	if len(capped) != 1 || capped[0].Symbol != "ETH/USDT:USDT" {
+		t.Fatalf("expected the later event (ETH) to be capped, got %+v", capped)
+	}
+}
+
+// A chain of replacements must name the final representative, never a window that
+// is itself suppressed.
+func TestService_Coalescing_DisplacedRecordsNameFinalRepresentative(t *testing.T) {
+	dir := t.TempDir()
+	nj, err := storage.NewNoticeJournal(types.StorageConfig{DatabasePath: filepath.Join(dir, "kairos.db")})
+	if err != nil {
+		t.Fatalf("NewNoticeJournal: %v", err)
+	}
+	sender := &fakeSender{}
+	svc := NewService(types.NoticeConfig{
+		Enabled:               true,
+		SymbolCooldownMinutes: 240,
+		MaxNoticesPerDay:      12,
+		EventDedupSeconds:     300,
+		EventCoalesceSeconds:  3600,
+	}, nj, sender)
+
+	base := time.Date(2026, 11, 11, 7, 0, 0, 0, time.UTC)
+	steps := []struct {
+		changePct float64
+		secs      int
+	}{
+		{-1.50, 60},  // A: displaced by B
+		{-1.60, 120}, // B: displaced by C
+		{-2.50, 60},  // C: representative
+	}
+	for i, s := range steps {
+		at := base.Add(time.Duration(i) * 20 * time.Second)
+		if _, err := svc.ProcessAnomaly(context.Background(), ProcessRequest{
+			Event: types.AnomalyEvent{
+				Symbol: "AAVE/USDT:USDT", EventType: "price_velocity", Timestamp: float64(at.Unix()),
+				Data: map[string]any{"price_to": 109.4, "change_pct": s.changePct, "window_seconds": s.secs},
+			},
+			Candles4h: makePoint1Candles(),
+		}); err != nil {
+			t.Fatalf("ProcessAnomaly step %d: %v", i, err)
+		}
+	}
+	if err := svc.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	notices, err := nj.ListNotices()
+	if err != nil {
+		t.Fatalf("ListNotices: %v", err)
+	}
+	var repID string
+	var displaced []types.Notice
+	for _, n := range notices {
+		switch n.DeliveryStatus {
+		case types.NoticeStatusSent:
+			repID = n.NoticeID
+			if n.TriggerFacts.PriceChangePct != -2.50 {
+				t.Fatalf("representative must be the most informative window, got %+v", n.TriggerFacts)
+			}
+		case types.NoticeStatusSuppressed:
+			displaced = append(displaced, n)
+		}
+	}
+	if repID == "" || len(displaced) != 2 {
+		t.Fatalf("expected 1 representative + 2 displaced, got repID=%q displaced=%d", repID, len(displaced))
+	}
+	for _, d := range displaced {
+		if !strings.Contains(d.SuppressDetail, repID) {
+			t.Fatalf("displaced record %s must name the final representative %s, got %q", d.NoticeID, repID, d.SuppressDetail)
+		}
+		if !strings.Contains(d.SuppressDetail, "2.50") {
+			t.Fatalf("displaced record must carry the representative window comparison, got %q", d.SuppressDetail)
+		}
+	}
+}
+
+// A failed journal write must surface through Close instead of being swallowed by
+// the asynchronous flush, and the unsettled records must stay queued for a retry.
+func TestService_Coalescing_FlushReportsJournalFailure(t *testing.T) {
+	dir := t.TempDir()
+	nj, err := storage.NewNoticeJournal(types.StorageConfig{DatabasePath: filepath.Join(dir, "kairos.db")})
+	if err != nil {
+		t.Fatalf("NewNoticeJournal: %v", err)
+	}
+	sender := &fakeSender{}
+	svc := NewService(types.NoticeConfig{
+		Enabled:               true,
+		SymbolCooldownMinutes: 240,
+		MaxNoticesPerDay:      12,
+		EventDedupSeconds:     300,
+		EventCoalesceSeconds:  3600,
+	}, nj, sender)
+
+	saveFailing := true
+	writes := map[string]int{}
+	svc.save = func(n types.Notice) error {
+		if saveFailing {
+			return errors.New("disk full")
+		}
+		writes[n.NoticeID]++
+		return nj.SaveNotice(n)
+	}
+
+	base := time.Date(2026, 11, 11, 8, 0, 0, 0, time.UTC)
+	for i, chg := range []float64{-1.2, -1.8} {
+		at := base.Add(time.Duration(i) * 10 * time.Second)
+		if _, err := svc.ProcessAnomaly(context.Background(), ProcessRequest{
+			Event: types.AnomalyEvent{
+				Symbol: "SOL/USDT:USDT", EventType: "price_velocity", Timestamp: float64(at.Unix()),
+				Data: map[string]any{"price_to": 109.4, "change_pct": chg, "window_seconds": 60},
+			},
+			Candles4h: makePoint1Candles(),
+		}); err != nil {
+			t.Fatalf("ProcessAnomaly step %d: %v", i, err)
+		}
+	}
+
+	err = svc.Close()
+	if err == nil || !strings.Contains(err.Error(), "journal displaced notice") {
+		t.Fatalf("Close must report the failed journal write, got %v", err)
+	}
+	if len(sender.sent) != 1 {
+		t.Fatalf("representative must still be delivered once, got %d", len(sender.sent))
+	}
+	if _, still := svc.pending["SOL/USDT:USDT|price_velocity"]; !still {
+		t.Fatal("bucket with unjournaled records must be retained for a retry")
+	}
+
+	// Journal recovers: the retry persists both records and must not resend.
+	saveFailing = false
+	if err := svc.Close(); err != nil {
+		t.Fatalf("retry Close: %v", err)
+	}
+	if len(sender.sent) != 1 {
+		t.Fatalf("retry must not resend the delivered notice, got %d sends", len(sender.sent))
+	}
+	if _, still := svc.pending["SOL/USDT:USDT|price_velocity"]; still {
+		t.Fatal("bucket must be released once every record is journaled")
+	}
+	notices, err := nj.ListNotices()
+	if err != nil {
+		t.Fatalf("ListNotices: %v", err)
+	}
+	if len(notices) != 2 {
+		t.Fatalf("retry must journal 1 accepted + 1 displaced record, got %d: %+v", len(notices), notices)
+	}
+	var sent, displaced int
+	for _, n := range notices {
+		switch n.DeliveryStatus {
+		case types.NoticeStatusSent:
+			sent++
+		case types.NoticeStatusSuppressed:
+			displaced++
+			if n.SuppressReason != types.NoticeSuppressDuplicateEvent {
+				t.Fatalf("displaced record has reason %q, want duplicate_event", n.SuppressReason)
+			}
+		}
+	}
+	if sent != 1 || displaced != 1 {
+		t.Fatalf("journal statuses sent=%d displaced=%d, want 1/1: %+v", sent, displaced, notices)
+	}
+	for id, n := range writes {
+		if n != 1 {
+			t.Fatalf("notice %s journaled %d times, want exactly 1", id, n)
+		}
+	}
+	if _, still := svc.pending["SOL/USDT:USDT|price_velocity"]; still {
+		t.Fatal("bucket must be released once every record is journaled")
+	}
+}
+
+// A dry-run write failure must keep the candidate queued (no channel involved) so a
+// later flush journals it instead of dropping it.
+func TestService_Coalescing_DryRunWriteFailureIsRetried(t *testing.T) {
+	dir := t.TempDir()
+	nj, err := storage.NewNoticeJournal(types.StorageConfig{DatabasePath: filepath.Join(dir, "kairos.db")})
+	if err != nil {
+		t.Fatalf("NewNoticeJournal: %v", err)
+	}
+	svc := NewService(types.NoticeConfig{
+		Enabled:               true,
+		SymbolCooldownMinutes: 240,
+		MaxNoticesPerDay:      12,
+		EventDedupSeconds:     300,
+		EventCoalesceSeconds:  3600,
+	}, nj, nil) // no delivery channel → dry_run
+
+	saveFailing := true
+	writes := map[string]int{}
+	svc.save = func(n types.Notice) error {
+		if saveFailing {
+			return errors.New("disk full")
+		}
+		writes[n.NoticeID]++
+		return nj.SaveNotice(n)
+	}
+
+	base := time.Date(2026, 11, 11, 9, 0, 0, 0, time.UTC)
+	if _, err := svc.ProcessAnomaly(context.Background(), ProcessRequest{
+		Event: types.AnomalyEvent{
+			Symbol: "SOL/USDT:USDT", EventType: "price_velocity", Timestamp: float64(base.Unix()),
+			Data: map[string]any{"price_to": 109.4, "change_pct": 1.9, "window_seconds": 60},
+		},
+		Candles4h: makePoint1Candles(),
+	}); err != nil {
+		t.Fatalf("ProcessAnomaly: %v", err)
+	}
+
+	if err := svc.Close(); err == nil {
+		t.Fatal("Close must report the failed dry-run journal write")
+	}
+	if _, still := svc.pending["SOL/USDT:USDT|price_velocity"]; !still {
+		t.Fatal("unjournaled dry-run notice must stay queued")
+	}
+
+	saveFailing = false
+	if err := svc.Close(); err != nil {
+		t.Fatalf("retry Close: %v", err)
+	}
+	notices, err := nj.ListNotices()
+	if err != nil {
+		t.Fatalf("ListNotices: %v", err)
+	}
+	if len(notices) != 1 || notices[0].DeliveryStatus != types.NoticeStatusDryRun {
+		t.Fatalf("retry must journal the dry-run notice exactly once, got %+v", notices)
+	}
+	// ListNotices collapses records by NoticeID, so count physical writes too.
+	for id, n := range writes {
+		if n != 1 {
+			t.Fatalf("notice %s journaled %d times, want exactly 1", id, n)
+		}
+	}
+	if _, still := svc.pending["SOL/USDT:USDT|price_velocity"]; still {
+		t.Fatal("bucket must be released once the dry-run record is journaled")
+	}
+}
+
+// A candidate that arrives after a failed flush must not displace the already
+// attempted representative: the representative is frozen, the newcomer is
+// journaled as a suppressed duplicate, and no record is lost or double-written.
+func TestService_Coalescing_FrozenRepresentativeAfterFailedFlush(t *testing.T) {
+	dir := t.TempDir()
+	nj, err := storage.NewNoticeJournal(types.StorageConfig{DatabasePath: filepath.Join(dir, "kairos.db")})
+	if err != nil {
+		t.Fatalf("NewNoticeJournal: %v", err)
+	}
+	sender := &fakeSender{}
+	svc := NewService(types.NoticeConfig{
+		Enabled:               true,
+		SymbolCooldownMinutes: 240,
+		MaxNoticesPerDay:      12,
+		EventDedupSeconds:     300,
+		EventCoalesceSeconds:  3600,
+	}, nj, sender)
+
+	saveFailing := true
+	writes := map[string]int{}
+	svc.save = func(n types.Notice) error {
+		if saveFailing {
+			return errors.New("disk full")
+		}
+		writes[n.NoticeID]++
+		return nj.SaveNotice(n)
+	}
+
+	base := time.Date(2026, 11, 11, 10, 0, 0, 0, time.UTC)
+	submit := func(at time.Time, chg float64) *types.Notice {
+		t.Helper()
+		got, err := svc.ProcessAnomaly(context.Background(), ProcessRequest{
+			Event: types.AnomalyEvent{
+				Symbol: "AAVE/USDT:USDT", EventType: "price_velocity", Timestamp: float64(at.Unix()),
+				Data: map[string]any{"price_to": 109.4, "change_pct": chg, "window_seconds": 60},
+			},
+			Candles4h: makePoint1Candles(),
+		})
+		if err != nil {
+			t.Fatalf("ProcessAnomaly: %v", err)
+		}
+		return got
+	}
+
+	first := submit(base, -1.2) // representative A
+	if err := svc.Close(); err == nil {
+		t.Fatal("Close must report the failed journal write")
+	}
+	if len(sender.sent) != 1 {
+		t.Fatalf("A must be delivered exactly once, got %d", len(sender.sent))
+	}
+
+	// Much more informative newcomer arrives while the bucket is retained.
+	saveFailing = false
+	newcomer := submit(base.Add(20*time.Second), -3.5)
+	if newcomer.DeliveryStatus != types.NoticeStatusSuppressed ||
+		newcomer.SuppressReason != types.NoticeSuppressDuplicateEvent {
+		t.Fatalf("newcomer must be suppressed against the frozen representative, got %+v", newcomer)
+	}
+	if !strings.Contains(newcomer.SuppressDetail, first.NoticeID) {
+		t.Fatalf("newcomer detail must name the frozen representative %s, got %q", first.NoticeID, newcomer.SuppressDetail)
+	}
+
+	if err := svc.Close(); err != nil {
+		t.Fatalf("retry Close: %v", err)
+	}
+	if len(sender.sent) != 1 {
+		t.Fatalf("retry must not resend, got %d sends", len(sender.sent))
+	}
+	notices, err := nj.ListNotices()
+	if err != nil {
+		t.Fatalf("ListNotices: %v", err)
+	}
+	if len(notices) != 2 {
+		t.Fatalf("expected representative + suppressed newcomer, got %+v", notices)
+	}
+	var sent, suppressed int
+	for _, n := range notices {
+		switch n.DeliveryStatus {
+		case types.NoticeStatusSent:
+			sent++
+		case types.NoticeStatusSuppressed:
+			suppressed++
+			if !strings.Contains(n.SuppressDetail, first.NoticeID) {
+				t.Fatalf("suppressed record must name the representative, got %q", n.SuppressDetail)
+			}
+		}
+	}
+	if sent != 1 || suppressed != 1 {
+		t.Fatalf("journal statuses sent=%d suppressed=%d, want 1/1", sent, suppressed)
+	}
+	for id, n := range writes {
+		if n != 1 {
+			t.Fatalf("notice %s journaled %d times, want exactly 1", id, n)
+		}
+	}
+	if _, still := svc.pending["AAVE/USDT:USDT|price_velocity"]; still {
+		t.Fatal("bucket must be released once every record is journaled")
 	}
 }

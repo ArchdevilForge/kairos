@@ -63,13 +63,34 @@ const (
 	NoticeStatusSuppressed NoticeDeliveryStatus = "suppressed"
 	NoticeStatusDryRun     NoticeDeliveryStatus = "dry_run"
 	NoticeStatusFailed     NoticeDeliveryStatus = "failed"
+	// NoticeStatusCoalescing marks a candidate held for the coalescing interval
+	// (see notice.eventCoalesceSeconds). It is never journaled: by the time the
+	// bucket flushes the notice is either accepted or suppressed.
+	NoticeStatusCoalescing NoticeDeliveryStatus = "coalescing"
 )
+
+// Accepted reports whether a Notice consumed the symbol cooldown and the daily
+// budget. A Notice is accepted once it is journaled and marked for delivery, so
+// a missing delivery channel (dry_run) or a failed send still counts: the owner
+// spends the same attention either way, and a silent cooldown is how one symbol
+// produced three notices in 3.5 hours in production.
+func (s NoticeDeliveryStatus) Accepted() bool {
+	switch s {
+	case NoticeStatusSent, NoticeStatusDryRun, NoticeStatusFailed:
+		return true
+	default:
+		return false
+	}
+}
 
 // Suppression reason constants for Notice budget & box-interior gating (§3 B3/B4).
 const (
 	NoticeSuppressInsideBox      = "inside_box"
 	NoticeSuppressSymbolCooldown = "symbol_cooldown"
 	NoticeSuppressDailyCap       = "daily_cap"
+	// NoticeSuppressDuplicateEvent marks a second velocity window (60s/120s)
+	// firing on the same underlying move; the first accepted window represents it.
+	NoticeSuppressDuplicateEvent = "duplicate_event"
 )
 
 // NoticeTriggerFacts records objective hard-data anomaly facts that triggered the Notice (§3 B2/B3).
@@ -170,10 +191,17 @@ type NoticeFeedback struct {
 
 // NoticeConfig configures the Phase 3c opportunity notice layer (§3 B3/B4).
 type NoticeConfig struct {
-	Enabled               bool  `mapstructure:"enabled" json:"enabled" yaml:"enabled"`
-	SymbolCooldownMinutes int   `mapstructure:"symbolCooldownMinutes" json:"symbolCooldownMinutes" yaml:"symbolCooldownMinutes"`
-	MaxNoticesPerDay      int   `mapstructure:"maxNoticesPerDay" json:"maxNoticesPerDay" yaml:"maxNoticesPerDay"`
-	SuppressInsideBox     *bool `mapstructure:"suppressInsideBox" json:"suppressInsideBox,omitempty" yaml:"suppressInsideBox,omitempty"`
+	Enabled               bool `mapstructure:"enabled" json:"enabled" yaml:"enabled"`
+	SymbolCooldownMinutes int  `mapstructure:"symbolCooldownMinutes" json:"symbolCooldownMinutes" yaml:"symbolCooldownMinutes"`
+	MaxNoticesPerDay      int  `mapstructure:"maxNoticesPerDay" json:"maxNoticesPerDay" yaml:"maxNoticesPerDay"`
+	// EventDedupSeconds collapses the same underlying event reported by several
+	// velocity windows into one Notice (0 disables event-level dedup).
+	EventDedupSeconds int `mapstructure:"eventDedupSeconds" json:"eventDedupSeconds" yaml:"eventDedupSeconds"`
+	// EventCoalesceSeconds holds a candidate briefly so competing windows of the
+	// same symbol+event type collapse into the most informative one (0 disables
+	// coalescing and ships whichever window fires first).
+	EventCoalesceSeconds int   `mapstructure:"eventCoalesceSeconds" json:"eventCoalesceSeconds" yaml:"eventCoalesceSeconds"`
+	SuppressInsideBox    *bool `mapstructure:"suppressInsideBox" json:"suppressInsideBox,omitempty" yaml:"suppressInsideBox,omitempty"`
 }
 
 // ShouldSuppressInsideBox returns true unless explicitly set to false in config (§3 B3).

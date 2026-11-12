@@ -315,6 +315,10 @@ type DataManagerConfig struct {
 	RefreshIntervalHours  int      `mapstructure:"refreshIntervalHours" json:"refreshIntervalHours" yaml:"refreshIntervalHours"`
 	DedupWindowSeconds    int      `mapstructure:"dedupWindowSeconds" json:"dedupWindowSeconds" yaml:"dedupWindowSeconds"`
 	SymbolCooldownMinutes int      `mapstructure:"symbolCooldownMinutes" json:"symbolCooldownMinutes" yaml:"symbolCooldownMinutes"`
+	// FeedSilentWarnSeconds: a connected ticker feed that delivers nothing for
+	// this long logs a throttled WARN (default 300 = 5m; 0 disables). Logging
+	// only — reconnect policy is a separate concern.
+	FeedSilentWarnSeconds int `mapstructure:"feedSilentWarnSeconds" json:"feedSilentWarnSeconds" yaml:"feedSilentWarnSeconds"`
 }
 
 // LiquidityWeightConfig down-weights alerts for low market-cap symbols.
@@ -432,6 +436,14 @@ type ScannerConfig struct {
 type ExchangesConfig struct {
 	Primary string   `mapstructure:"primary" json:"primary" yaml:"primary"`
 	Backups []string `mapstructure:"backups" json:"backups" yaml:"backups"`
+	// WSEndpoints overrides adapter ticker WebSocket endpoints. Empty means the
+	// adapter default, so an exchange-side endpoint migration is config-only.
+	WSEndpoints WSEndpointsConfig `mapstructure:"wsEndpoints" json:"wsEndpoints,omitempty" yaml:"wsEndpoints,omitempty"`
+}
+
+// WSEndpointsConfig holds per-exchange WebSocket endpoint overrides.
+type WSEndpointsConfig struct {
+	OKX string `mapstructure:"okx" json:"okx,omitempty" yaml:"okx,omitempty"`
 }
 
 // ScoringConfig defines deterministic scoring thresholds and weights.

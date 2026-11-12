@@ -119,3 +119,49 @@ func TestNoticeJournal_PersistenceBudgetAndFeedback(t *testing.T) {
 		t.Fatalf("expected latest feedback acted/tkt-abc, got %+v", fb)
 	}
 }
+
+// Dedup lookups must stay inside [since, until] and must ignore suppressed
+// records (a suppressed window never represents an event).
+func TestNoticeJournal_LastAcceptedEventWindow(t *testing.T) {
+	dir := t.TempDir()
+	nj, err := NewNoticeJournal(types.StorageConfig{DatabasePath: dir + "/kairos.db"})
+	if err != nil {
+		t.Fatalf("NewNoticeJournal: %v", err)
+	}
+	base := time.Date(2026, 11, 11, 12, 0, 0, 0, time.UTC)
+	accepted := types.Notice{
+		NoticeID:       "ntc-future",
+		CreatedAt:      base.Add(10 * time.Minute),
+		Symbol:         "SOL/USDT:USDT",
+		TriggerFacts:   types.NoticeTriggerFacts{EventType: "price_velocity"},
+		DeliveryStatus: types.NoticeStatusDryRun,
+	}
+	suppressed := types.Notice{
+		NoticeID:       "ntc-dup",
+		CreatedAt:      base.Add(5 * time.Minute),
+		Symbol:         "SOL/USDT:USDT",
+		TriggerFacts:   types.NoticeTriggerFacts{EventType: "price_velocity"},
+		DeliveryStatus: types.NoticeStatusSuppressed,
+		SuppressReason: types.NoticeSuppressDuplicateEvent,
+	}
+	for _, n := range []types.Notice{accepted, suppressed} {
+		if err := nj.SaveNotice(n); err != nil {
+			t.Fatalf("SaveNotice %s: %v", n.NoticeID, err)
+		}
+	}
+
+	// Candidate older than the accepted record: the future record must not match,
+	// otherwise an out-of-order event gets silently deduped by an unrelated move.
+	if _, found, err := nj.LastAcceptedEvent("SOL/USDT:USDT", "price_velocity", base.Add(-5*time.Minute), base); err != nil || found {
+		t.Fatalf("upper bound ignored: found=%v err=%v", found, err)
+	}
+	// Inclusive window catches the accepted record; the suppressed one is skipped.
+	got, found, err := nj.LastAcceptedEvent("SOL/USDT:USDT", "price_velocity", base, base.Add(15*time.Minute))
+	if err != nil || !found || got.NoticeID != accepted.NoticeID {
+		t.Fatalf("window lookup: got=%+v found=%v err=%v", got, found, err)
+	}
+	// Only a suppressed candidate inside the window must report "not found".
+	if _, found, err := nj.LastAcceptedEvent("SOL/USDT:USDT", "price_velocity", base.Add(4*time.Minute), base.Add(6*time.Minute)); err != nil || found {
+		t.Fatalf("suppressed record must not dedup: found=%v err=%v", found, err)
+	}
+}

@@ -39,6 +39,10 @@ dataManager:
   refreshIntervalHours: 4
   dedupWindowSeconds: 5
   symbolCooldownMinutes: 45
+  # A connected ticker feed that delivers nothing for this many seconds logs a
+  # WARN "feed silent" and repeats it every interval until data returns (which
+  # logs INFO "feed resumed"). Default 300 = 5m; 0 disables. Log-only.
+  feedSilentWarnSeconds: 300
 
 alertPolicy:
   enabled: true
@@ -138,6 +142,11 @@ scanner:
 exchanges:
   primary: "okx"
   backups: []
+  # Ticker WebSocket endpoint overrides. Empty/missing = adapter default.
+  # OKX retired WS port 8443 (notice code 64010), so the default is now 443:
+  #   okx: "wss://ws.okx.com:443/ws/v5/public"
+  wsEndpoints:
+    okx: "wss://ws.okx.com:443/ws/v5/public"
 
 scoring:
   candidateWeights:
@@ -328,10 +337,23 @@ opportunity:
 # ──────────────────────────────────────────────
 notice:
   enabled: false
-  # Per-symbol cooling window after a delivered notice (minutes; default 240 = 4h)
+  # Per-symbol cooling window after an ACCEPTED notice (minutes; default 240 = 4h).
+  # "Accepted" = journaled and marked for delivery: it holds with no Telegram
+  # channel configured and after a failed send, not only on successful delivery.
   symbolCooldownMinutes: 240
-  # Rolling 24h cap across all symbols (default 12; suppressed notices only log to notice-journal.jsonl)
+  # Rolling 24h cap across all symbols (default 12), counted on accepted notices.
+  # Suppressed notices only log to notice-journal.jsonl (status/reason/detail).
   maxNoticesPerDay: 12
+  # Collapse the same underlying move reported by several velocity windows
+  # (60s then 120s) into one notice; the extra windows are journaled as
+  # suppressed/duplicate_event (seconds; default 300, 0 disables).
+  eventDedupSeconds: 300
+  # Hold a candidate this long so competing windows of the same symbol+event
+  # type collapse into ONE notice represented by the most informative window
+  # (larger move, then longer window). Displaced windows are journaled as
+  # suppressed/duplicate_event. Adds this delay to notice delivery only — the
+  # realtime alert channel is unaffected. Default 60; 0 disables (first window wins).
+  eventCoalesceSeconds: 60
   # Suppress notices when price sits inside a 4h consolidation box (default true)
   suppressInsideBox: true
 

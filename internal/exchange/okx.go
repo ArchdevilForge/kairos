@@ -20,28 +20,41 @@ import (
 // ---------------------------------------------------------------------------
 
 const (
-	okxWSEndpoint   = "wss://ws.okx.com:8443/ws/v5/public"
-	okxRESTEndpoint = "https://www.okx.com"
+	// DefaultOKXWSEndpoint is OKX public tickers WS on port 443. OKX retired the
+	// old port 8443 endpoint (notice code 64010), so 443 is the only default.
+	DefaultOKXWSEndpoint = "wss://ws.okx.com:443/ws/v5/public"
+	okxRESTEndpoint      = "https://www.okx.com"
 	// OKX public instruments: 1=crypto, 3=stock/ETF, 4=commodity.
 	okxInstCategoryCrypto = "1"
 	okxCryptoIDCacheTTL   = 1 * time.Hour
 )
 
 type okxExchange struct {
-	name    string
-	httpCli *http.Client
-	mu      sync.Mutex
-	cancel  context.CancelFunc
-	closed  bool
+	name       string
+	httpCli    *http.Client
+	wsEndpoint string
+	feed       feedState
+	mu         sync.Mutex
+	cancel     context.CancelFunc
+	closed     bool
 
 	cryptoIDs   map[string]struct{} // instId set, e.g. BTC-USDT-SWAP
 	cryptoIDsAt time.Time
 }
 
-func newOKX() *okxExchange {
+func newOKX() *okxExchange { return newOKXWithEndpoint("") }
+
+// newOKXWithEndpoint builds an OKX adapter with an optional WS endpoint
+// override; an empty endpoint keeps DefaultOKXWSEndpoint.
+func newOKXWithEndpoint(endpoint string) *okxExchange {
+	ep := strings.TrimSpace(endpoint)
+	if ep == "" {
+		ep = DefaultOKXWSEndpoint
+	}
 	return &okxExchange{
-		name:    "okx",
-		httpCli: newHTTPClient(),
+		name:       "okx",
+		httpCli:    newHTTPClient(),
+		wsEndpoint: ep,
 	}
 }
 
@@ -50,6 +63,9 @@ func newOKX() *okxExchange {
 // ---------------------------------------------------------------------------
 
 func (o *okxExchange) Name() string { return o.name }
+
+// FeedStats reports ticker-feed liveness for the silent-feed watchdog.
+func (o *okxExchange) FeedStats() FeedStats { return o.feed.stats() }
 
 func (o *okxExchange) SubscribeTickers(ctx context.Context, symbols []string, tickerCh chan<- types.Ticker) error {
 	o.mu.Lock()
@@ -74,13 +90,16 @@ func (o *okxExchange) SubscribeTickers(ctx context.Context, symbols []string, ti
 		args = append(args, subArg{Channel: "tickers", InstID: normalizeSymbol(sym)})
 	}
 
+	flog := newFeedLog(o.name)
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 
-		conn, _, err := websocket.Dial(ctx, okxWSEndpoint, nil)
+		conn, _, err := websocket.Dial(ctx, o.wsEndpoint, nil)
 		if err != nil {
+			flog.Warn("dial", "ws dial failed, retrying",
+				"endpoint", o.wsEndpoint, "symbols", len(args), "error", err, "backoff", backoff)
 			if err := ctxSleep(ctx, backoff); err != nil {
 				return err
 			}
@@ -88,18 +107,30 @@ func (o *okxExchange) SubscribeTickers(ctx context.Context, symbols []string, ti
 			continue
 		}
 		backoff = 1 * time.Second // reset on successful connect
+		flog.Info("ws connected", "endpoint", o.wsEndpoint, "symbols", len(args))
 
 		// Subscribe
 		sub := map[string]any{"op": "subscribe", "args": args}
 		raw, _ := json.Marshal(sub)
 		if err := conn.Write(ctx, websocket.MessageText, raw); err != nil {
+			flog.Warn("subscribe", "ws subscribe failed, retrying",
+				"endpoint", o.wsEndpoint, "symbols", len(args), "error", err, "backoff", time.Duration(0))
+			o.feed.markDisconnected()
 			_ = conn.Close(websocket.StatusNormalClosure, "")
 			continue
 		}
+		flog.Info("ws subscribed", "endpoint", o.wsEndpoint, "symbols", len(args))
+		o.feed.markSubscribed(time.Now())
 
 		// Read loop
 		if err := o.readTickers(ctx, conn, tickerCh); err != nil {
+			o.feed.markDisconnected()
 			_ = conn.Close(websocket.StatusNormalClosure, "")
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			flog.Warn("read", "ws read ended, reconnecting",
+				"endpoint", o.wsEndpoint, "symbols", len(args), "error", err, "backoff", time.Duration(0))
 			continue
 		}
 	}
@@ -367,6 +398,7 @@ func (o *okxExchange) readTickers(ctx context.Context, conn *websocket.Conn, tic
 		if err != nil {
 			return err
 		}
+		o.feed.markMessage(time.Now())
 
 		var raw struct {
 			Event string            `json:"event"`

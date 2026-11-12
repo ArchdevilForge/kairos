@@ -26,6 +26,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ArchdevilForge/kairos/internal/data"
@@ -40,8 +41,8 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// exchangeNew creates exchange adapters; overridden in tests.
-var exchangeNew = exchange.New
+// exchangeNew creates exchange adapters with configured WS endpoints; overridden in tests.
+var exchangeNew = exchange.NewWithEndpoints
 
 // enrichPulse spawns async OHLCV enrichment for a pulse event; a var so tests
 // can count spawns (duplicate events must not enrich twice).
@@ -156,6 +157,10 @@ type exchangeState struct {
 	// resubCh signals the subscription loop that the universe changed and the
 	// WS feed must be restarted with the new symbol list (buffered, len 1).
 	resubCh chan struct{}
+
+	// lastTickNano is the UnixNano of the last ticker read off tickerCh; the
+	// silent-feed watchdog uses it to tell a quiet market from a dead feed.
+	lastTickNano atomic.Int64
 
 	// Real-time detectors
 	velocity *detector.PriceVelocityDetector
@@ -291,7 +296,7 @@ func (p *Pipeline) Start(ctx context.Context) error {
 
 	// 1. Create exchange instances.
 	for _, name := range exchangeNames {
-		ex, err := exchangeNew(name)
+		ex, err := exchangeNew(name, p.exchangeEndpoints())
 		if err != nil {
 			p.log.Warn("exchange creation skipped", "exchange", name, "error", err)
 			continue
@@ -396,6 +401,19 @@ func (p *Pipeline) Start(ctx context.Context) error {
 			p.consumeTickers(gCtx, es)
 			return nil
 		})
+	}
+
+	// 5b2. Silent-feed watchdog per exchange. Observability only: it logs a
+	// WARN when a subscribed feed stops delivering and an INFO when data returns.
+	// It never reconnects and never notifies.
+	if silent := time.Duration(p.cfg.DataManager.FeedSilentWarnSeconds) * time.Second; silent > 0 {
+		for _, es := range p.exchangeStates {
+			es := es
+			g.Go(func() error {
+				p.feedWatchdog(gCtx, es, silent, silent)
+				return nil
+			})
+		}
 	}
 
 	// 5c. Futures metrics polling per exchange.
@@ -511,6 +529,14 @@ func (p *Pipeline) Start(ctx context.Context) error {
 		return err
 	}
 	return nil
+}
+
+// exchangeEndpoints maps config endpoint overrides onto adapter options.
+func (p *Pipeline) exchangeEndpoints() exchange.Endpoints {
+	if p == nil || p.cfg == nil {
+		return exchange.Endpoints{}
+	}
+	return exchange.Endpoints{OKX: p.cfg.Exchanges.WSEndpoints.OKX}
 }
 
 // ── Symbol universe (locked) ───────────────────────────────────
@@ -677,6 +703,12 @@ func (p *Pipeline) Stop() {
 
 // Close releases exchange connections after shutdown.
 func (p *Pipeline) Close() {
+	// Flush coalesced notices first: a pending bucket must never be dropped silently.
+	if p.notice != nil {
+		if err := p.notice.Close(); err != nil {
+			p.log.Warn("notice flush on shutdown", "error", err)
+		}
+	}
 	for name, ex := range p.exchanges {
 		if err := ex.Close(); err != nil {
 			p.log.Warn("exchange close", "exchange", name, "error", err)
@@ -800,6 +832,7 @@ func (p *Pipeline) consumeTickers(ctx context.Context, es *exchangeState) {
 			if !ok {
 				return
 			}
+			es.lastTickNano.Store(time.Now().UnixNano())
 			if es.velocity != nil {
 				es.velocity.OnTicker(ctx, t)
 			}
@@ -812,6 +845,118 @@ func (p *Pipeline) consumeTickers(ctx context.Context, es *exchangeState) {
 			}
 		}
 	}
+}
+
+// ── Silent-feed watchdog ───────────────────────────────────────
+
+// feedWatchdog logs WARN "feed silent" when a subscribed feed has delivered no
+// ticker for silent, repeating at most every repeat while it stays silent, and
+// INFO "feed resumed" once data returns. Silence is a production-visible
+// failure (29 minutes with zero bytes looked like a calm market), so it is
+// reported without changing reconnect behaviour.
+func (p *Pipeline) feedWatchdog(ctx context.Context, es *exchangeState, silent, repeat time.Duration) {
+	if p == nil || es == nil || silent <= 0 {
+		return
+	}
+	if repeat <= 0 {
+		repeat = silent
+	}
+	interval := silent / 5
+	if interval < 10*time.Millisecond {
+		interval = 10 * time.Millisecond
+	}
+	if interval > 15*time.Second {
+		interval = 15 * time.Second
+	}
+
+	var lastWarn time.Time
+	// lastWarnMsg is the newest message timestamp observed when the silence was
+	// reported; recovery requires a message newer than that, so a reconnect that
+	// only resubscribed cannot be mistaken for data returning.
+	var lastWarnMsg time.Time
+	warned := false
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			act := feedActivitySnapshot(es)
+			if !act.subscribed {
+				// Not connected/subscribed: the dial and subscribe WARNs own this
+				// state, so the watchdog stays quiet instead of double-reporting.
+				// The warning state is kept so a later message still reports
+				// "feed resumed" rather than resetting silently.
+				continue
+			}
+			silentFor := now.Sub(act.since)
+
+			if silentFor < silent {
+				// Recovery means data actually arrived again. A reconnect that only
+				// resubscribed must not be reported as recovery.
+				if warned && act.lastMessage.After(lastWarnMsg) {
+					p.log.Info("feed resumed",
+						"exchange", es.name,
+						"silent_for", silentFor.Round(time.Second),
+						"last_message", act.lastMessage.UTC().Format(time.RFC3339),
+					)
+					warned = false
+				}
+				continue
+			}
+			if warned && now.Sub(lastWarn) < repeat {
+				continue
+			}
+			p.log.Warn("feed silent",
+				"exchange", es.name,
+				"silent_for", silentFor.Round(time.Second),
+				"threshold", silent,
+				"last_message", act.lastMessage.Format(time.RFC3339),
+			)
+			warned = true
+			lastWarn = now
+			lastWarnMsg = act.lastMessage
+		}
+	}
+}
+
+// feedActivity is one liveness snapshot for the silent-feed watchdog.
+type feedActivity struct {
+	subscribed  bool
+	since       time.Time // silence is measured from here
+	lastMessage time.Time // zero until the feed has delivered something
+}
+
+// feedActivitySnapshot reads adapter-reported liveness. It is authoritative (it
+// counts every received message, not only the tickers the consumer drained);
+// adapters without FeedStatus fall back to the last consumed ticker.
+func feedActivitySnapshot(es *exchangeState) feedActivity {
+	if fs, ok := es.ex.(exchange.FeedStatus); ok {
+		st := fs.FeedStats()
+		if !st.Subscribed {
+			return feedActivity{}
+		}
+		since := st.SubscribedAt
+		if st.LastMessageAt.After(since) {
+			since = st.LastMessageAt
+		}
+		return feedActivity{subscribed: true, since: since, lastMessage: st.LastMessageAt}
+	}
+	if t := es.lastTick(); !t.IsZero() {
+		return feedActivity{subscribed: true, since: t, lastMessage: t}
+	}
+	return feedActivity{}
+}
+
+// lastTick returns the time of the last ticker received from this feed (zero if none yet).
+func (es *exchangeState) lastTick() time.Time {
+	n := es.lastTickNano.Load()
+	if n <= 0 {
+		return time.Time{}
+	}
+	return time.Unix(0, n)
 }
 
 // ── Futures Metrics Polling ────────────────────────────────────

@@ -1,15 +1,20 @@
 package engine
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/ArchdevilForge/kairos/internal/config"
 	"github.com/ArchdevilForge/kairos/internal/detector"
+	"github.com/ArchdevilForge/kairos/internal/exchange"
 	"github.com/ArchdevilForge/kairos/internal/storage"
 	"github.com/ArchdevilForge/kairos/internal/types"
 )
@@ -247,4 +252,210 @@ func quietHealthyDetector(t *testing.T, cfg types.MarketPulseConfig) *detector.M
 		clock += 5
 	}
 	return d
+}
+
+// syncTestLogBuffer captures pipeline slog output for watchdog assertions.
+type syncTestLogBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncTestLogBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncTestLogBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func (b *syncTestLogBuffer) count(substr string) int { return strings.Count(b.String(), substr) }
+
+func (b *syncTestLogBuffer) waitFor(t *testing.T, substr string, want int, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if b.count(substr) >= want {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %d occurrence(s) of %q:\n%s", want, substr, b.String())
+}
+
+// watchdogFeed is a mock adapter reporting feed liveness like a real adapter, so
+// the watchdog can be tested without sockets or real time.
+type watchdogFeed struct {
+	*startMockExchange
+	mu sync.Mutex
+	st exchange.FeedStats
+}
+
+func newWatchdogFeed() *watchdogFeed {
+	return &watchdogFeed{startMockExchange: &startMockExchange{}}
+}
+
+func (w *watchdogFeed) FeedStats() exchange.FeedStats {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.st
+}
+
+func (w *watchdogFeed) set(st exchange.FeedStats) {
+	w.mu.Lock()
+	w.st = st
+	w.mu.Unlock()
+}
+
+// A subscribed feed that delivers nothing must announce itself (WARN) and repeat
+// while silent, then report recovery (INFO). 29 minutes of zero bytes used to look
+// exactly like a calm market. A feed that never subscribed is not silent — the
+// dial/subscribe WARNs own that state.
+func TestFeedWatchdog_SilentWarnRepeatAndResume(t *testing.T) {
+	cfg, err := config.LoadString("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := NewPipeline(cfg, nil)
+	buf := &syncTestLogBuffer{}
+	p.log = slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	feed := newWatchdogFeed()
+	es := &exchangeState{name: "okx", ex: feed, tickerCh: make(chan types.Ticker, 4)}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go p.feedWatchdog(ctx, es, 60*time.Millisecond, 60*time.Millisecond)
+
+	// Never subscribed: quiet (dial failures are logged by the adapter instead).
+	time.Sleep(120 * time.Millisecond)
+	if got := buf.count("feed silent"); got != 0 {
+		t.Fatalf("watchdog must stay quiet before the feed subscribes, got %d WARN(s):\n%s", got, buf.String())
+	}
+
+	subscribedAt := time.Now()
+	feed.set(exchange.FeedStats{Subscribed: true, SubscribedAt: subscribedAt})
+	buf.waitFor(t, "feed silent", 1, 2*time.Second)
+	buf.waitFor(t, "feed silent", 2, 2*time.Second) // repeated while still silent
+
+	feed.set(exchange.FeedStats{Subscribed: true, SubscribedAt: subscribedAt, LastMessageAt: time.Now()})
+	buf.waitFor(t, "feed resumed", 1, 2*time.Second)
+
+	// While messages keep arriving there must be no new WARN (a feed that goes
+	// quiet again is a new silence and warns again, which the previous step proved).
+	before := buf.count("feed silent")
+	for i := 0; i < 15; i++ {
+		feed.set(exchange.FeedStats{Subscribed: true, SubscribedAt: subscribedAt, LastMessageAt: time.Now()})
+		time.Sleep(10 * time.Millisecond)
+	}
+	if after := buf.count("feed silent"); after != before {
+		t.Fatalf("watchdog kept warning while data was flowing (%d -> %d):\n%s", before, after, buf.String())
+	}
+}
+
+// Without FeedStatus the watchdog falls back to the consumer-observed ticker and
+// stays quiet until that adapter has actually delivered something.
+func TestFeedWatchdog_NoFeedStatusFallsBackToConsumedTicks(t *testing.T) {
+	cfg, err := config.LoadString("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := NewPipeline(cfg, nil)
+	buf := &syncTestLogBuffer{}
+	p.log = slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	// A plain mock (no FeedStats method) exercises the fallback path.
+	es := &exchangeState{name: "okx", ex: &mockTickerSource{}, tickerCh: make(chan types.Ticker, 4)}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go p.feedWatchdog(ctx, es, 60*time.Millisecond, 60*time.Millisecond)
+
+	time.Sleep(120 * time.Millisecond)
+	if got := buf.count("feed silent"); got != 0 {
+		t.Fatalf("fallback must stay quiet before any tick, got:\n%s", buf.String())
+	}
+	es.lastTickNano.Store(time.Now().Add(-time.Second).UnixNano())
+	buf.waitFor(t, "feed silent", 1, 2*time.Second)
+}
+
+func TestFeedWatchdog_DisabledWithoutThreshold(t *testing.T) {
+	cfg, err := config.LoadString("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := NewPipeline(cfg, nil)
+	buf := &syncTestLogBuffer{}
+	p.log = slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	feed := newWatchdogFeed()
+	feed.set(exchange.FeedStats{Subscribed: true, SubscribedAt: time.Now()})
+	es := &exchangeState{name: "okx", ex: feed, tickerCh: make(chan types.Ticker, 4)}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go p.feedWatchdog(ctx, es, 0, 0) // 0 disables
+	time.Sleep(100 * time.Millisecond)
+	if buf.count("feed silent") != 0 {
+		t.Fatalf("disabled watchdog must stay quiet, got:\n%s", buf.String())
+	}
+}
+
+// mockTickerSource is a minimal adapter without FeedStatus (fallback path).
+type mockTickerSource struct{}
+
+func (m *mockTickerSource) Name() string { return "mock" }
+func (m *mockTickerSource) SubscribeTickers(context.Context, []string, chan<- types.Ticker) error {
+	return nil
+}
+func (m *mockTickerSource) FetchTickers(context.Context) (map[string]*types.Ticker, error) {
+	return nil, nil
+}
+func (m *mockTickerSource) FetchTicker(context.Context, string) (*types.Ticker, error) {
+	return nil, nil
+}
+func (m *mockTickerSource) FetchOHLCV(context.Context, string, string, int, int64) ([]types.Candle, error) {
+	return nil, nil
+}
+func (m *mockTickerSource) Close() error { return nil }
+
+// A reconnect that only resubscribes is not recovery: the watchdog must wait for an
+// actual message, and must stay quiet while the feed is disconnected (the adapter's
+// dial/read WARNs own that state).
+func TestFeedWatchdog_ResubscribeWithoutDataIsNotRecovery(t *testing.T) {
+	cfg, err := config.LoadString("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := NewPipeline(cfg, nil)
+	buf := &syncTestLogBuffer{}
+	p.log = slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	feed := newWatchdogFeed()
+	feed.set(exchange.FeedStats{Subscribed: true, SubscribedAt: time.Now()})
+	es := &exchangeState{name: "okx", ex: feed, tickerCh: make(chan types.Ticker, 4)}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go p.feedWatchdog(ctx, es, 60*time.Millisecond, 60*time.Millisecond)
+
+	buf.waitFor(t, "feed silent", 1, 2*time.Second)
+
+	// Reconnect: new subscription timestamp, still no message.
+	feed.set(exchange.FeedStats{Subscribed: true, SubscribedAt: time.Now()})
+	time.Sleep(150 * time.Millisecond)
+	if got := buf.count("feed resumed"); got != 0 {
+		t.Fatalf("resubscription without data must not be reported as recovery:\n%s", buf.String())
+	}
+
+	// Disconnected (the adapter cleared the subscription): watchdog goes quiet.
+	feed.set(exchange.FeedStats{})
+	before := buf.count("feed silent")
+	time.Sleep(200 * time.Millisecond)
+	if after := buf.count("feed silent"); after != before {
+		t.Fatalf("watchdog must stay quiet while disconnected (%d -> %d):\n%s", before, after, buf.String())
+	}
+
+	// First message after the last warn is genuine recovery.
+	feed.set(exchange.FeedStats{Subscribed: true, SubscribedAt: time.Now(), LastMessageAt: time.Now()})
+	buf.waitFor(t, "feed resumed", 1, 2*time.Second)
 }

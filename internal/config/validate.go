@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/ArchdevilForge/kairos/internal/types"
@@ -100,6 +101,13 @@ func Validate(cfg *types.Config) error {
 			addf("exchanges.backups contains unsupported exchange %q", ex)
 		}
 	}
+	// WS endpoint overrides: empty keeps the adapter default; anything set must
+	// be a dialable ws:// or wss:// URL (a typo would otherwise look like a dead feed).
+	if ep := cfg.Exchanges.WSEndpoints.OKX; ep != "" {
+		if err := validateWSEndpoint(ep); err != nil {
+			addf("exchanges.wsEndpoints.okx %q %v", ep, err)
+		}
+	}
 
 	// --- dataManager ----------------------------------------------------------
 	if cfg.DataManager.TopSymbols <= 0 {
@@ -113,6 +121,9 @@ func Validate(cfg *types.Config) error {
 	}
 	if cfg.DataManager.RefreshIntervalHours < 0 {
 		addf("dataManager.refreshIntervalHours must be >= 0, got %d", cfg.DataManager.RefreshIntervalHours)
+	}
+	if cfg.DataManager.FeedSilentWarnSeconds < 0 {
+		addf("dataManager.feedSilentWarnSeconds must be >= 0 (0 disables the silent-feed WARN), got %d", cfg.DataManager.FeedSilentWarnSeconds)
 	}
 
 	// --- scanner --------------------------------------------------------------
@@ -297,11 +308,33 @@ func Validate(cfg *types.Config) error {
 	if cfg.Notice.MaxNoticesPerDay < 0 {
 		addf("notice.maxNoticesPerDay must be >= 0, got %d", cfg.Notice.MaxNoticesPerDay)
 	}
+	if cfg.Notice.EventDedupSeconds < 0 {
+		addf("notice.eventDedupSeconds must be >= 0, got %d", cfg.Notice.EventDedupSeconds)
+	}
+	if cfg.Notice.EventCoalesceSeconds < 0 {
+		addf("notice.eventCoalesceSeconds must be >= 0, got %d", cfg.Notice.EventCoalesceSeconds)
+	}
 
 	if len(errs) == 0 {
 		return nil
 	}
 	return fmt.Errorf("invalid config (%d problems):\n  - %s", len(errs), strings.Join(errs, "\n  - "))
+}
+
+// validateWSEndpoint requires a dialable ws/wss URL with a host. A prefix-only
+// check lets "wss://" through and turns a config typo into a silent dead feed.
+func validateWSEndpoint(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("is not a valid URL: %v", err)
+	}
+	if u.Scheme != "ws" && u.Scheme != "wss" {
+		return fmt.Errorf("must start with ws:// or wss://")
+	}
+	if u.Hostname() == "" {
+		return fmt.Errorf("must include a host")
+	}
+	return nil
 }
 
 func containsString(list []string, want string) bool {
