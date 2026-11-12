@@ -348,6 +348,12 @@ notice:
   # (60s then 120s) into one notice; the extra windows are journaled as
   # suppressed/duplicate_event (seconds; default 300, 0 disables).
   eventDedupSeconds: 300
+  # Hold a candidate this long so competing windows of the same symbol+event
+  # type collapse into ONE notice represented by the most informative window
+  # (larger move, then longer window). Displaced windows are journaled as
+  # suppressed/duplicate_event. Adds this delay to notice delivery only — the
+  # realtime alert channel is unaffected. Default 60; 0 disables (first window wins).
+  eventCoalesceSeconds: 60
   # Suppress notices when price sits inside a 4h consolidation box (default true)
   suppressInsideBox: true
 

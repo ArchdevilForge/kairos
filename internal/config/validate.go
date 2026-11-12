@@ -311,6 +311,9 @@ func Validate(cfg *types.Config) error {
 	if cfg.Notice.EventDedupSeconds < 0 {
 		addf("notice.eventDedupSeconds must be >= 0, got %d", cfg.Notice.EventDedupSeconds)
 	}
+	if cfg.Notice.EventCoalesceSeconds < 0 {
+		addf("notice.eventCoalesceSeconds must be >= 0, got %d", cfg.Notice.EventCoalesceSeconds)
+	}
 
 	if len(errs) == 0 {
 		return nil

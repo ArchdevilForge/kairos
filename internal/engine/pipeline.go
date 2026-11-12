@@ -703,6 +703,10 @@ func (p *Pipeline) Stop() {
 
 // Close releases exchange connections after shutdown.
 func (p *Pipeline) Close() {
+	// Flush coalesced notices first: a pending bucket must never be dropped silently.
+	if p.notice != nil {
+		p.notice.Close()
+	}
 	for name, ex := range p.exchanges {
 		if err := ex.Close(); err != nil {
 			p.log.Warn("exchange close", "exchange", name, "error", err)

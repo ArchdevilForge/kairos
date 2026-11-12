@@ -63,6 +63,10 @@ const (
 	NoticeStatusSuppressed NoticeDeliveryStatus = "suppressed"
 	NoticeStatusDryRun     NoticeDeliveryStatus = "dry_run"
 	NoticeStatusFailed     NoticeDeliveryStatus = "failed"
+	// NoticeStatusCoalescing marks a candidate held for the coalescing interval
+	// (see notice.eventCoalesceSeconds). It is never journaled: by the time the
+	// bucket flushes the notice is either accepted or suppressed.
+	NoticeStatusCoalescing NoticeDeliveryStatus = "coalescing"
 )
 
 // Accepted reports whether a Notice consumed the symbol cooldown and the daily
@@ -192,8 +196,12 @@ type NoticeConfig struct {
 	MaxNoticesPerDay      int  `mapstructure:"maxNoticesPerDay" json:"maxNoticesPerDay" yaml:"maxNoticesPerDay"`
 	// EventDedupSeconds collapses the same underlying event reported by several
 	// velocity windows into one Notice (0 disables event-level dedup).
-	EventDedupSeconds int   `mapstructure:"eventDedupSeconds" json:"eventDedupSeconds" yaml:"eventDedupSeconds"`
-	SuppressInsideBox *bool `mapstructure:"suppressInsideBox" json:"suppressInsideBox,omitempty" yaml:"suppressInsideBox,omitempty"`
+	EventDedupSeconds int `mapstructure:"eventDedupSeconds" json:"eventDedupSeconds" yaml:"eventDedupSeconds"`
+	// EventCoalesceSeconds holds a candidate briefly so competing windows of the
+	// same symbol+event type collapse into the most informative one (0 disables
+	// coalescing and ships whichever window fires first).
+	EventCoalesceSeconds int   `mapstructure:"eventCoalesceSeconds" json:"eventCoalesceSeconds" yaml:"eventCoalesceSeconds"`
+	SuppressInsideBox    *bool `mapstructure:"suppressInsideBox" json:"suppressInsideBox,omitempty" yaml:"suppressInsideBox,omitempty"`
 }
 
 // ShouldSuppressInsideBox returns true unless explicitly set to false in config (§3 B3).

@@ -36,6 +36,12 @@ type Service struct {
 	journal *storage.NoticeJournal
 	sender  TextSender
 	nowFunc func() time.Time
+
+	// coalesce holds candidates briefly so competing windows of the same
+	// symbol+event type collapse into the most informative one; pending is keyed
+	// by "symbol|eventType".
+	coalesce time.Duration
+	pending  map[string]*pendingNotice
 }
 
 // NewService constructs a Phase 3c Notice routing service.
@@ -49,11 +55,16 @@ func NewService(cfg types.NoticeConfig, journal *storage.NoticeJournal, sender T
 	if cfg.EventDedupSeconds < 0 {
 		cfg.EventDedupSeconds = 0
 	}
+	if cfg.EventCoalesceSeconds < 0 {
+		cfg.EventCoalesceSeconds = 0
+	}
 	return &Service{
-		cfg:     cfg,
-		journal: journal,
-		sender:  sender,
-		nowFunc: func() time.Time { return time.Now().UTC() },
+		cfg:      cfg,
+		journal:  journal,
+		sender:   sender,
+		nowFunc:  func() time.Time { return time.Now().UTC() },
+		coalesce: time.Duration(cfg.EventCoalesceSeconds) * time.Second,
+		pending:  make(map[string]*pendingNotice),
 	}
 }
 
@@ -77,9 +88,13 @@ type ProcessRequest struct {
 }
 
 // ProcessAnomaly converts a qualifying detector AnomalyEvent into a Notice, checks
-// suppression gates (inside_box -> same-event dedup -> symbol 4h cooldown -> 12/day
-// cap), persists to notice-journal.jsonl, and sends via Telegram only when
+// suppression gates (inside_box -> same-event coalescing/dedup -> symbol 4h cooldown
+// -> 12/day cap), persists to notice-journal.jsonl, and sends via Telegram only when
 // unsuppressed (§3 B2/B3/B4).
+//
+// With notice.eventCoalesceSeconds > 0 the gates and delivery run when the
+// coalescing bucket flushes (Service.Close flushes on shutdown), so the returned
+// Notice may carry types.NoticeStatusCoalescing instead of a final status.
 //
 // Cooldown and the daily cap are consumed by every accepted Notice — journaled and
 // marked for delivery — so they hold with no Telegram channel configured and after a
@@ -141,7 +156,20 @@ func (s *Service) ProcessAnomaly(ctx context.Context, req ProcessRequest) (*type
 		return s.persistOnly(ntc)
 	}
 
-	// Gate 2: Same-event dedup — one underlying move reported by several velocity
+	// Gate 2: Same-event coalescing (notice.eventCoalesceSeconds). Several velocity
+	// windows (60s then 120s) report the same underlying move; holding the notice
+	// briefly lets the most informative window represent it instead of whichever
+	// fired first. Displaced windows are journaled as suppressed, never dropped.
+	if s.journal != nil && s.coalesce > 0 {
+		return s.coalesceCandidate(ctx, ntc)
+	}
+	return s.deliverLocked(ctx, ntc, now)
+}
+
+// deliverLocked applies the same-event dedup, symbol cooldown and daily cap gates
+// to ntc and delivers it. The caller must hold s.mu.
+func (s *Service) deliverLocked(ctx context.Context, ntc types.Notice, now time.Time) (*types.Notice, error) {
+	// Gate 3: Same-event dedup — one underlying move reported by several velocity
 	// windows (60s and 120s) becomes one Notice; the rest stay in the journal as
 	// suppressed so the accounting is auditable instead of silently dropped.
 	if s.journal != nil && s.cfg.EventDedupSeconds > 0 {
@@ -151,14 +179,12 @@ func (s *Service) ProcessAnomaly(ctx context.Context, req ProcessRequest) (*type
 			return nil, fmt.Errorf("notice event dedup: %w", err)
 		}
 		if found {
-			ntc.DeliveryStatus = types.NoticeStatusSuppressed
-			ntc.SuppressReason = types.NoticeSuppressDuplicateEvent
-			ntc.SuppressDetail = duplicateEventDetail(ntc.TriggerFacts, rep)
-			return s.persistOnly(ntc)
+			loser := suppressedDuplicate(ntc, rep)
+			return s.persistOnly(loser)
 		}
 	}
 
-	// Gate 3 & 4: Per-symbol cooldown (default 4h) & daily cap (default 12) from
+	// Gate 4 & 5: Per-symbol cooldown (default 4h) & daily cap (default 12) from
 	// notice-journal.jsonl (§3 B4). Both count accepted notices, not deliveries.
 	if s.journal != nil {
 		stats, err := s.journal.BudgetStats(ntc.Symbol, now, 24*time.Hour)
@@ -199,6 +225,92 @@ func (s *Service) ProcessAnomaly(ctx context.Context, req ProcessRequest) (*type
 
 	ntc.DeliveryStatus = types.NoticeStatusSent
 	return s.persistOnly(ntc)
+}
+
+// pendingNotice is one coalescing bucket: the most informative candidate so far
+// plus the windows it displaced. Nothing is journaled until the bucket flushes.
+type pendingNotice struct {
+	best   types.Notice
+	extras []types.Notice
+	timer  *time.Timer
+}
+
+// coalesceCandidate buckets ntc by symbol+event type for the coalescing interval.
+// A more informative window replaces the current representative; the replaced one
+// is kept and journaled as suppressed when the bucket flushes.
+func (s *Service) coalesceCandidate(ctx context.Context, ntc types.Notice) (*types.Notice, error) {
+	key := ntc.Symbol + "|" + ntc.TriggerFacts.EventType
+	g, ok := s.pending[key]
+	if !ok {
+		g = &pendingNotice{best: ntc}
+		s.pending[key] = g
+		g.timer = time.AfterFunc(s.coalesce, func() { s.flush(key, ctx) })
+		ntc.DeliveryStatus = types.NoticeStatusCoalescing
+		return &ntc, nil
+	}
+	if moreInformative(ntc.TriggerFacts, g.best.TriggerFacts) {
+		g.extras = append(g.extras, suppressedDuplicate(g.best, ntc))
+		g.best = ntc
+		ntc.DeliveryStatus = types.NoticeStatusCoalescing
+		return &ntc, nil
+	}
+	loser := suppressedDuplicate(ntc, g.best)
+	g.extras = append(g.extras, loser)
+	return &loser, nil
+}
+
+// flush delivers the coalesced representative and journals the windows it displaced.
+func (s *Service) flush(key string, ctx context.Context) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	g, ok := s.pending[key]
+	if !ok {
+		return
+	}
+	delete(s.pending, key)
+	if g.timer != nil {
+		g.timer.Stop()
+	}
+	for _, loser := range g.extras {
+		if s.journal != nil {
+			_ = s.journal.SaveNotice(loser)
+		}
+	}
+	// Gates are evaluated against the representative window event time, exactly
+	// as the immediate path does.
+	_, _ = s.deliverLocked(ctx, g.best, g.best.CreatedAt)
+}
+
+// Close flushes every pending coalescing bucket so shutdown never drops a notice
+// silently.
+func (s *Service) Close() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	keys := make([]string, 0, len(s.pending))
+	for k := range s.pending {
+		keys = append(keys, k)
+	}
+	s.mu.Unlock()
+
+	if len(keys) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	for _, k := range keys {
+		s.flush(k, ctx)
+	}
+}
+
+// suppressedDuplicate marks candidate as the suppressed twin of rep and keeps the
+// window comparison in the journal instead of dropping the record.
+func suppressedDuplicate(candidate, rep types.Notice) types.Notice {
+	candidate.DeliveryStatus = types.NoticeStatusSuppressed
+	candidate.SuppressReason = types.NoticeSuppressDuplicateEvent
+	candidate.SuppressDetail = duplicateEventDetail(candidate.TriggerFacts, rep)
+	return candidate
 }
 
 func (s *Service) persistOnly(ntc types.Notice) (*types.Notice, error) {

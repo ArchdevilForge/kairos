@@ -312,6 +312,7 @@ func setDefaults(v *viper.Viper) {
 		"symbolCooldownMinutes": 240,
 		"maxNoticesPerDay":      12,
 		"eventDedupSeconds":     300,
+		"eventCoalesceSeconds":  60,
 		"suppressInsideBox":     true,
 	})
 
