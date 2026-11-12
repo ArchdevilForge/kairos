@@ -58,12 +58,15 @@ func (b *binanceExchange) SubscribeTickers(ctx context.Context, symbols []string
 	backoff := time.Second
 	maxBackoff := 30 * time.Second
 
+	flog := newFeedLog("binance")
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 		conn, _, err := websocket.Dial(ctx, uri, nil)
 		if err != nil {
+			flog.Warn("dial", "ws dial failed, retrying",
+				"endpoint", binanceWSEndpoint, "symbols", len(streams), "error", err, "backoff", backoff)
 			if err := ctxSleep(ctx, backoff); err != nil {
 				return err
 			}
@@ -71,8 +74,17 @@ func (b *binanceExchange) SubscribeTickers(ctx context.Context, symbols []string
 			continue
 		}
 		backoff = time.Second
+		flog.Info("ws connected", "endpoint", binanceWSEndpoint, "symbols", len(streams))
+		// Binance carries the subscription in the dial URL, so "subscribed" is
+		// reached as soon as the combined stream socket is up.
+		flog.Info("ws subscribed", "endpoint", binanceWSEndpoint, "symbols", len(streams), "mode", "streams_in_url")
 		if err := b.readTickers(ctx, conn, tickerCh, lookup); err != nil {
 			_ = conn.Close(websocket.StatusNormalClosure, "")
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			flog.Warn("read", "ws read ended, reconnecting",
+				"endpoint", binanceWSEndpoint, "symbols", len(streams), "error", err)
 			continue
 		}
 	}

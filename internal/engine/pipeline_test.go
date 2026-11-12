@@ -1,12 +1,16 @@
 package engine
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/ArchdevilForge/kairos/internal/config"
 	"github.com/ArchdevilForge/kairos/internal/detector"
@@ -247,4 +251,90 @@ func quietHealthyDetector(t *testing.T, cfg types.MarketPulseConfig) *detector.M
 		clock += 5
 	}
 	return d
+}
+
+// syncTestLogBuffer captures pipeline slog output for watchdog assertions.
+type syncTestLogBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncTestLogBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncTestLogBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func (b *syncTestLogBuffer) count(substr string) int { return strings.Count(b.String(), substr) }
+
+func (b *syncTestLogBuffer) waitFor(t *testing.T, substr string, want int, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if b.count(substr) >= want {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %d occurrence(s) of %q:\n%s", want, substr, b.String())
+}
+
+// A subscribed feed that delivers nothing must announce itself (WARN) and repeat
+// while silent, then report recovery (INFO). 29 minutes of zero bytes used to look
+// exactly like a calm market.
+func TestFeedWatchdog_SilentWarnRepeatAndResume(t *testing.T) {
+	cfg, err := config.LoadString("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := NewPipeline(cfg, nil)
+	buf := &syncTestLogBuffer{}
+	p.log = slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	es := &exchangeState{name: "okx", tickerCh: make(chan types.Ticker, 4)}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go p.feedWatchdog(ctx, es, 60*time.Millisecond, 60*time.Millisecond)
+
+	buf.waitFor(t, "feed silent", 1, 2*time.Second)
+	buf.waitFor(t, "feed silent", 2, 2*time.Second) // repeated while still silent
+
+	es.lastTickNano.Store(time.Now().UnixNano())
+	buf.waitFor(t, "feed resumed", 1, 2*time.Second)
+
+	// While data keeps flowing there must be no new WARN (a feed that goes quiet
+	// again is a new silence and warns again, which the previous step proved).
+	before := buf.count("feed silent")
+	for i := 0; i < 15; i++ {
+		es.lastTickNano.Store(time.Now().UnixNano())
+		time.Sleep(10 * time.Millisecond)
+	}
+	if after := buf.count("feed silent"); after != before {
+		t.Fatalf("watchdog kept warning while data was flowing (%d -> %d):\n%s", before, after, buf.String())
+	}
+}
+
+func TestFeedWatchdog_DisabledWithoutThreshold(t *testing.T) {
+	cfg, err := config.LoadString("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := NewPipeline(cfg, nil)
+	buf := &syncTestLogBuffer{}
+	p.log = slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	es := &exchangeState{name: "okx", tickerCh: make(chan types.Ticker, 4)}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go p.feedWatchdog(ctx, es, 0, 0) // 0 disables
+	time.Sleep(100 * time.Millisecond)
+	if buf.count("feed silent") != 0 {
+		t.Fatalf("disabled watchdog must stay quiet, got:\n%s", buf.String())
+	}
 }

@@ -86,6 +86,7 @@ func (o *okxExchange) SubscribeTickers(ctx context.Context, symbols []string, ti
 		args = append(args, subArg{Channel: "tickers", InstID: normalizeSymbol(sym)})
 	}
 
+	flog := newFeedLog(o.name)
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -93,6 +94,8 @@ func (o *okxExchange) SubscribeTickers(ctx context.Context, symbols []string, ti
 
 		conn, _, err := websocket.Dial(ctx, o.wsEndpoint, nil)
 		if err != nil {
+			flog.Warn("dial", "ws dial failed, retrying",
+				"endpoint", o.wsEndpoint, "symbols", len(args), "error", err, "backoff", backoff)
 			if err := ctxSleep(ctx, backoff); err != nil {
 				return err
 			}
@@ -100,18 +103,27 @@ func (o *okxExchange) SubscribeTickers(ctx context.Context, symbols []string, ti
 			continue
 		}
 		backoff = 1 * time.Second // reset on successful connect
+		flog.Info("ws connected", "endpoint", o.wsEndpoint, "symbols", len(args))
 
 		// Subscribe
 		sub := map[string]any{"op": "subscribe", "args": args}
 		raw, _ := json.Marshal(sub)
 		if err := conn.Write(ctx, websocket.MessageText, raw); err != nil {
+			flog.Warn("subscribe", "ws subscribe failed, retrying",
+				"endpoint", o.wsEndpoint, "symbols", len(args), "error", err)
 			_ = conn.Close(websocket.StatusNormalClosure, "")
 			continue
 		}
+		flog.Info("ws subscribed", "endpoint", o.wsEndpoint, "symbols", len(args))
 
 		// Read loop
 		if err := o.readTickers(ctx, conn, tickerCh); err != nil {
 			_ = conn.Close(websocket.StatusNormalClosure, "")
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			flog.Warn("read", "ws read ended, reconnecting",
+				"endpoint", o.wsEndpoint, "symbols", len(args), "error", err)
 			continue
 		}
 	}

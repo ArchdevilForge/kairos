@@ -121,6 +121,9 @@ func Validate(cfg *types.Config) error {
 	if cfg.DataManager.RefreshIntervalHours < 0 {
 		addf("dataManager.refreshIntervalHours must be >= 0, got %d", cfg.DataManager.RefreshIntervalHours)
 	}
+	if cfg.DataManager.FeedSilentWarnSeconds < 0 {
+		addf("dataManager.feedSilentWarnSeconds must be >= 0 (0 disables the silent-feed WARN), got %d", cfg.DataManager.FeedSilentWarnSeconds)
+	}
 
 	// --- scanner --------------------------------------------------------------
 	required := []string{"1d", "4h", "15m"}

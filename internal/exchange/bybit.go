@@ -56,12 +56,15 @@ func (b *bybitExchange) SubscribeTickers(ctx context.Context, symbols []string, 
 
 	backoff := time.Second
 	maxBackoff := 30 * time.Second
+	flog := newFeedLog("bybit")
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 		conn, _, err := websocket.Dial(ctx, bybitWSEndpoint, nil)
 		if err != nil {
+			flog.Warn("dial", "ws dial failed, retrying",
+				"endpoint", bybitWSEndpoint, "symbols", len(args), "error", err, "backoff", backoff)
 			if err := ctxSleep(ctx, backoff); err != nil {
 				return err
 			}
@@ -69,15 +72,24 @@ func (b *bybitExchange) SubscribeTickers(ctx context.Context, symbols []string, 
 			continue
 		}
 		backoff = time.Second
+		flog.Info("ws connected", "endpoint", bybitWSEndpoint, "symbols", len(args))
 
 		sub := map[string]any{"op": "subscribe", "args": args}
 		raw, _ := json.Marshal(sub)
 		if err := conn.Write(ctx, websocket.MessageText, raw); err != nil {
+			flog.Warn("subscribe", "ws subscribe failed, retrying",
+				"endpoint", bybitWSEndpoint, "symbols", len(args), "error", err)
 			_ = conn.Close(websocket.StatusNormalClosure, "")
 			continue
 		}
+		flog.Info("ws subscribed", "endpoint", bybitWSEndpoint, "symbols", len(args))
 		if err := b.readTickers(ctx, conn, tickerCh, lookup); err != nil {
 			_ = conn.Close(websocket.StatusNormalClosure, "")
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			flog.Warn("read", "ws read ended, reconnecting",
+				"endpoint", bybitWSEndpoint, "symbols", len(args), "error", err)
 			continue
 		}
 	}

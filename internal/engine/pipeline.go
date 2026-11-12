@@ -26,6 +26,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ArchdevilForge/kairos/internal/data"
@@ -156,6 +157,10 @@ type exchangeState struct {
 	// resubCh signals the subscription loop that the universe changed and the
 	// WS feed must be restarted with the new symbol list (buffered, len 1).
 	resubCh chan struct{}
+
+	// lastTickNano is the UnixNano of the last ticker read off tickerCh; the
+	// silent-feed watchdog uses it to tell a quiet market from a dead feed.
+	lastTickNano atomic.Int64
 
 	// Real-time detectors
 	velocity *detector.PriceVelocityDetector
@@ -396,6 +401,19 @@ func (p *Pipeline) Start(ctx context.Context) error {
 			p.consumeTickers(gCtx, es)
 			return nil
 		})
+	}
+
+	// 5b2. Silent-feed watchdog per exchange. Observability only: it logs a
+	// WARN when a subscribed feed stops delivering and an INFO when data returns.
+	// It never reconnects and never notifies.
+	if silent := time.Duration(p.cfg.DataManager.FeedSilentWarnSeconds) * time.Second; silent > 0 {
+		for _, es := range p.exchangeStates {
+			es := es
+			g.Go(func() error {
+				p.feedWatchdog(gCtx, es, silent, silent)
+				return nil
+			})
+		}
 	}
 
 	// 5c. Futures metrics polling per exchange.
@@ -808,6 +826,7 @@ func (p *Pipeline) consumeTickers(ctx context.Context, es *exchangeState) {
 			if !ok {
 				return
 			}
+			es.lastTickNano.Store(time.Now().UnixNano())
 			if es.velocity != nil {
 				es.velocity.OnTicker(ctx, t)
 			}
@@ -820,6 +839,81 @@ func (p *Pipeline) consumeTickers(ctx context.Context, es *exchangeState) {
 			}
 		}
 	}
+}
+
+// ── Silent-feed watchdog ───────────────────────────────────────
+
+// feedWatchdog logs WARN "feed silent" when a subscribed feed has delivered no
+// ticker for silent, repeating at most every repeat while it stays silent, and
+// INFO "feed resumed" once data returns. Silence is a production-visible
+// failure (29 minutes with zero bytes looked like a calm market), so it is
+// reported without changing reconnect behaviour.
+func (p *Pipeline) feedWatchdog(ctx context.Context, es *exchangeState, silent, repeat time.Duration) {
+	if p == nil || es == nil || silent <= 0 {
+		return
+	}
+	if repeat <= 0 {
+		repeat = silent
+	}
+	interval := silent / 5
+	if interval < 10*time.Millisecond {
+		interval = 10 * time.Millisecond
+	}
+	if interval > 15*time.Second {
+		interval = 15 * time.Second
+	}
+
+	started := time.Now()
+	var lastWarn time.Time
+	warned := false
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			since := started
+			lastTick := es.lastTick()
+			if !lastTick.IsZero() && lastTick.After(since) {
+				since = lastTick
+			}
+			silentFor := now.Sub(since)
+
+			if silentFor < silent {
+				if warned {
+					p.log.Info("feed resumed",
+						"exchange", es.name,
+						"silent_for", silentFor.Round(time.Second),
+						"last_tick", lastTick.Format(time.RFC3339),
+					)
+					warned = false
+				}
+				continue
+			}
+			if warned && now.Sub(lastWarn) < repeat {
+				continue
+			}
+			p.log.Warn("feed silent",
+				"exchange", es.name,
+				"silent_for", silentFor.Round(time.Second),
+				"threshold", silent,
+				"last_tick", lastTick.Format(time.RFC3339),
+			)
+			warned = true
+			lastWarn = now
+		}
+	}
+}
+
+// lastTick returns the time of the last ticker received from this feed (zero if none yet).
+func (es *exchangeState) lastTick() time.Time {
+	n := es.lastTickNano.Load()
+	if n <= 0 {
+		return time.Time{}
+	}
+	return time.Unix(0, n)
 }
 
 // ── Futures Metrics Polling ────────────────────────────────────
