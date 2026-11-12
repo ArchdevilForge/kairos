@@ -1175,10 +1175,12 @@ func TestService_Coalescing_DryRunWriteFailureIsRetried(t *testing.T) {
 	}, nj, nil) // no delivery channel → dry_run
 
 	saveFailing := true
+	writes := map[string]int{}
 	svc.save = func(n types.Notice) error {
 		if saveFailing {
 			return errors.New("disk full")
 		}
+		writes[n.NoticeID]++
 		return nj.SaveNotice(n)
 	}
 
@@ -1210,6 +1212,12 @@ func TestService_Coalescing_DryRunWriteFailureIsRetried(t *testing.T) {
 	}
 	if len(notices) != 1 || notices[0].DeliveryStatus != types.NoticeStatusDryRun {
 		t.Fatalf("retry must journal the dry-run notice exactly once, got %+v", notices)
+	}
+	// ListNotices collapses records by NoticeID, so count physical writes too.
+	for id, n := range writes {
+		if n != 1 {
+			t.Fatalf("notice %s journaled %d times, want exactly 1", id, n)
+		}
 	}
 	if _, still := svc.pending["SOL/USDT:USDT|price_velocity"]; still {
 		t.Fatal("bucket must be released once the dry-run record is journaled")
