@@ -22,6 +22,7 @@ const (
 
 type binanceExchange struct {
 	httpCli *http.Client
+	feed    feedState
 	mu      sync.Mutex
 	cancel  context.CancelFunc
 	closed  bool
@@ -32,6 +33,9 @@ func newBinance() *binanceExchange {
 }
 
 func (b *binanceExchange) Name() string { return "binance" }
+
+// FeedStats reports ticker-feed liveness for the silent-feed watchdog.
+func (b *binanceExchange) FeedStats() FeedStats { return b.feed.stats() }
 
 func (b *binanceExchange) SubscribeTickers(ctx context.Context, symbols []string, tickerCh chan<- types.Ticker) error {
 	b.mu.Lock()
@@ -78,13 +82,14 @@ func (b *binanceExchange) SubscribeTickers(ctx context.Context, symbols []string
 		// Binance carries the subscription in the dial URL, so "subscribed" is
 		// reached as soon as the combined stream socket is up.
 		flog.Info("ws subscribed", "endpoint", binanceWSEndpoint, "symbols", len(streams), "mode", "streams_in_url")
+		b.feed.markSubscribed(time.Now())
 		if err := b.readTickers(ctx, conn, tickerCh, lookup); err != nil {
 			_ = conn.Close(websocket.StatusNormalClosure, "")
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
 			flog.Warn("read", "ws read ended, reconnecting",
-				"endpoint", binanceWSEndpoint, "symbols", len(streams), "error", err)
+				"endpoint", binanceWSEndpoint, "symbols", len(streams), "error", err, "backoff", time.Duration(0))
 			continue
 		}
 	}
@@ -241,6 +246,7 @@ func (b *binanceExchange) readTickers(ctx context.Context, conn *websocket.Conn,
 		if err != nil {
 			return err
 		}
+		b.feed.markMessage(time.Now())
 		var data struct {
 			EventType string `json:"e"`
 			Symbol    string `json:"s"`

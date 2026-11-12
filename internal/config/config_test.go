@@ -182,7 +182,17 @@ func TestValidate_RejectsBrokenConfigs(t *testing.T) {
 		{
 			name: "okx ws endpoint without scheme",
 			yaml: "exchanges:\n  wsEndpoints:\n    okx: \"ws.okx.com:443/ws/v5/public\"\n",
-			want: "exchanges.wsEndpoints.okx",
+			want: "must start with ws:// or wss://",
+		},
+		{
+			name: "okx ws endpoint with scheme but no host",
+			yaml: "exchanges:\n  wsEndpoints:\n    okx: \"wss://\"\n",
+			want: "must include a host",
+		},
+		{
+			name: "okx ws endpoint with wrong scheme",
+			yaml: "exchanges:\n  wsEndpoints:\n    okx: \"https://ws.okx.com/ws/v5/public\"\n",
+			want: "must start with ws:// or wss://",
 		},
 	}
 	for _, tc := range cases {

@@ -550,6 +550,7 @@ func TestService_AcceptedBudgetAndEventDedup_Table(t *testing.T) {
 				Enabled:               true,
 				SymbolCooldownMinutes: 240,
 				MaxNoticesPerDay:      12,
+				EventDedupSeconds:     300,
 			},
 			sender: &fakeSender{},
 			steps: []step{
@@ -561,6 +562,29 @@ func TestService_AcceptedBudgetAndEventDedup_Table(t *testing.T) {
 				types.NoticeStatusSuppressed,
 			},
 			wantReason:   []string{"", types.NoticeSuppressDuplicateEvent},
+			wantAccepted: 1,
+		},
+		{
+			name: "explicit eventDedupSeconds=0 disables event dedup",
+			cfg: types.NoticeConfig{
+				Enabled:               true,
+				SymbolCooldownMinutes: 240,
+				MaxNoticesPerDay:      12,
+				EventDedupSeconds:     0,
+			},
+			sender: &fakeSender{},
+			steps: []step{
+				{symbol: "AAVE/USDT:USDT", at: base, changePct: -2.12, windowSecs: 60},
+				{symbol: "AAVE/USDT:USDT", at: base.Add(40 * time.Second), changePct: -2.12, windowSecs: 120},
+			},
+			// No dedup: the second window lands inside the 4h cooldown instead,
+			// proving 0 really turns the event gate off rather than silently
+			// falling back to the 300s default.
+			wantStatus: []types.NoticeDeliveryStatus{
+				types.NoticeStatusSent,
+				types.NoticeStatusSuppressed,
+			},
+			wantReason:   []string{"", types.NoticeSuppressSymbolCooldown},
 			wantAccepted: 1,
 		},
 		{
@@ -674,7 +698,12 @@ func TestService_DuplicateEventDetailNamesRepresentative(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewNoticeJournal: %v", err)
 	}
-	svc := NewService(types.NoticeConfig{Enabled: true, SymbolCooldownMinutes: 240, MaxNoticesPerDay: 12}, nj, &fakeSender{})
+	svc := NewService(types.NoticeConfig{
+		Enabled:               true,
+		SymbolCooldownMinutes: 240,
+		MaxNoticesPerDay:      12,
+		EventDedupSeconds:     300,
+	}, nj, &fakeSender{})
 	base := time.Date(2026, 11, 11, 9, 0, 0, 0, time.UTC)
 
 	first, err := svc.ProcessAnomaly(context.Background(), ProcessRequest{

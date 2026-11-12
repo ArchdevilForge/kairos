@@ -18,7 +18,8 @@ const (
 	DefaultSymbolCooldownMinutes = 240 // 4h (§3 B4)
 	DefaultMaxNoticesPerDay      = 12  // 12/day (§3 B4)
 	// DefaultEventDedupSeconds collapses one underlying move reported by several
-	// velocity windows (60s then 120s) into one Notice.
+	// velocity windows (60s then 120s) into one Notice. It is only the config
+	// default (config setDefaults): notice.eventDedupSeconds=0 disables dedup.
 	DefaultEventDedupSeconds = 300 // 5m
 )
 
@@ -45,8 +46,8 @@ func NewService(cfg types.NoticeConfig, journal *storage.NoticeJournal, sender T
 	if cfg.MaxNoticesPerDay <= 0 {
 		cfg.MaxNoticesPerDay = DefaultMaxNoticesPerDay
 	}
-	if cfg.EventDedupSeconds <= 0 {
-		cfg.EventDedupSeconds = DefaultEventDedupSeconds
+	if cfg.EventDedupSeconds < 0 {
+		cfg.EventDedupSeconds = 0
 	}
 	return &Service{
 		cfg:     cfg,
@@ -145,7 +146,7 @@ func (s *Service) ProcessAnomaly(ctx context.Context, req ProcessRequest) (*type
 	// suppressed so the accounting is auditable instead of silently dropped.
 	if s.journal != nil && s.cfg.EventDedupSeconds > 0 {
 		since := now.Add(-time.Duration(s.cfg.EventDedupSeconds) * time.Second)
-		rep, found, err := s.journal.LastAcceptedEvent(ntc.Symbol, ntc.TriggerFacts.EventType, since)
+		rep, found, err := s.journal.LastAcceptedEvent(ntc.Symbol, ntc.TriggerFacts.EventType, since, now)
 		if err != nil {
 			return nil, fmt.Errorf("notice event dedup: %w", err)
 		}

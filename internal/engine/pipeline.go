@@ -863,7 +863,6 @@ func (p *Pipeline) feedWatchdog(ctx context.Context, es *exchangeState, silent, 
 		interval = 15 * time.Second
 	}
 
-	started := time.Now()
 	var lastWarn time.Time
 	warned := false
 
@@ -874,10 +873,12 @@ func (p *Pipeline) feedWatchdog(ctx context.Context, es *exchangeState, silent, 
 		case <-ctx.Done():
 			return
 		case now := <-ticker.C:
-			since := started
-			lastTick := es.lastTick()
-			if !lastTick.IsZero() && lastTick.After(since) {
-				since = lastTick
+			since, subscribed := feedActivitySince(es)
+			if !subscribed {
+				// Not connected/subscribed yet: the dial and subscribe WARNs own
+				// this state, so the watchdog stays quiet instead of double-reporting.
+				warned = false
+				continue
 			}
 			silentFor := now.Sub(since)
 
@@ -886,7 +887,7 @@ func (p *Pipeline) feedWatchdog(ctx context.Context, es *exchangeState, silent, 
 					p.log.Info("feed resumed",
 						"exchange", es.name,
 						"silent_for", silentFor.Round(time.Second),
-						"last_tick", lastTick.Format(time.RFC3339),
+						"last_message", since.UTC().Format(time.RFC3339),
 					)
 					warned = false
 				}
@@ -899,12 +900,34 @@ func (p *Pipeline) feedWatchdog(ctx context.Context, es *exchangeState, silent, 
 				"exchange", es.name,
 				"silent_for", silentFor.Round(time.Second),
 				"threshold", silent,
-				"last_tick", lastTick.Format(time.RFC3339),
+				"last_message", since.UTC().Format(time.RFC3339),
 			)
 			warned = true
 			lastWarn = now
 		}
 	}
+}
+
+// feedActivitySince returns the instant silence is measured from and whether the
+// feed is subscribed at all. Adapter-reported state is authoritative (it counts
+// every received message, not only the tickers the consumer drained); adapters
+// without FeedStatus fall back to the last consumed ticker.
+func feedActivitySince(es *exchangeState) (time.Time, bool) {
+	if fs, ok := es.ex.(exchange.FeedStatus); ok {
+		st := fs.FeedStats()
+		if !st.Subscribed {
+			return time.Time{}, false
+		}
+		since := st.SubscribedAt
+		if st.LastMessageAt.After(since) {
+			since = st.LastMessageAt
+		}
+		return since, true
+	}
+	if t := es.lastTick(); !t.IsZero() {
+		return t, true
+	}
+	return time.Time{}, false
 }
 
 // lastTick returns the time of the last ticker received from this feed (zero if none yet).

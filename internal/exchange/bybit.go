@@ -22,6 +22,7 @@ const (
 
 type bybitExchange struct {
 	httpCli *http.Client
+	feed    feedState
 	mu      sync.Mutex
 	cancel  context.CancelFunc
 	closed  bool
@@ -32,6 +33,9 @@ func newBybit() *bybitExchange {
 }
 
 func (b *bybitExchange) Name() string { return "bybit" }
+
+// FeedStats reports ticker-feed liveness for the silent-feed watchdog.
+func (b *bybitExchange) FeedStats() FeedStats { return b.feed.stats() }
 
 func (b *bybitExchange) SubscribeTickers(ctx context.Context, symbols []string, tickerCh chan<- types.Ticker) error {
 	b.mu.Lock()
@@ -78,18 +82,19 @@ func (b *bybitExchange) SubscribeTickers(ctx context.Context, symbols []string, 
 		raw, _ := json.Marshal(sub)
 		if err := conn.Write(ctx, websocket.MessageText, raw); err != nil {
 			flog.Warn("subscribe", "ws subscribe failed, retrying",
-				"endpoint", bybitWSEndpoint, "symbols", len(args), "error", err)
+				"endpoint", bybitWSEndpoint, "symbols", len(args), "error", err, "backoff", time.Duration(0))
 			_ = conn.Close(websocket.StatusNormalClosure, "")
 			continue
 		}
 		flog.Info("ws subscribed", "endpoint", bybitWSEndpoint, "symbols", len(args))
+		b.feed.markSubscribed(time.Now())
 		if err := b.readTickers(ctx, conn, tickerCh, lookup); err != nil {
 			_ = conn.Close(websocket.StatusNormalClosure, "")
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
 			flog.Warn("read", "ws read ended, reconnecting",
-				"endpoint", bybitWSEndpoint, "symbols", len(args), "error", err)
+				"endpoint", bybitWSEndpoint, "symbols", len(args), "error", err, "backoff", time.Duration(0))
 			continue
 		}
 	}
@@ -283,6 +288,7 @@ func (b *bybitExchange) readTickers(ctx context.Context, conn *websocket.Conn, t
 		if err != nil {
 			return err
 		}
+		b.feed.markMessage(time.Now())
 		var raw struct {
 			Op    string         `json:"op"`
 			Topic string         `json:"topic"`

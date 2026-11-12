@@ -33,6 +33,7 @@ type okxExchange struct {
 	name       string
 	httpCli    *http.Client
 	wsEndpoint string
+	feed       feedState
 	mu         sync.Mutex
 	cancel     context.CancelFunc
 	closed     bool
@@ -62,6 +63,9 @@ func newOKXWithEndpoint(endpoint string) *okxExchange {
 // ---------------------------------------------------------------------------
 
 func (o *okxExchange) Name() string { return o.name }
+
+// FeedStats reports ticker-feed liveness for the silent-feed watchdog.
+func (o *okxExchange) FeedStats() FeedStats { return o.feed.stats() }
 
 func (o *okxExchange) SubscribeTickers(ctx context.Context, symbols []string, tickerCh chan<- types.Ticker) error {
 	o.mu.Lock()
@@ -110,11 +114,12 @@ func (o *okxExchange) SubscribeTickers(ctx context.Context, symbols []string, ti
 		raw, _ := json.Marshal(sub)
 		if err := conn.Write(ctx, websocket.MessageText, raw); err != nil {
 			flog.Warn("subscribe", "ws subscribe failed, retrying",
-				"endpoint", o.wsEndpoint, "symbols", len(args), "error", err)
+				"endpoint", o.wsEndpoint, "symbols", len(args), "error", err, "backoff", time.Duration(0))
 			_ = conn.Close(websocket.StatusNormalClosure, "")
 			continue
 		}
 		flog.Info("ws subscribed", "endpoint", o.wsEndpoint, "symbols", len(args))
+		o.feed.markSubscribed(time.Now())
 
 		// Read loop
 		if err := o.readTickers(ctx, conn, tickerCh); err != nil {
@@ -123,7 +128,7 @@ func (o *okxExchange) SubscribeTickers(ctx context.Context, symbols []string, ti
 				return ctx.Err()
 			}
 			flog.Warn("read", "ws read ended, reconnecting",
-				"endpoint", o.wsEndpoint, "symbols", len(args), "error", err)
+				"endpoint", o.wsEndpoint, "symbols", len(args), "error", err, "backoff", time.Duration(0))
 			continue
 		}
 	}
@@ -391,6 +396,7 @@ func (o *okxExchange) readTickers(ctx context.Context, conn *websocket.Conn, tic
 		if err != nil {
 			return err
 		}
+		o.feed.markMessage(time.Now())
 
 		var raw struct {
 			Event string            `json:"event"`

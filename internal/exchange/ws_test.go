@@ -172,10 +172,12 @@ func TestOKXSubscribeTickers_LogsConnectAndSubscribe(t *testing.T) {
 			return
 		}
 		defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
-		// Wait for the subscribe frame, then keep the socket open until the test ends.
+		// Wait for the subscribe frame, then push one ticker so feed liveness is
+		// observable, and keep the socket open until the test ends.
 		if _, _, err := conn.Read(r.Context()); err != nil {
 			return
 		}
+		_ = conn.Write(r.Context(), websocket.MessageText, []byte(`{"arg":{"channel":"tickers"},"data":[{"instId":"BTC-USDT-SWAP","last":"100","volCcy24h":"1","open24h":"99"}]}`))
 		<-r.Context().Done()
 	}))
 	defer srv.Close()
@@ -192,6 +194,17 @@ func TestOKXSubscribeTickers_LogsConnectAndSubscribe(t *testing.T) {
 	if !strings.Contains(buf.String(), "symbols=2") {
 		t.Fatalf("feed logs must carry the symbol count, got:\n%s", buf.String())
 	}
+
+	// The watchdog needs adapter-reported liveness, not consumer guesswork.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		st := o.FeedStats()
+		if st.Subscribed && !st.LastMessageAt.IsZero() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("FeedStats must report subscribed + last message, got %+v", o.FeedStats())
 }
 
 // A dial failure must be WARN-logged with the error and the backoff, not swallowed.

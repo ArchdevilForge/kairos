@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/ArchdevilForge/kairos/internal/types"
@@ -103,8 +104,8 @@ func Validate(cfg *types.Config) error {
 	// WS endpoint overrides: empty keeps the adapter default; anything set must
 	// be a dialable ws:// or wss:// URL (a typo would otherwise look like a dead feed).
 	if ep := cfg.Exchanges.WSEndpoints.OKX; ep != "" {
-		if !strings.HasPrefix(ep, "wss://") && !strings.HasPrefix(ep, "ws://") {
-			addf("exchanges.wsEndpoints.okx %q must start with ws:// or wss://", ep)
+		if err := validateWSEndpoint(ep); err != nil {
+			addf("exchanges.wsEndpoints.okx %q %v", ep, err)
 		}
 	}
 
@@ -315,6 +316,22 @@ func Validate(cfg *types.Config) error {
 		return nil
 	}
 	return fmt.Errorf("invalid config (%d problems):\n  - %s", len(errs), strings.Join(errs, "\n  - "))
+}
+
+// validateWSEndpoint requires a dialable ws/wss URL with a host. A prefix-only
+// check lets "wss://" through and turns a config typo into a silent dead feed.
+func validateWSEndpoint(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("is not a valid URL: %v", err)
+	}
+	if u.Scheme != "ws" && u.Scheme != "wss" {
+		return fmt.Errorf("must start with ws:// or wss://")
+	}
+	if u.Hostname() == "" {
+		return fmt.Errorf("must include a host")
+	}
+	return nil
 }
 
 func containsString(list []string, want string) bool {

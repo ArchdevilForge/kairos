@@ -317,9 +317,11 @@ func (nj *NoticeJournal) BudgetStats(symbol string, now time.Time, dayWindow tim
 }
 
 // LastAcceptedEvent returns the most recent accepted notice for symbol+eventType
-// created at or after since. Suppressed records are skipped: a suppressed
-// window never represents an event, so it must not dedup a later one.
-func (nj *NoticeJournal) LastAcceptedEvent(symbol, eventType string, since time.Time) (types.Notice, bool, error) {
+// created inside [since, until]. Suppressed records are skipped: a suppressed
+// window never represents an event, so it must not dedup a later one. The upper
+// bound keeps an out-of-order (future-timestamped) record from deduping an older
+// event that it is not the same underlying move.
+func (nj *NoticeJournal) LastAcceptedEvent(symbol, eventType string, since, until time.Time) (types.Notice, bool, error) {
 	if nj == nil {
 		return types.Notice{}, false, nil
 	}
@@ -334,6 +336,9 @@ func (nj *NoticeJournal) LastAcceptedEvent(symbol, eventType string, since time.
 			continue
 		}
 		if n.TriggerFacts.EventType != eventType || n.CreatedAt.Before(since) {
+			continue
+		}
+		if !until.IsZero() && n.CreatedAt.After(until) {
 			continue
 		}
 		if !found || n.CreatedAt.After(best.CreatedAt) {
