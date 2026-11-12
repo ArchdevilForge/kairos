@@ -84,6 +84,7 @@ func (b *binanceExchange) SubscribeTickers(ctx context.Context, symbols []string
 		flog.Info("ws subscribed", "endpoint", binanceWSEndpoint, "symbols", len(streams), "mode", "streams_in_url")
 		b.feed.markSubscribed(time.Now())
 		if err := b.readTickers(ctx, conn, tickerCh, lookup); err != nil {
+			b.feed.markDisconnected()
 			_ = conn.Close(websocket.StatusNormalClosure, "")
 			if ctx.Err() != nil {
 				return ctx.Err()

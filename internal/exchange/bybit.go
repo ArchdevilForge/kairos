@@ -83,12 +83,14 @@ func (b *bybitExchange) SubscribeTickers(ctx context.Context, symbols []string, 
 		if err := conn.Write(ctx, websocket.MessageText, raw); err != nil {
 			flog.Warn("subscribe", "ws subscribe failed, retrying",
 				"endpoint", bybitWSEndpoint, "symbols", len(args), "error", err, "backoff", time.Duration(0))
+			b.feed.markDisconnected()
 			_ = conn.Close(websocket.StatusNormalClosure, "")
 			continue
 		}
 		flog.Info("ws subscribed", "endpoint", bybitWSEndpoint, "symbols", len(args))
 		b.feed.markSubscribed(time.Now())
 		if err := b.readTickers(ctx, conn, tickerCh, lookup); err != nil {
+			b.feed.markDisconnected()
 			_ = conn.Close(websocket.StatusNormalClosure, "")
 			if ctx.Err() != nil {
 				return ctx.Err()

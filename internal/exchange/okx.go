@@ -115,6 +115,7 @@ func (o *okxExchange) SubscribeTickers(ctx context.Context, symbols []string, ti
 		if err := conn.Write(ctx, websocket.MessageText, raw); err != nil {
 			flog.Warn("subscribe", "ws subscribe failed, retrying",
 				"endpoint", o.wsEndpoint, "symbols", len(args), "error", err, "backoff", time.Duration(0))
+			o.feed.markDisconnected()
 			_ = conn.Close(websocket.StatusNormalClosure, "")
 			continue
 		}
@@ -123,6 +124,7 @@ func (o *okxExchange) SubscribeTickers(ctx context.Context, symbols []string, ti
 
 		// Read loop
 		if err := o.readTickers(ctx, conn, tickerCh); err != nil {
+			o.feed.markDisconnected()
 			_ = conn.Close(websocket.StatusNormalClosure, "")
 			if ctx.Err() != nil {
 				return ctx.Err()

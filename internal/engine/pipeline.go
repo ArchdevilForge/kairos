@@ -705,7 +705,9 @@ func (p *Pipeline) Stop() {
 func (p *Pipeline) Close() {
 	// Flush coalesced notices first: a pending bucket must never be dropped silently.
 	if p.notice != nil {
-		p.notice.Close()
+		if err := p.notice.Close(); err != nil {
+			p.log.Warn("notice flush on shutdown", "error", err)
+		}
 	}
 	for name, ex := range p.exchanges {
 		if err := ex.Close(); err != nil {
@@ -868,6 +870,10 @@ func (p *Pipeline) feedWatchdog(ctx context.Context, es *exchangeState, silent, 
 	}
 
 	var lastWarn time.Time
+	// lastWarnMsg is the newest message timestamp observed when the silence was
+	// reported; recovery requires a message newer than that, so a reconnect that
+	// only resubscribed cannot be mistaken for data returning.
+	var lastWarnMsg time.Time
 	warned := false
 
 	ticker := time.NewTicker(interval)
@@ -877,21 +883,24 @@ func (p *Pipeline) feedWatchdog(ctx context.Context, es *exchangeState, silent, 
 		case <-ctx.Done():
 			return
 		case now := <-ticker.C:
-			since, subscribed := feedActivitySince(es)
-			if !subscribed {
-				// Not connected/subscribed yet: the dial and subscribe WARNs own
-				// this state, so the watchdog stays quiet instead of double-reporting.
-				warned = false
+			act := feedActivitySnapshot(es)
+			if !act.subscribed {
+				// Not connected/subscribed: the dial and subscribe WARNs own this
+				// state, so the watchdog stays quiet instead of double-reporting.
+				// The warning state is kept so a later message still reports
+				// "feed resumed" rather than resetting silently.
 				continue
 			}
-			silentFor := now.Sub(since)
+			silentFor := now.Sub(act.since)
 
 			if silentFor < silent {
-				if warned {
+				// Recovery means data actually arrived again. A reconnect that only
+				// resubscribed must not be reported as recovery.
+				if warned && act.lastMessage.After(lastWarnMsg) {
 					p.log.Info("feed resumed",
 						"exchange", es.name,
 						"silent_for", silentFor.Round(time.Second),
-						"last_message", since.UTC().Format(time.RFC3339),
+						"last_message", act.lastMessage.UTC().Format(time.RFC3339),
 					)
 					warned = false
 				}
@@ -904,34 +913,41 @@ func (p *Pipeline) feedWatchdog(ctx context.Context, es *exchangeState, silent, 
 				"exchange", es.name,
 				"silent_for", silentFor.Round(time.Second),
 				"threshold", silent,
-				"last_message", since.UTC().Format(time.RFC3339),
+				"last_message", act.lastMessage.Format(time.RFC3339),
 			)
 			warned = true
 			lastWarn = now
+			lastWarnMsg = act.lastMessage
 		}
 	}
 }
 
-// feedActivitySince returns the instant silence is measured from and whether the
-// feed is subscribed at all. Adapter-reported state is authoritative (it counts
-// every received message, not only the tickers the consumer drained); adapters
-// without FeedStatus fall back to the last consumed ticker.
-func feedActivitySince(es *exchangeState) (time.Time, bool) {
+// feedActivity is one liveness snapshot for the silent-feed watchdog.
+type feedActivity struct {
+	subscribed  bool
+	since       time.Time // silence is measured from here
+	lastMessage time.Time // zero until the feed has delivered something
+}
+
+// feedActivitySnapshot reads adapter-reported liveness. It is authoritative (it
+// counts every received message, not only the tickers the consumer drained);
+// adapters without FeedStatus fall back to the last consumed ticker.
+func feedActivitySnapshot(es *exchangeState) feedActivity {
 	if fs, ok := es.ex.(exchange.FeedStatus); ok {
 		st := fs.FeedStats()
 		if !st.Subscribed {
-			return time.Time{}, false
+			return feedActivity{}
 		}
 		since := st.SubscribedAt
 		if st.LastMessageAt.After(since) {
 			since = st.LastMessageAt
 		}
-		return since, true
+		return feedActivity{subscribed: true, since: since, lastMessage: st.LastMessageAt}
 	}
 	if t := es.lastTick(); !t.IsZero() {
-		return t, true
+		return feedActivity{subscribed: true, since: t, lastMessage: t}
 	}
-	return time.Time{}, false
+	return feedActivity{}
 }
 
 // lastTick returns the time of the last ticker received from this feed (zero if none yet).

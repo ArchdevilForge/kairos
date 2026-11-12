@@ -418,3 +418,44 @@ func (m *mockTickerSource) FetchOHLCV(context.Context, string, string, int, int6
 	return nil, nil
 }
 func (m *mockTickerSource) Close() error { return nil }
+
+// A reconnect that only resubscribes is not recovery: the watchdog must wait for an
+// actual message, and must stay quiet while the feed is disconnected (the adapter's
+// dial/read WARNs own that state).
+func TestFeedWatchdog_ResubscribeWithoutDataIsNotRecovery(t *testing.T) {
+	cfg, err := config.LoadString("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := NewPipeline(cfg, nil)
+	buf := &syncTestLogBuffer{}
+	p.log = slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	feed := newWatchdogFeed()
+	feed.set(exchange.FeedStats{Subscribed: true, SubscribedAt: time.Now()})
+	es := &exchangeState{name: "okx", ex: feed, tickerCh: make(chan types.Ticker, 4)}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go p.feedWatchdog(ctx, es, 60*time.Millisecond, 60*time.Millisecond)
+
+	buf.waitFor(t, "feed silent", 1, 2*time.Second)
+
+	// Reconnect: new subscription timestamp, still no message.
+	feed.set(exchange.FeedStats{Subscribed: true, SubscribedAt: time.Now()})
+	time.Sleep(150 * time.Millisecond)
+	if got := buf.count("feed resumed"); got != 0 {
+		t.Fatalf("resubscription without data must not be reported as recovery:\n%s", buf.String())
+	}
+
+	// Disconnected (the adapter cleared the subscription): watchdog goes quiet.
+	feed.set(exchange.FeedStats{})
+	before := buf.count("feed silent")
+	time.Sleep(200 * time.Millisecond)
+	if after := buf.count("feed silent"); after != before {
+		t.Fatalf("watchdog must stay quiet while disconnected (%d -> %d):\n%s", before, after, buf.String())
+	}
+
+	// First message after the last warn is genuine recovery.
+	feed.set(exchange.FeedStats{Subscribed: true, SubscribedAt: time.Now(), LastMessageAt: time.Now()})
+	buf.waitFor(t, "feed resumed", 1, 2*time.Second)
+}

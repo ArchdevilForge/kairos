@@ -262,3 +262,23 @@ func TestMapTimeframeAndDenormalize(t *testing.T) {
 		t.Fatal("normalize")
 	}
 }
+
+func TestFeedState_DisconnectClearsSubscription(t *testing.T) {
+	var f feedState
+	if st := f.stats(); st.Subscribed {
+		t.Fatalf("zero feedState must not report subscribed: %+v", st)
+	}
+	now := time.Now()
+	f.markSubscribed(now)
+	f.markMessage(now.Add(time.Second))
+	st := f.stats()
+	if !st.Subscribed || !st.SubscribedAt.Equal(now) || st.LastMessageAt.IsZero() {
+		t.Fatalf("unexpected subscribed stats: %+v", st)
+	}
+
+	f.markDisconnected()
+	st = f.stats()
+	if st.Subscribed || !st.SubscribedAt.IsZero() || !st.LastMessageAt.IsZero() {
+		t.Fatalf("disconnect must clear subscription+message state, got %+v", st)
+	}
+}
