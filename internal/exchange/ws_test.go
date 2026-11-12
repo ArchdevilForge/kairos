@@ -53,6 +53,43 @@ func TestBybitSubscribeTickers_ClosedAndCancelled(t *testing.T) {
 	}
 }
 
+// OKX retired WS port 8443 (notice code 64010); the default must be 443 and
+// the endpoint must be overridable from config.
+func TestOKXWSEndpointDefaultAndOverride(t *testing.T) {
+	const wantDefault = "wss://ws.okx.com:443/ws/v5/public"
+	if got := DefaultOKXWSEndpoint; got != wantDefault {
+		t.Fatalf("DefaultOKXWSEndpoint = %q, want %q", got, wantDefault)
+	}
+	if got := newOKX().wsEndpoint; got != wantDefault {
+		t.Fatalf("newOKX().wsEndpoint = %q, want %q", got, wantDefault)
+	}
+	for _, blank := range []string{"", "   "} {
+		if got := newOKXWithEndpoint(blank).wsEndpoint; got != wantDefault {
+			t.Fatalf("newOKXWithEndpoint(%q).wsEndpoint = %q, want default", blank, got)
+		}
+	}
+
+	custom := "wss://ws.example.test:443/ws/v5/public"
+	ex, err := NewWithEndpoints("okx", Endpoints{OKX: custom})
+	if err != nil {
+		t.Fatalf("NewWithEndpoints: %v", err)
+	}
+	okxEx, ok := ex.(*okxExchange)
+	if !ok {
+		t.Fatalf("NewWithEndpoints(okx) returned %T", ex)
+	}
+	if okxEx.wsEndpoint != custom {
+		t.Fatalf("configured endpoint = %q, want %q", okxEx.wsEndpoint, custom)
+	}
+
+	// Unconfigured adapters keep their own defaults.
+	if ex, err := NewWithEndpoints("binance", Endpoints{OKX: custom}); err != nil {
+		t.Fatalf("NewWithEndpoints(binance): %v", err)
+	} else if _, ok := ex.(*binanceExchange); !ok {
+		t.Fatalf("NewWithEndpoints(binance) returned %T", ex)
+	}
+}
+
 func TestOKXEnrichFunding(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, "funding-rate") {

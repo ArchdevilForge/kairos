@@ -100,6 +100,13 @@ func Validate(cfg *types.Config) error {
 			addf("exchanges.backups contains unsupported exchange %q", ex)
 		}
 	}
+	// WS endpoint overrides: empty keeps the adapter default; anything set must
+	// be a dialable ws:// or wss:// URL (a typo would otherwise look like a dead feed).
+	if ep := cfg.Exchanges.WSEndpoints.OKX; ep != "" {
+		if !strings.HasPrefix(ep, "wss://") && !strings.HasPrefix(ep, "ws://") {
+			addf("exchanges.wsEndpoints.okx %q must start with ws:// or wss://", ep)
+		}
+	}
 
 	// --- dataManager ----------------------------------------------------------
 	if cfg.DataManager.TopSymbols <= 0 {

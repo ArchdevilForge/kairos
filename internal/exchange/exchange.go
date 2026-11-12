@@ -28,11 +28,21 @@ type FundingEnricher interface {
 	EnrichFunding(ctx context.Context, tickers map[string]*types.Ticker, symbols []string)
 }
 
-// New creates an exchange by name ("okx", "binance", "bybit").
-func New(name string) (Exchange, error) {
+// Endpoints carries per-exchange WebSocket endpoint overrides from config
+// (config: exchanges.wsEndpoints). An empty field keeps the adapter default, so
+// exchanges can migrate endpoints without a code change.
+type Endpoints struct {
+	OKX string
+}
+
+// New creates an exchange by name ("okx", "binance", "bybit") with default endpoints.
+func New(name string) (Exchange, error) { return NewWithEndpoints(name, Endpoints{}) }
+
+// NewWithEndpoints creates an exchange by name, applying WS endpoint overrides.
+func NewWithEndpoints(name string, eps Endpoints) (Exchange, error) {
 	switch name {
 	case "okx":
-		return newOKX(), nil
+		return newOKXWithEndpoint(eps.OKX), nil
 	case "binance":
 		return newBinance(), nil
 	case "bybit":

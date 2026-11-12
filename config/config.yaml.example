@@ -138,6 +138,11 @@ scanner:
 exchanges:
   primary: "okx"
   backups: []
+  # Ticker WebSocket endpoint overrides. Empty/missing = adapter default.
+  # OKX retired WS port 8443 (notice code 64010), so the default is now 443:
+  #   okx: "wss://ws.okx.com:443/ws/v5/public"
+  wsEndpoints:
+    okx: "wss://ws.okx.com:443/ws/v5/public"
 
 scoring:
   candidateWeights:

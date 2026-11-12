@@ -612,7 +612,7 @@ func TestPipeline_Start_RunsSeasonFeedAndPrunesOnRefresh(t *testing.T) {
 	lastClosedCloseTS := lastClosedOpen + 300
 
 	mock := newRefreshMock("ETH/USDT:USDT", "SOL/USDT:USDT", "XRP/USDT:USDT", "DOGE/USDT:USDT")
-	exchangeNew = func(string) (exchange.Exchange, error) {
+	exchangeNew = func(string, exchange.Endpoints) (exchange.Exchange, error) {
 		return &ohlcvRefreshMock{
 			refreshMockExchange: mock,
 			candles5m:           buildPeerCrossSection5m(lastClosedOpen, true),

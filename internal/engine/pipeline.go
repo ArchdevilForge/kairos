@@ -40,8 +40,8 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// exchangeNew creates exchange adapters; overridden in tests.
-var exchangeNew = exchange.New
+// exchangeNew creates exchange adapters with configured WS endpoints; overridden in tests.
+var exchangeNew = exchange.NewWithEndpoints
 
 // enrichPulse spawns async OHLCV enrichment for a pulse event; a var so tests
 // can count spawns (duplicate events must not enrich twice).
@@ -291,7 +291,7 @@ func (p *Pipeline) Start(ctx context.Context) error {
 
 	// 1. Create exchange instances.
 	for _, name := range exchangeNames {
-		ex, err := exchangeNew(name)
+		ex, err := exchangeNew(name, p.exchangeEndpoints())
 		if err != nil {
 			p.log.Warn("exchange creation skipped", "exchange", name, "error", err)
 			continue
@@ -511,6 +511,14 @@ func (p *Pipeline) Start(ctx context.Context) error {
 		return err
 	}
 	return nil
+}
+
+// exchangeEndpoints maps config endpoint overrides onto adapter options.
+func (p *Pipeline) exchangeEndpoints() exchange.Endpoints {
+	if p == nil || p.cfg == nil {
+		return exchange.Endpoints{}
+	}
+	return exchange.Endpoints{OKX: p.cfg.Exchanges.WSEndpoints.OKX}
 }
 
 // ── Symbol universe (locked) ───────────────────────────────────

@@ -102,7 +102,7 @@ func TestRefresh_ResubscribesWSWithNewUniverse(t *testing.T) {
 	old := exchangeNew
 	defer func() { exchangeNew = old }()
 	mock := newRefreshMock("AAA/USDT:USDT", "BBB/USDT:USDT")
-	exchangeNew = func(name string) (exchange.Exchange, error) { return mock, nil }
+	exchangeNew = func(name string, _ exchange.Endpoints) (exchange.Exchange, error) { return mock, nil }
 
 	cfg := refreshTestConfig(t)
 	p := NewPipeline(cfg, nil)
@@ -169,7 +169,7 @@ func TestRefresh_ConcurrentSnapshotReadsAreRaceFree(t *testing.T) {
 	old := exchangeNew
 	defer func() { exchangeNew = old }()
 	mock := newRefreshMock("AAA/USDT:USDT", "BBB/USDT:USDT")
-	exchangeNew = func(name string) (exchange.Exchange, error) { return mock, nil }
+	exchangeNew = func(name string, _ exchange.Endpoints) (exchange.Exchange, error) { return mock, nil }
 
 	cfg := refreshTestConfig(t)
 	p := NewPipeline(cfg, nil)

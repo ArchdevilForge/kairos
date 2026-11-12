@@ -38,11 +38,11 @@ func TestPipeline_Start_MockExchange(t *testing.T) {
 	mock := &startMockExchange{tickers: map[string]*types.Ticker{
 		"BTC/USDT:USDT": {Symbol: "BTC/USDT:USDT", QuoteVolume: &vol},
 	}}
-	exchangeNew = func(name string) (exchange.Exchange, error) {
+	exchangeNew = func(name string, eps exchange.Endpoints) (exchange.Exchange, error) {
 		if name == "mock" {
 			return mock, nil
 		}
-		return exchange.New(name)
+		return exchange.NewWithEndpoints(name, eps)
 	}
 
 	cfg, err := config.LoadString(`

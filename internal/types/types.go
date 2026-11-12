@@ -432,6 +432,14 @@ type ScannerConfig struct {
 type ExchangesConfig struct {
 	Primary string   `mapstructure:"primary" json:"primary" yaml:"primary"`
 	Backups []string `mapstructure:"backups" json:"backups" yaml:"backups"`
+	// WSEndpoints overrides adapter ticker WebSocket endpoints. Empty means the
+	// adapter default, so an exchange-side endpoint migration is config-only.
+	WSEndpoints WSEndpointsConfig `mapstructure:"wsEndpoints" json:"wsEndpoints,omitempty" yaml:"wsEndpoints,omitempty"`
+}
+
+// WSEndpointsConfig holds per-exchange WebSocket endpoint overrides.
+type WSEndpointsConfig struct {
+	OKX string `mapstructure:"okx" json:"okx,omitempty" yaml:"okx,omitempty"`
 }
 
 // ScoringConfig defines deterministic scoring thresholds and weights.

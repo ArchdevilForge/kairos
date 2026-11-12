@@ -20,28 +20,40 @@ import (
 // ---------------------------------------------------------------------------
 
 const (
-	okxWSEndpoint   = "wss://ws.okx.com:8443/ws/v5/public"
-	okxRESTEndpoint = "https://www.okx.com"
+	// DefaultOKXWSEndpoint is OKX public tickers WS on port 443. OKX retired the
+	// old port 8443 endpoint (notice code 64010), so 443 is the only default.
+	DefaultOKXWSEndpoint = "wss://ws.okx.com:443/ws/v5/public"
+	okxRESTEndpoint      = "https://www.okx.com"
 	// OKX public instruments: 1=crypto, 3=stock/ETF, 4=commodity.
 	okxInstCategoryCrypto = "1"
 	okxCryptoIDCacheTTL   = 1 * time.Hour
 )
 
 type okxExchange struct {
-	name    string
-	httpCli *http.Client
-	mu      sync.Mutex
-	cancel  context.CancelFunc
-	closed  bool
+	name       string
+	httpCli    *http.Client
+	wsEndpoint string
+	mu         sync.Mutex
+	cancel     context.CancelFunc
+	closed     bool
 
 	cryptoIDs   map[string]struct{} // instId set, e.g. BTC-USDT-SWAP
 	cryptoIDsAt time.Time
 }
 
-func newOKX() *okxExchange {
+func newOKX() *okxExchange { return newOKXWithEndpoint("") }
+
+// newOKXWithEndpoint builds an OKX adapter with an optional WS endpoint
+// override; an empty endpoint keeps DefaultOKXWSEndpoint.
+func newOKXWithEndpoint(endpoint string) *okxExchange {
+	ep := strings.TrimSpace(endpoint)
+	if ep == "" {
+		ep = DefaultOKXWSEndpoint
+	}
 	return &okxExchange{
-		name:    "okx",
-		httpCli: newHTTPClient(),
+		name:       "okx",
+		httpCli:    newHTTPClient(),
+		wsEndpoint: ep,
 	}
 }
 
@@ -79,7 +91,7 @@ func (o *okxExchange) SubscribeTickers(ctx context.Context, symbols []string, ti
 			return ctx.Err()
 		}
 
-		conn, _, err := websocket.Dial(ctx, okxWSEndpoint, nil)
+		conn, _, err := websocket.Dial(ctx, o.wsEndpoint, nil)
 		if err != nil {
 			if err := ctxSleep(ctx, backoff); err != nil {
 				return err

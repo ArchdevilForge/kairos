@@ -179,6 +179,11 @@ func TestValidate_RejectsBrokenConfigs(t *testing.T) {
 			yaml: "marketPulse:\n  enabled: true\n  historyRetentionSeconds: 120\n",
 			want: "historyRetentionSeconds",
 		},
+		{
+			name: "okx ws endpoint without scheme",
+			yaml: "exchanges:\n  wsEndpoints:\n    okx: \"ws.okx.com:443/ws/v5/public\"\n",
+			want: "exchanges.wsEndpoints.okx",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -190,6 +195,27 @@ func TestValidate_RejectsBrokenConfigs(t *testing.T) {
 				t.Fatalf("error %q does not contain %q", err.Error(), tc.want)
 			}
 		})
+	}
+}
+
+// The OKX WS endpoint is config-owned so a future retire notice is a config
+// change; unset must fall through to the port-443 adapter default.
+func TestLoadString_OKXWSEndpointOverride(t *testing.T) {
+	cfg, err := LoadString("")
+	if err != nil {
+		t.Fatalf("LoadString empty: %v", err)
+	}
+	if cfg.Exchanges.WSEndpoints.OKX != "" {
+		t.Fatalf("wsEndpoints.okx default: got %q, want empty (adapter default)", cfg.Exchanges.WSEndpoints.OKX)
+	}
+
+	custom := "wss://ws.okx.com:443/ws/v5/public"
+	cfg, err = LoadString("exchanges:\n  wsEndpoints:\n    okx: " + custom + "\n")
+	if err != nil {
+		t.Fatalf("LoadString override: %v", err)
+	}
+	if cfg.Exchanges.WSEndpoints.OKX != custom {
+		t.Fatalf("wsEndpoints.okx override: got %q, want %q", cfg.Exchanges.WSEndpoints.OKX, custom)
 	}
 }
 
