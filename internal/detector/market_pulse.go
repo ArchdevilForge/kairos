@@ -550,12 +550,14 @@ func (d *MarketPulseDetector) computeSnapshot(now float64) types.MarketSnapshot 
 	snap.DownBreadth60s = float64(dec) / n
 
 	// BTC / ETH returns.
+	var btcSym string
 	for _, psym := range cfg.PrimarySymbols {
 		if r, ok := d.symbolReturnLocked(psym, now, 60); ok {
 			v := r
 			switch {
 			case isBTC(psym):
 				snap.BTCReturn60s = &v
+				btcSym = psym
 			case isETH(psym):
 				snap.ETHReturn60s = &v
 			}
@@ -566,6 +568,7 @@ func (d *MarketPulseDetector) computeSnapshot(now float64) types.MarketSnapshot 
 		if r, ok := d.symbolReturnLocked("BTC/USDT:USDT", now, 60); ok {
 			v := r
 			snap.BTCReturn60s = &v
+			btcSym = "BTC/USDT:USDT"
 		}
 	}
 	if snap.ETHReturn60s == nil {
@@ -575,24 +578,63 @@ func (d *MarketPulseDetector) computeSnapshot(now float64) types.MarketSnapshot 
 		}
 	}
 
-	// Leaders / laggards by relative return vs median.
+	// Leaders / laggards ranked by Vasicek-shrunk beta-adjusted residual z-score vs BTC
+	// (falling back to cross-sectional median with beta=1.0 if BTC history is absent).
+	anchorRet := snap.MedianReturn60s
+	hasBTCAnchor := false
+	if snap.BTCReturn60s != nil {
+		anchorRet = *snap.BTCReturn60s
+		hasBTCAnchor = true
+	}
+
+	var btcSeries []mpTSReturn
+	maxGap := float64(cfg.MaxLookupGapSeconds)
+	if hasBTCAnchor && btcSym != "" {
+		if btcSer := d.symbols[btcSym]; btcSer != nil {
+			minTS := now - float64(cfg.HistoryRetentionSeconds)
+			for ts := now; ts-60 >= minTS; ts -= 60 {
+				if r, ok := seriesReturn(btcSer, ts, 60, maxGap); ok {
+					btcSeries = append(btcSeries, mpTSReturn{ts: ts, ret: r})
+				}
+			}
+		}
+	}
+
 	type ranked struct {
-		sym string
-		ret float64
-		rel float64
-		z   float64
+		sym   string
+		ret   float64
+		rel   float64
+		z     float64
+		score float64
 	}
 	rankedMoves := make([]ranked, 0, len(moves))
 	for _, m := range moves {
+		ser := d.symbols[m.symbol]
+		beta := 1.0
+		if hasBTCAnchor && len(btcSeries) >= 5 && ser != nil {
+			beta = vasicekBeta(ser, btcSeries, maxGap)
+		}
+		sigma := 1.0
+		if s, ok := seriesSigma(ser, 0.08); ok {
+			sigma = math.Max(s, 0.08)
+		}
+		resid := m.ret60 - beta*anchorRet
 		rankedMoves = append(rankedMoves, ranked{
-			sym: m.symbol,
-			ret: m.ret60,
-			rel: m.ret60 - snap.MedianReturn60s,
-			z:   m.z60,
+			sym:   m.symbol,
+			ret:   m.ret60,
+			rel:   m.ret60 - snap.MedianReturn60s,
+			z:     m.z60,
+			score: resid / sigma,
 		})
 	}
 	sort.Slice(rankedMoves, func(i, j int) bool {
-		return rankedMoves[i].rel > rankedMoves[j].rel
+		if rankedMoves[i].score != rankedMoves[j].score {
+			return rankedMoves[i].score > rankedMoves[j].score
+		}
+		if rankedMoves[i].rel != rankedMoves[j].rel {
+			return rankedMoves[i].rel > rankedMoves[j].rel
+		}
+		return rankedMoves[i].sym < rankedMoves[j].sym
 	})
 	limit := cfg.Leaders.Limit
 	if limit > len(rankedMoves) {
@@ -613,6 +655,56 @@ func (d *MarketPulseDetector) computeSnapshot(now float64) types.MarketSnapshot 
 
 	snap.DataOK = true
 	return snap
+}
+
+type mpTSReturn struct {
+	ts  float64
+	ret float64
+}
+
+// vasicekBeta estimates a symbol's 60s return beta against BTC over paired
+// timestamps, shrunk 50/50 toward 1.0 and clamped to [0.4, 2.2].
+func vasicekBeta(ser *mpSymbolSeries, btcSeries []mpTSReturn, maxGap float64) float64 {
+	if ser == nil || len(btcSeries) < 5 {
+		return 1.0
+	}
+	type pair struct{ x, y float64 }
+	paired := make([]pair, 0, len(btcSeries))
+	for _, bp := range btcSeries {
+		if sr, ok := seriesReturn(ser, bp.ts, 60, maxGap); ok {
+			paired = append(paired, pair{x: bp.ret, y: sr})
+		}
+	}
+	if len(paired) < 5 {
+		return 1.0
+	}
+	var sumX, sumY float64
+	for _, p := range paired {
+		sumX += p.x
+		sumY += p.y
+	}
+	n := float64(len(paired))
+	meanX := sumX / n
+	meanY := sumY / n
+	var varX, covXY float64
+	for _, p := range paired {
+		dx := p.x - meanX
+		dy := p.y - meanY
+		varX += dx * dx
+		covXY += dx * dy
+	}
+	if varX <= 1e-9 {
+		return 1.0
+	}
+	olsBeta := covXY / varX
+	beta := 0.5*olsBeta + 0.5*1.0
+	if beta < 0.4 {
+		return 0.4
+	}
+	if beta > 2.2 {
+		return 2.2
+	}
+	return beta
 }
 
 func (d *MarketPulseDetector) symbolReturnLocked(sym string, now float64, window int) (float64, bool) {
@@ -714,8 +806,8 @@ func (d *MarketPulseDetector) advanceStateLocked(now float64, snap types.MarketS
 		// the way to stress are walked silently: emitting the impulse leg too
 		// sent two alerts bearing the same timestamp for a single event.
 		//
-		// From trending reverse path: force through DECAY first if opposite.
-		if isTrending(from) && oppositeDir(d.activeDir, stressDir) {
+		// From active directional state reverse path: force through DECAY first if opposite.
+		if (isTrending(from) || isImpulse(from) || isStress(from)) && d.activeDir != "" && oppositeDir(d.activeDir, stressDir) {
 			d.transitionLocked(now, types.MarketStateDecay, "", snap, "", false)
 			d.transitionLocked(now, stateForImpulse(stressDir), stressDir, snap, "", false)
 			d.transitionLocked(now, to, stressDir, snap, "market_stress", true)
@@ -791,8 +883,9 @@ func (d *MarketPulseDetector) advanceStateLocked(now float64, snap types.MarketS
 			d.transitionLocked(now, types.MarketStateDecay, "", snap, "market_decay", d.cfg.Decay.Notify)
 			return
 		}
-		// Soften stress → impulse same direction when stress no longer holds.
-		if !stressOK {
+		// Soften stress → impulse same direction when stress no longer holds,
+		// holding STRESS for at least 15s to prevent rapid state flapping.
+		if !stressOK && (d.stateSince == 0 || now-d.stateSince >= 15) {
 			d.transitionLocked(now, stateForImpulse(d.activeDir), d.activeDir, snap, "", false)
 		}
 	}
@@ -1042,20 +1135,21 @@ func (d *MarketPulseDetector) emitLocked(
 	from, to types.MarketState,
 	snap types.MarketSnapshot,
 ) {
-	// Cooldown for same event+direction unless this is a real state change
-	// to a different state (state-change events bypass same-state cooldown).
+	// Cooldown for same event+direction across state transitions (e.g.,
+	// STRESS -> IMPULSE -> STRESS within StressCooldownSeconds).
+	// market_decay retains same-state cooldown only so state-change decays still emit if enabled.
 	key := eventType + ":" + dir
 	last := d.lastEmitted[key]
 	cd := float64(d.cfg.CooldownSeconds)
 	if eventType == "market_stress" {
 		cd = float64(d.cfg.StressCooldownSeconds)
 	}
-	if from == to && last > 0 && now-last < cd {
-		d.log.Info("market event gated", "reason", "cooldown", "event", eventType)
-		return
-	}
-	// Also gate identical re-emits within cooldown even on state change of same type.
-	if last > 0 && now-last < cd && from == to {
+	if eventType != "market_decay" {
+		if last > 0 && now-last < cd {
+			d.log.Info("market event gated", "reason", "cooldown", "event", eventType)
+			return
+		}
+	} else if from == to && last > 0 && now-last < cd {
 		d.log.Info("market event gated", "reason", "cooldown", "event", eventType)
 		return
 	}

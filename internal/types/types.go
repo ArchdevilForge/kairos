@@ -242,6 +242,10 @@ type RiskGateConfig struct {
 	// WindowStartHour/WindowEndHour: live 窗口(本地时区小时,跨午夜;§9b 规则 5)。
 	WindowStartHour int `mapstructure:"windowStartHour" json:"windowStartHour" yaml:"windowStartHour"`
 	WindowEndHour   int `mapstructure:"windowEndHour" json:"windowEndHour" yaml:"windowEndHour"`
+	// Timezone: IANA 时区名(默认 "Asia/Shanghai",回退 UTC+8)。
+	Timezone string `mapstructure:"timezone" json:"timezone,omitempty" yaml:"timezone,omitempty"`
+	// TradingBankrollUSD: Engine A 合约实盘本金口径(默认 $40)。
+	TradingBankrollUSD float64 `mapstructure:"tradingBankrollUSD" json:"tradingBankrollUSD,omitempty" yaml:"tradingBankrollUSD,omitempty"`
 	// MaxLossUSD: 单笔预设最大损失上限(§9b 规则 6, 挑战账户 $100 口径)。
 	MaxLossUSD float64 `mapstructure:"maxLossUSD" json:"maxLossUSD" yaml:"maxLossUSD"`
 	// EnforceLeverageCap: 机械执行杠杆硬上限(默认 true: BTC/ETH <=10x, 山寨 <=5x)。

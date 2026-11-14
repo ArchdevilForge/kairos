@@ -24,7 +24,7 @@ func Normalize(cfg *types.Config) {
 		if cfg.Exchange != "" {
 			cfg.Exchanges.Primary = cfg.Exchange
 		} else {
-			cfg.Exchanges.Primary = "okx"
+			cfg.Exchanges.Primary = "binance"
 		}
 	}
 	if len(cfg.DataManager.Exchanges) == 0 {
@@ -241,6 +241,9 @@ func Validate(cfg *types.Config) error {
 	}
 
 	// --- riskGate ------------------------------------------------------------
+	if cfg.RiskGate.TradingBankrollUSD < 0 {
+		addf("riskGate.tradingBankrollUSD must be >= 0, got %v", cfg.RiskGate.TradingBankrollUSD)
+	}
 	if cfg.RiskGate.TrialBudgetMax < 0 {
 		addf("riskGate.trialBudgetMax must be >= 0, got %d", cfg.RiskGate.TrialBudgetMax)
 	}

@@ -23,12 +23,15 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"os"
 	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/ArchdevilForge/kairos/internal/cache"
+	"github.com/ArchdevilForge/kairos/internal/cycle"
 	"github.com/ArchdevilForge/kairos/internal/data"
 	"github.com/ArchdevilForge/kairos/internal/detector"
 	"github.com/ArchdevilForge/kairos/internal/exchange"
@@ -56,10 +59,12 @@ var enrichPulse = func(p *Pipeline, evt types.AnomalyEvent) {
 
 // Pipeline orchestrates exchange WebSocket feeds → detectors → Delivery Channels.
 type Pipeline struct {
-	cfg *types.Config
-	log *slog.Logger
+	cfgMu sync.RWMutex
+	cfg   *types.Config
+	log   *slog.Logger
 
 	// Exchanges keyed by name
+	exMu      sync.RWMutex
 	exchanges map[string]exchange.Exchange
 
 	// Symbols per exchange (discovered at start)
@@ -76,6 +81,7 @@ type Pipeline struct {
 	resonanceScorer *detector.ResonanceScorer
 
 	// Market-level cross-sectional detector (primary exchange only).
+	detMu          sync.RWMutex
 	marketPulseDet *detector.MarketPulseDetector
 
 	// Delivery channels (optional, independent).
@@ -92,12 +98,30 @@ type Pipeline struct {
 	mpStore *storage.MarketPulseStore
 
 	// Opportunity desk: one session per market pulse event (tickets need enrichment).
+	journal     *storage.Journal
 	opportunity *opportunity.Service
 	// oppCtx cancelled when pipeline stops — watch/enrich goroutines should honor it.
 	oppCtx context.Context
 
 	// Independent Phase 3c opportunity notice layer (notice-journal.jsonl + Telegram).
-	notice *notice.Service
+	noticeJournal *storage.NoticeJournal
+	notice        *notice.Service
+
+	// Derived desktop SQLite cache (optional; attached when --desk-listen is enabled).
+	cacheStore *cache.Store
+
+	// Desktop observer hooks (optional, thread-safe).
+	obsMu    sync.RWMutex
+	observer *DesktopObserver
+
+	anomMu           sync.RWMutex
+	recentAnomalies  []types.AnomalyEvent
+	desktopAnomDedup map[string]float64
+
+	seenNoticeMu          sync.Mutex
+	seenNoticeIDs         map[string]struct{}
+	lastNoticeFileSize    int64
+	lastNoticeModTimeNano int64
 
 	// Cross-sectional closed 5m QuoteVol feed for causal SeasonRegime tagging (Phase 2d).
 	seasonFeed *seasonFeed
@@ -127,10 +151,11 @@ type Pipeline struct {
 	dedupWindowSeconds    float64
 	symbolCooldownSeconds float64
 
-	// Cached CoinGlass market caps (BTC-denominated weight reference).
-	liqMu           sync.RWMutex
-	marketCapByCoin map[string]float64
-	marketCapRefUSD float64
+	// Cached CoinGlass/CoinGecko market caps (BTC-denominated weight reference + rank).
+	liqMu            sync.RWMutex
+	marketCapByCoin  map[string]float64
+	marketCapEntries map[string]data.MarketCapEntry
+	marketCapRefUSD  float64
 
 	// symMu guards symbolsByExchange: refreshLoop writes while WS
 	// subscription, metrics and CoinGlass pollers read snapshots.
@@ -184,7 +209,9 @@ func NewPipeline(cfg *types.Config, tg *notify.TelegramClient) *Pipeline {
 		exchangeStates:        make(map[string]*exchangeState),
 		dedupLast:             make(map[string]float64),
 		cooldownLast:          make(map[string]float64),
+		desktopAnomDedup:      make(map[string]float64),
 		marketCapByCoin:       make(map[string]float64),
+		marketCapEntries:      make(map[string]data.MarketCapEntry),
 		tg:                    tg,
 		blacklist:             utils.NewBlacklist(),
 		seasonFeed:            newSeasonFeed(log),
@@ -267,6 +294,7 @@ func NewPipeline(cfg *types.Config, tg *notify.TelegramClient) *Pipeline {
 			// Ticket sizing (riskBudgets/maxLeverage) comes from config
 			// (Canonical §9), never code constants.
 			ocfg := opportunity.ConfigFromTypes(cfg.Opportunity)
+			p.journal = journal
 			p.opportunity = opportunity.NewService(journal, ocfg)
 			log.Info("trading journal ready",
 				"path", journal.Path(),
@@ -276,6 +304,11 @@ func NewPipeline(cfg *types.Config, tg *notify.TelegramClient) *Pipeline {
 	}
 
 	p.initNoticeService()
+	if cfg.Notice.Enabled {
+		if nj, err := storage.NewNoticeJournal(cfg.Storage); err == nil {
+			p.noticeJournal = nj
+		}
+	}
 
 	return p
 }
@@ -291,7 +324,7 @@ func (p *Pipeline) Start(ctx context.Context) error {
 
 	exchangeNames := p.cfg.DataManager.Exchanges
 	if len(exchangeNames) == 0 {
-		exchangeNames = []string{"okx", "binance", "bybit"}
+		exchangeNames = []string{"binance", "okx", "bybit"}
 	}
 
 	// 1. Create exchange instances.
@@ -301,11 +334,17 @@ func (p *Pipeline) Start(ctx context.Context) error {
 			p.log.Warn("exchange creation skipped", "exchange", name, "error", err)
 			continue
 		}
+		p.exMu.Lock()
 		p.exchanges[name] = ex
+		p.exMu.Unlock()
 		p.log.Info("exchange created", "exchange", name)
 	}
 
-	// 2. Discover top symbols per exchange.
+	// 2. Load market-cap ranks before universe discovery so Binance Top-100
+	// filtering has rank data on initial startup.
+	p.loadMarketCaps(ctx)
+
+	// 2b. Discover top symbols per exchange.
 	for name, ex := range p.exchanges {
 		symbols, err := p.discoverSymbols(ctx, ex, p.cfg.DataManager.TopSymbols)
 		if err != nil {
@@ -315,8 +354,6 @@ func (p *Pipeline) Start(ctx context.Context) error {
 		p.setSymbols(name, symbols)
 		p.log.Info("symbols discovered", "exchange", name, "count", len(symbols), "symbols", strings.Join(symbols, ","))
 	}
-
-	p.loadMarketCaps(ctx)
 
 	// 3. Create exchange states with detectors.
 	for name, ex := range p.exchanges {
@@ -344,12 +381,15 @@ func (p *Pipeline) Start(ctx context.Context) error {
 
 	// 3d. Market pulse (primary exchange only; after symbol discovery).
 	if p.cfg.MarketPulse.Enabled {
-		p.marketPulseDet = detector.NewMarketPulseDetector(p.cfg.MarketPulse)
+		det := detector.NewMarketPulseDetector(p.cfg.MarketPulse)
 		primary := p.primaryExchange()
 		syms := p.symbolsSnapshot(primary)
 		if len(syms) > 0 {
-			p.marketPulseDet.UpdateUniverse(syms)
+			det.UpdateUniverse(syms)
 		}
+		p.detMu.Lock()
+		p.marketPulseDet = det
+		p.detMu.Unlock()
 		p.log.Info("market pulse detector registered",
 			"shadow", p.cfg.MarketPulse.ShadowMode,
 			"primary", primary,
@@ -514,6 +554,34 @@ func (p *Pipeline) Start(ctx context.Context) error {
 				return nil
 			})
 		}
+		g.Go(func() error {
+			p.desktopPulseLoop(gCtx)
+			return nil
+		})
+	}
+
+	// 5k. Desktop catch-up (kline gap backfill + <6h TrackOutcomes) & notice journal observer.
+	if p.cacheStore != nil || p.opportunity != nil {
+		g.Go(func() error {
+			select {
+			case <-gCtx.Done():
+				return nil
+			case <-time.After(15 * time.Second):
+			}
+			catchCtx, cancel := context.WithTimeout(gCtx, 45*time.Second)
+			defer cancel()
+			if err := p.CatchUpAndBackfill(catchCtx); err != nil && gCtx.Err() == nil {
+				p.log.Warn("startup catchup failed", "error", err)
+			}
+			return nil
+		})
+	}
+	if p.noticeJournal != nil {
+		p.seedSeenNotices()
+		g.Go(func() error {
+			p.desktopNoticeLoop(gCtx)
+			return nil
+		})
 	}
 
 	p.log.Info("pipeline started",
@@ -574,6 +642,8 @@ func (p *Pipeline) setSymbols(name string, symbols []string) {
 // primaryExchange resolves the primary authority (Normalize guarantees it is
 // set for loaded configs; the legacy field covers hand-built test configs).
 func (p *Pipeline) primaryExchange() string {
+	p.cfgMu.RLock()
+	defer p.cfgMu.RUnlock()
 	if p.cfg.Exchanges.Primary != "" {
 		return p.cfg.Exchanges.Primary
 	}
@@ -724,6 +794,42 @@ func (p *Pipeline) discoverSymbols(ctx context.Context, ex exchange.Exchange, to
 		return nil, fmt.Errorf("fetch tickers: %w", err)
 	}
 
+	if ex.Name() == "binance" && p.cfg != nil && p.cfg.AlertPolicy.LiquidityWeight.Enabled {
+		p.liqMu.RLock()
+		entriesSnapshot := make(map[string]data.MarketCapEntry, len(p.marketCapEntries))
+		for k, v := range p.marketCapEntries {
+			entriesSnapshot[k] = v
+		}
+		p.liqMu.RUnlock()
+
+		filteredTickers := make(map[string]*types.Ticker, len(tickers))
+		for sym, t := range tickers {
+			if t == nil {
+				continue
+			}
+			if p.blacklist != nil && p.blacklist.IsBlocked(sym) {
+				continue
+			}
+			filteredTickers[sym] = t
+		}
+
+		incumbents := p.symbolsSnapshot(ex.Name())
+		filterCfg := exchange.UniverseFilterConfig{
+			MaxMarketCapRank: 100,
+			MinListingDays:   30,
+			MinOIUSD:         15_000_000,
+			MaxOIToMCapRatio: 0.50,
+			MinQuoteVol24h:   15_000_000,
+			MaxVolToOIRatio:  20.0,
+			RequireSpotPair:  true,
+		}
+		if symbols, applied := exchange.FilterBinanceTop100Universe(
+			ctx, filteredTickers, entriesSnapshot, incumbents, topN, filterCfg,
+		); applied {
+			return symbols, nil
+		}
+	}
+
 	type kv struct {
 		symbol string
 		vol    float64
@@ -833,6 +939,7 @@ func (p *Pipeline) consumeTickers(ctx context.Context, es *exchangeState) {
 				return
 			}
 			es.lastTickNano.Store(time.Now().UnixNano())
+			p.emitDesktopTicker(es.name, t)
 			if es.velocity != nil {
 				es.velocity.OnTicker(ctx, t)
 			}
@@ -1248,6 +1355,10 @@ func (p *Pipeline) eventAggregator(
 				continue
 			}
 
+			if isMarketPulseEvent(evt.EventType) {
+				p.emitDesktopPulse()
+			}
+
 			// Send to delivery channel (dedup + policy applied downstream).
 			select {
 			case deliveryCh <- evt:
@@ -1462,8 +1573,10 @@ func (p *Pipeline) telegramDeliverer(ctx context.Context, deliveryCh <-chan type
 }
 
 func (p *Pipeline) deliverEvent(ctx context.Context, evt types.AnomalyEvent) {
-	if p.notice != nil {
+	p.maybeRecordDesktopAnomaly(evt)
+	if p.notice != nil && p.shouldDeliverNotice(evt) {
 		p.deliverNotice(ctx, evt)
+		p.emitNewNotices()
 	}
 	if !p.hasDeliveryChannel() {
 		return
@@ -1482,7 +1595,7 @@ func (p *Pipeline) deliverEvent(ctx context.Context, evt types.AnomalyEvent) {
 	}
 
 	// Shadow: market events are computed/logged only.
-	if isMarketPulseEvent(evt.EventType) && p.marketPulseDet != nil && p.marketPulseDet.ShadowMode() {
+	if det := p.marketPulseDetector(); isMarketPulseEvent(evt.EventType) && det != nil && det.ShadowMode() {
 		p.log.Info("alert gated", "reason", "market_pulse_shadow", "event", evt.EventType)
 		return
 	}
@@ -1745,23 +1858,146 @@ func (p *Pipeline) buildAlert(evt types.AnomalyEvent) types.AlertEvent {
 	}
 }
 
+func (p *Pipeline) marketPulseDetector() *detector.MarketPulseDetector {
+	p.detMu.RLock()
+	defer p.detMu.RUnlock()
+	return p.marketPulseDet
+}
+
+func (p *Pipeline) isMarketPulseActive() bool {
+	det := p.marketPulseDetector()
+	if det == nil || !det.LastSnapshot().DataOK {
+		return false
+	}
+	switch det.State() {
+	case types.MarketStateImpulseUp, types.MarketStateImpulseDown,
+		types.MarketStateTrendingUp, types.MarketStateTrendingDown,
+		types.MarketStateStressUp, types.MarketStateStressDown:
+		return true
+	default:
+		return false
+	}
+}
+
+func (p *Pipeline) shouldDeliverNotice(evt types.AnomalyEvent) bool {
+	if p == nil || p.notice == nil {
+		return false
+	}
+	if !notice.IsSupportedTriggerEvent(evt.EventType) {
+		return false
+	}
+	if p.blacklist != nil && p.blacklist.IsBlocked(evt.Symbol) {
+		return false
+	}
+	if !p.IsVettedSymbol(evt.Symbol) {
+		return false
+	}
+	p.cfgMu.RLock()
+	gateQuiet := p.cfg != nil && p.cfg.MarketPulse.GateIndividualAlertsWhenQuiet && !p.cfg.MarketPulse.ShadowMode
+	p.cfgMu.RUnlock()
+	if gateQuiet {
+		if p.shouldGateIndividualAlert(evt) || !p.passesAlertPolicy(evt) {
+			return false
+		}
+		if !p.isMarketPulseActive() && !p.isTop20ExtremeBreakout(evt) {
+			return false
+		}
+	}
+	return true
+}
+
+func (p *Pipeline) maybeRecordDesktopAnomaly(evt types.AnomalyEvent) {
+	if p == nil || p.cfg == nil {
+		return
+	}
+	if evt.EventType == "market_outcome" || isOperationalEvent(evt.EventType) {
+		return
+	}
+	if p.blacklist != nil && p.blacklist.IsBlocked(evt.Symbol) {
+		return
+	}
+
+	now := float64(time.Now().Unix())
+	if isMarketPulseEvent(evt.EventType) {
+		if det := p.marketPulseDetector(); det != nil && det.ShadowMode() {
+			return
+		}
+		if !p.passesAlertPolicy(evt) {
+			return
+		}
+		if !p.marketBudgetAllows(evt, now) {
+			return
+		}
+		dedupKey := evt.Symbol + "__" + evt.EventType
+		if dir, ok := evt.Data["direction"].(string); ok && dir != "" {
+			dedupKey += "__" + dir
+		}
+		if !p.desktopDedupAllow(dedupKey, now, p.dedupWindowSeconds) {
+			return
+		}
+		p.recordAndEmitAnomaly(evt)
+		return
+	}
+
+	if !p.IsVettedSymbol(evt.Symbol) {
+		return
+	}
+	if p.shouldGateIndividualAlert(evt) {
+		return
+	}
+	if !p.passesAlertPolicy(evt) {
+		return
+	}
+	p.cfgMu.RLock()
+	gateQuiet := p.cfg.MarketPulse.GateIndividualAlertsWhenQuiet && !p.cfg.MarketPulse.ShadowMode
+	p.cfgMu.RUnlock()
+	if gateQuiet && !p.isTop20ExtremeBreakout(evt) {
+		return
+	}
+	dedupKey := evt.Symbol + "__" + evt.EventType
+	if !p.desktopDedupAllow(dedupKey, now, p.dedupWindowSeconds) {
+		return
+	}
+	p.recordAndEmitAnomaly(evt)
+}
+
+func (p *Pipeline) desktopDedupAllow(key string, now, window float64) bool {
+	if window <= 0 {
+		return true
+	}
+	p.anomMu.Lock()
+	defer p.anomMu.Unlock()
+	if p.desktopAnomDedup == nil {
+		p.desktopAnomDedup = make(map[string]float64)
+	}
+	if last, ok := p.desktopAnomDedup[key]; ok && now-last < window {
+		return false
+	}
+	p.desktopAnomDedup[key] = now
+	return true
+}
+
 // shouldGateIndividualAlert reports whether a single-symbol alert should be
 // suppressed because the market is QUIET (Phase 3). Shadow mode never gates:
 // it must not change single-symbol delivery behaviour.
 func (p *Pipeline) shouldGateIndividualAlert(evt types.AnomalyEvent) bool {
-	if p.marketPulseDet == nil || !p.cfg.MarketPulse.GateIndividualAlertsWhenQuiet {
+	det := p.marketPulseDetector()
+	if det == nil || !p.cfg.MarketPulse.GateIndividualAlertsWhenQuiet {
 		return false
 	}
 	if p.cfg.MarketPulse.ShadowMode {
 		return false
 	}
+	if p.isTop20ExtremeBreakout(evt) {
+		return false
+	}
 	// A detector that cannot see the market has no opinion to enforce. Without
 	// this check a MarketPulse data outage silently suppresses the
 	// single-symbol channel too, turning one failure into two.
-	if snap := p.marketPulseDet.LastSnapshot(); !snap.DataOK {
+	if snap := det.LastSnapshot(); !snap.DataOK {
 		return false
 	}
-	return p.marketPulseDet.State() == types.MarketStateQuiet
+	return det.State() == types.MarketStateQuiet
 }
 
 // marketPulseSnapshotLoop persists a lightweight cross-sectional sample about
@@ -1851,6 +2087,7 @@ func (p *Pipeline) refreshLoop(ctx context.Context) {
 // snapshots, updates MarketPulse (primary only), and asks the affected WS
 // subscription loops to resubscribe.
 func (p *Pipeline) refreshOnce(ctx context.Context) {
+	p.loadMarketCaps(ctx)
 	primary := p.primaryExchange()
 	for name, ex := range p.exchanges {
 		newSymbols, err := p.discoverSymbols(ctx, ex, p.cfg.DataManager.TopSymbols)
@@ -1883,7 +2120,6 @@ func (p *Pipeline) refreshOnce(ctx context.Context) {
 			}
 		}
 	}
-	p.loadMarketCaps(ctx)
 }
 
 func diffSymbols(a, b []string) []string {
@@ -1953,5 +2189,535 @@ func severityRank(s string) int {
 		return 3
 	default:
 		return 1
+	}
+}
+
+// ── Desktop Observer & Catch-up ────────────────────────────────
+
+// DesktopObserver receives live telemetry from Pipeline without blocking it.
+type DesktopObserver struct {
+	OnTicker  func(exchangeName string, ticker types.Ticker)
+	OnPulse   func(view MarketPulseView)
+	OnAnomaly func(evt types.AnomalyEvent)
+	OnNotice  func(notice types.Notice)
+}
+
+// MarketPulseView is a thread-safe snapshot of MarketPulse and causal SeasonRegime.
+type MarketPulseView struct {
+	Enabled      bool                 `json:"enabled"`
+	ShadowMode   bool                 `json:"shadow_mode"`
+	State        types.MarketState    `json:"state"`
+	UpdatedAt    int64                `json:"updated_at"`
+	Snapshot     types.MarketSnapshot `json:"snapshot"`
+	SeasonRegime types.SeasonRegime   `json:"season_regime,omitempty"`
+}
+
+// SetCacheStore attaches the derived SQLite cache store for startup/wake kline backfill.
+func (p *Pipeline) SetCacheStore(cs *cache.Store) {
+	if p == nil {
+		return
+	}
+	p.cacheStore = cs
+}
+
+// SetDesktopObserver registers live callbacks for the local desktop API.
+func (p *Pipeline) SetDesktopObserver(obs DesktopObserver) {
+	if p == nil {
+		return
+	}
+	p.obsMu.Lock()
+	cp := obs
+	p.observer = &cp
+	p.obsMu.Unlock()
+}
+
+func (p *Pipeline) getDesktopObserver() *DesktopObserver {
+	if p == nil {
+		return nil
+	}
+	p.obsMu.RLock()
+	obs := p.observer
+	p.obsMu.RUnlock()
+	return obs
+}
+
+// EnsureDeskStorage initializes trading-journal.jsonl and notice-journal.jsonl
+// handles even when opportunity/notice background generation is disabled in config.
+func (p *Pipeline) EnsureDeskStorage() error {
+	if p == nil || p.cfg == nil {
+		return nil
+	}
+	if p.journal == nil {
+		j, err := storage.NewJournal(p.cfg.Storage)
+		if err != nil {
+			return err
+		}
+		j.SetMetadata(storage.ResearchMeta{
+			GitSHA:          storage.DetectGitSHA(),
+			ConfigHash:      storage.ConfigHashOf(p.cfg),
+			StrategyVersion: "canonical-freeze-pr1",
+			Mode:            "live",
+		})
+		p.journal = j
+		if p.opportunity == nil {
+			ocfg := opportunity.ConfigFromTypes(p.cfg.Opportunity)
+			p.opportunity = opportunity.NewService(j, ocfg)
+		}
+	}
+	if p.noticeJournal == nil {
+		nj, err := storage.NewNoticeJournal(p.cfg.Storage)
+		if err != nil {
+			return err
+		}
+		nj.SetMetadata(storage.ResearchMeta{
+			GitSHA:          storage.DetectGitSHA(),
+			ConfigHash:      storage.ConfigHashOf(p.cfg),
+			StrategyVersion: "phase3c-notice-v1",
+			Mode:            "live",
+		})
+		p.noticeJournal = nj
+	}
+	return nil
+}
+
+// PrimaryExchange returns the primary exchange identifier (e.g. "binance").
+func (p *Pipeline) PrimaryExchange() string {
+	if p == nil {
+		return ""
+	}
+	return p.primaryExchange()
+}
+
+// PrimaryExchangeClient returns the live Exchange adapter for PrimaryExchange.
+func (p *Pipeline) PrimaryExchangeClient() exchange.Exchange {
+	if p == nil {
+		return nil
+	}
+	primary := p.primaryExchange()
+	p.exMu.RLock()
+	defer p.exMu.RUnlock()
+	if ex := p.exchanges[primary]; ex != nil {
+		return ex
+	}
+	for _, ex := range p.exchanges {
+		if ex != nil {
+			return ex
+		}
+	}
+	return nil
+}
+
+// TrackedSymbols returns a snapshot of tracked symbols on the primary exchange.
+func (p *Pipeline) TrackedSymbols() []string {
+	if p == nil {
+		return nil
+	}
+	if syms := p.symbolsSnapshot(p.primaryExchange()); len(syms) > 0 {
+		return syms
+	}
+	return p.coinglassSymbols()
+}
+
+// Journal returns the authoritative trading journal.
+func (p *Pipeline) Journal() *storage.Journal {
+	if p == nil {
+		return nil
+	}
+	return p.journal
+}
+
+// NoticeJournal returns the phase 3c notice journal.
+func (p *Pipeline) NoticeJournal() *storage.NoticeJournal {
+	if p == nil {
+		return nil
+	}
+	return p.noticeJournal
+}
+
+// Config returns a copy of the active configuration.
+func (p *Pipeline) Config() types.Config {
+	if p == nil {
+		return types.Config{}
+	}
+	p.cfgMu.RLock()
+	defer p.cfgMu.RUnlock()
+	if p.cfg == nil {
+		return types.Config{}
+	}
+	return *p.cfg
+}
+
+// UpdateRiskGateConfig updates runtime bankroll, maxLossUSD, and timezone under lock.
+func (p *Pipeline) UpdateRiskGateConfig(bankrollUSD, maxLossUSD *float64, timezone *string) {
+	if p == nil {
+		return
+	}
+	p.cfgMu.Lock()
+	defer p.cfgMu.Unlock()
+	if p.cfg == nil {
+		return
+	}
+	if bankrollUSD != nil && *bankrollUSD > 0 {
+		p.cfg.RiskGate.TradingBankrollUSD = *bankrollUSD
+	}
+	if maxLossUSD != nil && *maxLossUSD > 0 {
+		p.cfg.RiskGate.MaxLossUSD = *maxLossUSD
+	}
+	if timezone != nil && strings.TrimSpace(*timezone) != "" {
+		p.cfg.RiskGate.Timezone = strings.TrimSpace(*timezone)
+	}
+}
+
+// SeasonRegime returns the current causal cross-sectional 4-season market regime (or "").
+func (p *Pipeline) SeasonRegime() types.SeasonRegime {
+	if p == nil || p.seasonFeed == nil {
+		return ""
+	}
+	bars := p.seasonBarsSnapshot()
+	if len(bars) < cycle.DefaultSeasonMinValidSymbols {
+		return ""
+	}
+	tl := cycle.BuildCausalSeasonTimeline(bars, nil)
+	if obs, ok := cycle.LatestSeasonObservationAtOrBefore(tl, time.Now().Unix()); ok {
+		return types.NormalizeSeasonRegime(obs.SeasonRegime)
+	}
+	return ""
+}
+
+// MarketPulseView returns a thread-safe snapshot of the MarketPulse state machine.
+func (p *Pipeline) MarketPulseView() MarketPulseView {
+	view := MarketPulseView{
+		State:        types.MarketStateQuiet,
+		SeasonRegime: p.SeasonRegime(),
+	}
+	if p == nil {
+		return view
+	}
+	p.cfgMu.RLock()
+	if p.cfg != nil {
+		view.Enabled = p.cfg.MarketPulse.Enabled
+		view.ShadowMode = p.cfg.MarketPulse.ShadowMode
+	}
+	p.cfgMu.RUnlock()
+
+	p.detMu.RLock()
+	det := p.marketPulseDet
+	p.detMu.RUnlock()
+	if det == nil {
+		return view
+	}
+	snap := det.LastSnapshot()
+	view.State = det.State()
+	view.Snapshot = snap
+	view.ShadowMode = det.ShadowMode()
+	if snap.Timestamp > 0 {
+		view.UpdatedAt = int64(snap.Timestamp)
+	}
+	return view
+}
+
+// RecentAnomalies returns up to limit recent AnomalyEvents, newest first.
+func (p *Pipeline) RecentAnomalies(limit int) []types.AnomalyEvent {
+	if p == nil {
+		return nil
+	}
+	p.anomMu.RLock()
+	defer p.anomMu.RUnlock()
+	n := len(p.recentAnomalies)
+	if n == 0 {
+		return []types.AnomalyEvent{}
+	}
+	if limit <= 0 || limit > n {
+		limit = n
+	}
+	out := make([]types.AnomalyEvent, 0, limit)
+	for i := n - 1; i >= n-limit; i-- {
+		out = append(out, p.recentAnomalies[i])
+	}
+	return out
+}
+
+func (p *Pipeline) emitDesktopTicker(exName string, t types.Ticker) {
+	obs := p.getDesktopObserver()
+	if obs == nil || obs.OnTicker == nil {
+		return
+	}
+	obs.OnTicker(exName, t)
+}
+
+func (p *Pipeline) emitDesktopPulse() {
+	obs := p.getDesktopObserver()
+	if obs == nil || obs.OnPulse == nil {
+		return
+	}
+	obs.OnPulse(p.MarketPulseView())
+}
+
+func (p *Pipeline) recordAndEmitAnomaly(evt types.AnomalyEvent) {
+	const maxRecentAnomalies = 200
+	p.anomMu.Lock()
+	p.recentAnomalies = append(p.recentAnomalies, evt)
+	if len(p.recentAnomalies) > maxRecentAnomalies {
+		p.recentAnomalies = p.recentAnomalies[len(p.recentAnomalies)-maxRecentAnomalies:]
+	}
+	p.anomMu.Unlock()
+
+	obs := p.getDesktopObserver()
+	if obs != nil && obs.OnAnomaly != nil {
+		obs.OnAnomaly(evt)
+	}
+}
+
+func (p *Pipeline) desktopPulseLoop(ctx context.Context) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			p.emitDesktopPulse()
+		}
+	}
+}
+
+func (p *Pipeline) seedSeenNotices() {
+	if p == nil || p.noticeJournal == nil {
+		return
+	}
+	var fSize, fMod int64
+	if fi, err := os.Stat(p.noticeJournal.Path()); err == nil {
+		fSize = fi.Size()
+		fMod = fi.ModTime().UnixNano()
+	}
+	notices, err := p.noticeJournal.ListNotices()
+	if err != nil {
+		return
+	}
+	p.seenNoticeMu.Lock()
+	if p.seenNoticeIDs == nil {
+		p.seenNoticeIDs = make(map[string]struct{}, len(notices))
+	}
+	for _, n := range notices {
+		p.seenNoticeIDs[n.NoticeID] = struct{}{}
+	}
+	p.lastNoticeFileSize = fSize
+	p.lastNoticeModTimeNano = fMod
+	p.seenNoticeMu.Unlock()
+}
+
+func (p *Pipeline) emitNewNotices() {
+	if p == nil || p.noticeJournal == nil {
+		return
+	}
+	obs := p.getDesktopObserver()
+	if obs == nil || obs.OnNotice == nil {
+		return
+	}
+	var fSize, fMod int64
+	if fi, err := os.Stat(p.noticeJournal.Path()); err == nil {
+		fSize = fi.Size()
+		fMod = fi.ModTime().UnixNano()
+		p.seenNoticeMu.Lock()
+		unchanged := fSize == p.lastNoticeFileSize && fMod == p.lastNoticeModTimeNano && p.seenNoticeIDs != nil
+		p.seenNoticeMu.Unlock()
+		if unchanged {
+			return
+		}
+	}
+	notices, err := p.noticeJournal.ListNotices()
+	if err != nil {
+		return
+	}
+	var toEmit []types.Notice
+	p.seenNoticeMu.Lock()
+	if p.seenNoticeIDs == nil {
+		p.seenNoticeIDs = make(map[string]struct{}, len(notices))
+	}
+	for _, n := range notices {
+		if _, seen := p.seenNoticeIDs[n.NoticeID]; seen {
+			continue
+		}
+		p.seenNoticeIDs[n.NoticeID] = struct{}{}
+		if n.DeliveryStatus == types.NoticeStatusSuppressed {
+			continue
+		}
+		toEmit = append(toEmit, n)
+	}
+	p.lastNoticeFileSize = fSize
+	p.lastNoticeModTimeNano = fMod
+	p.seenNoticeMu.Unlock()
+
+	for _, n := range toEmit {
+		obs.OnNotice(n)
+	}
+}
+
+func (p *Pipeline) desktopNoticeLoop(ctx context.Context) {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			p.emitNewNotices()
+		}
+	}
+}
+
+// CatchUpAndBackfill backfills REST kline gaps in desktop-cache.db, refreshes the
+// cross-sectional season feed, and runs TrackOutcomes catch-up for unresolved <6h tickets.
+// Called on startup and on POST /api/v1/system/wake.
+func (p *Pipeline) CatchUpAndBackfill(ctx context.Context) error {
+	if p == nil {
+		return nil
+	}
+	ex := p.PrimaryExchangeClient()
+	if ex == nil {
+		return nil
+	}
+
+	if p.seasonFeed != nil {
+		p.pollSeasonFeed(ctx)
+	}
+
+	if p.opportunity != nil {
+		ocfg := opportunity.DefaultOutcomeTrackConfig()
+		p.cfgMu.RLock()
+		if p.cfg != nil && p.cfg.Opportunity.OutcomeMaxAgeHours > 0 {
+			ocfg.MaxAge = time.Duration(p.cfg.Opportunity.OutcomeMaxAgeHours * float64(time.Hour))
+		}
+		p.cfgMu.RUnlock()
+		if n, err := p.opportunity.TrackOutcomes(ctx, ex, ocfg); err != nil {
+			p.log.Warn("catchup TrackOutcomes failed", "error", err)
+		} else if n > 0 {
+			p.log.Info("catchup outcomes updated", "count", n)
+		}
+	}
+
+	if p.cacheStore == nil {
+		return nil
+	}
+
+	symSet := map[string]struct{}{"BTC/USDT:USDT": {}}
+	if positions, err := p.cacheStore.ListOpenPositions(ctx); err == nil {
+		for _, pos := range positions {
+			if pos.Symbol != "" {
+				symSet[pos.Symbol] = struct{}{}
+			}
+		}
+	}
+	if p.journal != nil {
+		if tickets, err := p.journal.ListTickets(""); err == nil {
+			for _, t := range tickets {
+				if t.Symbol != "" && (t.Status == types.TicketStatusOpen || t.Status == types.TicketStatusAccepted || t.Status == types.TicketStatusWaiting) {
+					symSet[t.Symbol] = struct{}{}
+				}
+			}
+		}
+	}
+
+	syms := make([]string, 0, len(symSet))
+	for s := range symSet {
+		syms = append(syms, s)
+	}
+	sort.Strings(syms)
+	if len(syms) > 4 {
+		syms = syms[:4]
+	}
+
+	tfs := []string{"1m", "5m", "15m", "1h", "4h"}
+	nowSec := time.Now().Unix()
+
+	type job struct {
+		sym string
+		tf  string
+	}
+	jobs := make(chan job, len(syms)*len(tfs))
+	for _, s := range syms {
+		for _, tf := range tfs {
+			jobs <- job{sym: s, tf: tf}
+		}
+	}
+	close(jobs)
+
+	var wg sync.WaitGroup
+	workers := 2
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := range jobs {
+				if ctx.Err() != nil {
+					return
+				}
+				p.backfillSymbolTF(ctx, ex, j.sym, j.tf, nowSec)
+			}
+		}()
+	}
+	wg.Wait()
+	return nil
+}
+
+func (p *Pipeline) backfillSymbolTF(ctx context.Context, ex exchange.Exchange, sym, tf string, nowSec int64) {
+	latestTS, err := p.cacheStore.LatestKlineTime(ctx, sym, tf)
+	if err != nil {
+		return
+	}
+	tfSec := tfDurationSec(tf)
+	limit := 300
+	if latestTS > 0 {
+		gap := int((nowSec-latestTS)/tfSec) + 5
+		if gap < 10 {
+			gap = 10
+		}
+		if gap > 1000 {
+			gap = 1000
+		}
+		limit = gap
+	} else if tf == "1m" {
+		limit = 500
+	}
+
+	var beforeMs int64
+	for page := 0; page < 1; page++ {
+		reqCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+		candles, err := ex.FetchOHLCV(reqCtx, sym, tf, limit, beforeMs)
+		cancel()
+		if err != nil || len(candles) == 0 {
+			return
+		}
+		if err := p.cacheStore.UpsertKlines(ctx, sym, tf, ex.Name(), candles); err != nil {
+			return
+		}
+		if latestTS == 0 || candles[0].Timestamp <= latestTS || len(candles) < limit {
+			return
+		}
+	}
+}
+
+func tfDurationSec(tf string) int64 {
+	switch tf {
+	case "1m":
+		return 60
+	case "3m":
+		return 180
+	case "5m":
+		return 300
+	case "15m":
+		return 900
+	case "30m":
+		return 1800
+	case "1h":
+		return 3600
+	case "2h":
+		return 7200
+	case "4h":
+		return 14400
+	case "1d":
+		return 86400
+	default:
+		return 300
 	}
 }

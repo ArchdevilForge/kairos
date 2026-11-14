@@ -197,6 +197,8 @@ func setDefaults(v *viper.Viper) {
 		"cooldownMinutes":        45,
 		"windowStartHour":        18,
 		"windowEndHour":          1,
+		"timezone":               "Asia/Shanghai",
+		"tradingBankrollUSD":     40.0,
 		"maxLossUSD":             4,
 		"enforceLeverageCap":     true,
 		"maxMajorLeverage":       10.0,
@@ -293,7 +295,7 @@ func setDefaults(v *viper.Viper) {
 		},
 		"stress": map[string]any{
 			"minBreadth":         0.80,
-			"minMedianReturnPct": 0.35,
+			"minMedianReturnPct": 0.85,
 			"minMedianZ":         2.5,
 		},
 		"decay": map[string]any{

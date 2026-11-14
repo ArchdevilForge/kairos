@@ -52,11 +52,13 @@ const MarginModeIsolated = "isolated"
 
 // BehaviorGateConfig carries the numeric knobs (config-owned, §9b defaults).
 type BehaviorGateConfig struct {
-	Enabled         bool
-	CooldownMinutes int     // 同币亏损后冷却(30–60,默认 45)
-	WindowStartHour int     // live 窗口开始(本地时区小时,默认 18)
-	WindowEndHour   int     // live 窗口结束(默认 1,跨午夜)
-	MaxLossUSD      float64 // 单笔预设最大损失上限(默认 4)
+	Enabled            bool
+	CooldownMinutes    int     // 同币亏损后冷却(30–60,默认 45)
+	WindowStartHour    int     // live 窗口开始(本地时区小时,默认 18)
+	WindowEndHour      int     // live 窗口结束(默认 1,跨午夜)
+	Timezone           string  // IANA 时区名(默认 "Asia/Shanghai",回退 UTC+8)
+	TradingBankrollUSD float64 // Engine A 本金口径(默认 $40)
+	MaxLossUSD         float64 // 单笔预设最大损失上限(默认 4)
 
 	// Work Item 7: Leverage hard caps (default ON: BTC/ETH <=10x, alts <=5x).
 	EnforceLeverageCap *bool
@@ -93,6 +95,8 @@ func DefaultBehaviorGateConfig() BehaviorGateConfig {
 		CooldownMinutes:        45,
 		WindowStartHour:        18,
 		WindowEndHour:          1,
+		Timezone:               "Asia/Shanghai",
+		TradingBankrollUSD:     40.0,
 		MaxLossUSD:             4,
 		EnforceLeverageCap:     &on,
 		MaxMajorLeverage:       DefaultMajorLeverageCap,
@@ -120,6 +124,12 @@ func BehaviorGateConfigFrom(c types.RiskGateConfig) BehaviorGateConfig {
 	if c.WindowStartHour > 0 || c.WindowEndHour > 0 {
 		out.WindowStartHour = c.WindowStartHour
 		out.WindowEndHour = c.WindowEndHour
+	}
+	if tz := strings.TrimSpace(c.Timezone); tz != "" {
+		out.Timezone = tz
+	}
+	if c.TradingBankrollUSD > 0 {
+		out.TradingBankrollUSD = c.TradingBankrollUSD
 	}
 	if c.MaxLossUSD > 0 {
 		out.MaxLossUSD = c.MaxLossUSD
@@ -281,7 +291,7 @@ func EvaluateBehaviorGate(cfg BehaviorGateConfig, in GateInput) GateResult {
 	}
 
 	// 5. evening live window(画像: 18:00–24:00 PF 0.96 vs 12:00–18:00 PF 0.21)。
-	if !inLiveWindow(in.Now.Hour(), cfg.WindowStartHour, cfg.WindowEndHour) {
+	if !cfg.InLiveWindow(in.Now) {
 		rej = append(rej, GateOutsideWindow)
 	}
 
@@ -455,6 +465,25 @@ func medianFloat64(vals []float64) float64 {
 func isSecondWaveSwitch(s string) bool {
 	u := strings.ToUpper(strings.TrimSpace(s))
 	return u == "SECOND_WAVE" || strings.Contains(u, "SECOND_WAVE")
+}
+
+// ResolveLocation resolves a configured IANA timezone (default "Asia/Shanghai"),
+// falling back to fixed UTC+8 if LoadLocation fails.
+func ResolveLocation(tz string) *time.Location {
+	name := strings.TrimSpace(tz)
+	if name == "" {
+		name = "Asia/Shanghai"
+	}
+	if loc, err := time.LoadLocation(name); err == nil && loc != nil {
+		return loc
+	}
+	return time.FixedZone("UTC+8", 8*3600)
+}
+
+// InLiveWindow reports whether now falls inside [WindowStartHour, WindowEndHour) in cfg.Timezone.
+func (cfg BehaviorGateConfig) InLiveWindow(now time.Time) bool {
+	loc := ResolveLocation(cfg.Timezone)
+	return inLiveWindow(now.In(loc).Hour(), cfg.WindowStartHour, cfg.WindowEndHour)
 }
 
 // inLiveWindow reports whether hour is inside [start, end) with midnight wrap

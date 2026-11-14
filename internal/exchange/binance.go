@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ArchdevilForge/kairos/internal/types"
@@ -14,8 +16,101 @@ import (
 
 const (
 	binanceRESTEndpoint = "https://fapi.binance.com"
-	binanceWSEndpoint   = "wss://fstream.binance.com/ws"
+	cryptoCacheTTL      = time.Hour
 )
+
+var binanceWSEndpoint = "wss://fstream.binance.com/market/ws"
+
+var binanceCryptoCache = struct {
+	mu        sync.Mutex
+	fetchedAt time.Time
+	allow     map[string]bool
+	sorted    []string
+}{}
+
+var sharedBinanceTransport = func() *http.Transport {
+	if base, ok := http.DefaultTransport.(*http.Transport); ok {
+		cloned := base.Clone()
+		cloned.MaxIdleConns = 64
+		cloned.MaxIdleConnsPerHost = 16
+		cloned.IdleConnTimeout = 90 * time.Second
+		return cloned
+	}
+	return &http.Transport{
+		MaxIdleConns:        64,
+		MaxIdleConnsPerHost: 16,
+		IdleConnTimeout:     90 * time.Second,
+	}
+}()
+
+var (
+	binanceTestMu            sync.RWMutex
+	binanceTransportOverride http.RoundTripper
+)
+
+func pooledClientTransport() http.RoundTripper {
+	binanceTestMu.RLock()
+	rt := binanceTransportOverride
+	binanceTestMu.RUnlock()
+	if rt != nil {
+		return rt
+	}
+	return sharedBinanceTransport
+}
+
+// SetBinanceTestHooks overrides the pooled Binance HTTP transport and WebSocket endpoint
+// and resets in-memory Binance discovery/OI caches for deterministic offline tests.
+func SetBinanceTestHooks(rt http.RoundTripper, wsEndpoint string) func() {
+	binanceTestMu.Lock()
+	prevRT := binanceTransportOverride
+	prevWS := binanceWSEndpoint
+	binanceTransportOverride = rt
+	if wsEndpoint != "" {
+		binanceWSEndpoint = wsEndpoint
+	}
+	binanceTestMu.Unlock()
+	resetBinanceTestCaches()
+
+	return func() {
+		binanceTestMu.Lock()
+		binanceTransportOverride = prevRT
+		binanceWSEndpoint = prevWS
+		binanceTestMu.Unlock()
+		resetBinanceTestCaches()
+	}
+}
+
+func resetBinanceTestCaches() {
+	binanceCryptoCache.mu.Lock()
+	binanceCryptoCache.fetchedAt = time.Time{}
+	binanceCryptoCache.allow = nil
+	binanceCryptoCache.sorted = nil
+	binanceCryptoCache.mu.Unlock()
+
+	binanceUniverseInfoCache.mu.Lock()
+	binanceUniverseInfoCache.fetchedAt = time.Time{}
+	binanceUniverseInfoCache.meta = nil
+	binanceUniverseInfoCache.mu.Unlock()
+
+	binanceSpotCache.mu.Lock()
+	binanceSpotCache.fetchedAt = time.Time{}
+	binanceSpotCache.bases = nil
+	binanceSpotCache.mu.Unlock()
+
+	binanceOICache.mu.Lock()
+	binanceOICache.entries = make(map[string]cachedOIEntry)
+	binanceOICache.mu.Unlock()
+}
+
+func newPooledHTTPClient(timeout time.Duration) *http.Client {
+	if timeout <= 0 {
+		timeout = 15 * time.Second
+	}
+	return &http.Client{
+		Transport: pooledClientTransport(),
+		Timeout:   timeout,
+	}
+}
 
 type binanceExchange struct {
 	httpCli *http.Client
@@ -24,7 +119,7 @@ type binanceExchange struct {
 }
 
 func newBinance() *binanceExchange {
-	return &binanceExchange{httpCli: newHTTPClient()}
+	return &binanceExchange{httpCli: newPooledHTTPClient(15 * time.Second)}
 }
 
 func (b *binanceExchange) Name() string { return "binance" }
@@ -102,9 +197,13 @@ func (b *binanceExchange) FetchTickers(ctx context.Context) (map[string]*types.T
 	}
 
 	result := make(map[string]*types.Ticker, len(rows))
+	allow, allowErr := b.cryptoPerpAllowlist(ctx)
 	for _, row := range rows {
 		sym := toCanonicalBinance(row.Symbol)
 		if sym == "" {
+			continue
+		}
+		if allowErr == nil && len(allow) > 0 && !allow[sym] {
 			continue
 		}
 		t := &types.Ticker{Symbol: sym, Info: map[string]any{"instType": "SWAP"}}
@@ -189,32 +288,35 @@ func (b *binanceExchange) readTickers(ctx context.Context, conn *websocket.Conn,
 			return err
 		}
 		b.feed.markMessage(time.Now())
-		var data struct {
-			EventType string `json:"e"`
-			Symbol    string `json:"s"`
-			LastPrice string `json:"c"`
-			QuoteVol  string `json:"q"`
-			ChangePct string `json:"P"`
-		}
-		if err := json.Unmarshal(msg, &data); err != nil {
+		// Decode into a case-sensitive map because Binance 24hrTicker carries
+		// colliding keys (e/E, p/P, q/Q) under Go encoding/json struct matching.
+		var m map[string]any
+		if err := json.Unmarshal(msg, &m); err != nil {
 			continue
 		}
-		if data.Symbol == "" {
+		rawSym, _ := m["s"].(string)
+		if rawSym == "" {
 			continue
 		}
-		sym := lookup[strings.ToUpper(data.Symbol)]
+		sym := lookup[strings.ToUpper(rawSym)]
 		if sym == "" {
-			sym = toCanonicalBinance(data.Symbol)
+			sym = toCanonicalBinance(rawSym)
 		}
 		t := types.Ticker{Symbol: sym}
-		if v := parseFloat(data.LastPrice); v > 0 {
-			t.LastPrice = &v
+		if lastStr, _ := m["c"].(string); lastStr != "" {
+			if v := parseFloat(lastStr); v > 0 {
+				t.LastPrice = &v
+			}
 		}
-		if v := parseFloat(data.QuoteVol); v > 0 {
-			t.QuoteVolume = &v
+		if qvStr, _ := m["q"].(string); qvStr != "" {
+			if v := parseFloat(qvStr); v > 0 {
+				t.QuoteVolume = &v
+			}
 		}
-		if v := parseFloatPtr(data.ChangePct); v != nil {
-			t.ChangePct = v
+		if pctStr, _ := m["P"].(string); pctStr != "" {
+			if v := parseFloatPtr(pctStr); v != nil {
+				t.ChangePct = v
+			}
 		}
 		select {
 		case tickerCh <- t:
@@ -230,4 +332,140 @@ func mapBinanceTimeframe(tf string) string {
 	default:
 		return "4h"
 	}
+}
+
+func (b *binanceExchange) cryptoPerpAllowlist(ctx context.Context) (map[string]bool, error) {
+	binanceCryptoCache.mu.Lock()
+	if len(binanceCryptoCache.allow) > 0 && time.Since(binanceCryptoCache.fetchedAt) < cryptoCacheTTL {
+		cp := make(map[string]bool, len(binanceCryptoCache.allow))
+		for k, v := range binanceCryptoCache.allow {
+			cp[k] = v
+		}
+		binanceCryptoCache.mu.Unlock()
+		return cp, nil
+	}
+	binanceCryptoCache.mu.Unlock()
+
+	allow, err := fetchCryptoAllowlistFrom(ctx, b.httpCli, binanceRESTEndpoint)
+	if err != nil {
+		return nil, err
+	}
+	binanceCryptoCache.mu.Lock()
+	binanceCryptoCache.allow = allow
+	binanceCryptoCache.fetchedAt = time.Now()
+	binanceCryptoCache.mu.Unlock()
+
+	cp := make(map[string]bool, len(allow))
+	for k, v := range allow {
+		cp[k] = v
+	}
+	return cp, nil
+}
+
+func fetchCryptoAllowlistFrom(ctx context.Context, cli *http.Client, restBase string) (map[string]bool, error) {
+	body, err := doHTTPGet(ctx, cli, strings.TrimRight(restBase, "/")+"/fapi/v1/exchangeInfo")
+	if err != nil {
+		return nil, err
+	}
+	var payload struct {
+		Symbols []struct {
+			Symbol         string `json:"symbol"`
+			Status         string `json:"status"`
+			ContractType   string `json:"contractType"`
+			QuoteAsset     string `json:"quoteAsset"`
+			UnderlyingType string `json:"underlyingType"`
+		} `json:"symbols"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, err
+	}
+	if len(payload.Symbols) == 0 {
+		return nil, fmt.Errorf("binance exchangeInfo: empty symbols")
+	}
+	allow := make(map[string]bool, len(payload.Symbols))
+	for _, s := range payload.Symbols {
+		if s.Status != "TRADING" || s.ContractType != "PERPETUAL" || s.QuoteAsset != "USDT" {
+			continue
+		}
+		// Reject TradFi equities/commodities/ETFs (underlyingType=EQUITY/COMMODITY).
+		if s.UnderlyingType != "" && s.UnderlyingType != "COIN" {
+			continue
+		}
+		if canon := toCanonicalBinance(s.Symbol); canon != "" {
+			allow[canon] = true
+		}
+	}
+	if len(allow) == 0 {
+		return nil, fmt.Errorf("binance exchangeInfo: zero crypto perpetuals")
+	}
+	return allow, nil
+}
+
+// FetchBinanceCryptoPerpSymbols returns active Binance USDT-M crypto perpetual symbols
+// sorted by 24h quote volume descending, along with an O(1) allowlist map (cached 1h).
+func FetchBinanceCryptoPerpSymbols(ctx context.Context) ([]string, map[string]bool, error) {
+	var cachedAllow map[string]bool
+	binanceCryptoCache.mu.Lock()
+	if len(binanceCryptoCache.allow) > 0 && time.Since(binanceCryptoCache.fetchedAt) < cryptoCacheTTL {
+		allowCopy := make(map[string]bool, len(binanceCryptoCache.allow))
+		for k, v := range binanceCryptoCache.allow {
+			allowCopy[k] = v
+		}
+		if len(binanceCryptoCache.sorted) > 0 {
+			sortedCopy := append([]string(nil), binanceCryptoCache.sorted...)
+			binanceCryptoCache.mu.Unlock()
+			return sortedCopy, allowCopy, nil
+		}
+		cachedAllow = allowCopy
+	}
+	binanceCryptoCache.mu.Unlock()
+
+	cli := newPooledHTTPClient(15 * time.Second)
+	allow := cachedAllow
+	if len(allow) == 0 {
+		var err error
+		allow, err = fetchCryptoAllowlistFrom(ctx, cli, binanceRESTEndpoint)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
+	vols := make(map[string]float64, len(allow))
+	if body, tErr := doHTTPGet(ctx, cli, binanceRESTEndpoint+"/fapi/v1/ticker/24hr"); tErr == nil {
+		var rows []struct {
+			Symbol      string `json:"symbol"`
+			QuoteVolume string `json:"quoteVolume"`
+		}
+		if json.Unmarshal(body, &rows) == nil {
+			for _, r := range rows {
+				if canon := toCanonicalBinance(r.Symbol); canon != "" && allow[canon] {
+					vols[canon] = parseFloat(r.QuoteVolume)
+				}
+			}
+		}
+	}
+
+	sorted := make([]string, 0, len(allow))
+	for sym := range allow {
+		sorted = append(sorted, sym)
+	}
+	sort.Slice(sorted, func(i, j int) bool {
+		vi, vj := vols[sorted[i]], vols[sorted[j]]
+		if vi != vj {
+			return vi > vj
+		}
+		return sorted[i] < sorted[j]
+	})
+
+	binanceCryptoCache.mu.Lock()
+	binanceCryptoCache.allow = allow
+	binanceCryptoCache.sorted = sorted
+	binanceCryptoCache.fetchedAt = time.Now()
+	binanceCryptoCache.mu.Unlock()
+
+	allowCopy := make(map[string]bool, len(allow))
+	for k, v := range allow {
+		allowCopy[k] = v
+	}
+	return append([]string(nil), sorted...), allowCopy, nil
 }

@@ -32,7 +32,7 @@ dingTalk:
 # and resubscribes the WS feeds.
 dataManager:
   exchanges:
-    - "okx"
+    - "binance"
   topSymbols: 30
   refreshIntervalHours: 4
   dedupWindowSeconds: 5
@@ -123,7 +123,7 @@ resonanceScorer:
   cooldownSeconds: 600
 
 exchanges:
-  primary: "okx"
+  primary: "binance"
   # Ticker WebSocket endpoint overrides. Empty/missing = adapter default.
   # OKX retired WS port 8443 (notice code 64010), so the default is now 443:
   #   okx: "wss://ws.okx.com:443/ws/v5/public"
@@ -223,6 +223,8 @@ riskGate:
   cooldownMinutes: 45        # same-symbol reentry cooldown after a loss (30-60)
   windowStartHour: 18        # live window start, local hour (UTC+8)
   windowEndHour: 1           # live window end (wraps past midnight)
+  timezone: "Asia/Shanghai"  # live window timezone (fallback UTC+8)
+  tradingBankrollUSD: 40     # Engine A trading bankroll ($40 of $100 split)
   maxLossUSD: 4              # per-trade max predefined loss ($100 challenge scale)
   enforceLeverageCap: true   # mechanical leverage caps (BTC/ETH <=10x, alts <=5x)
   maxMajorLeverage: 10.0

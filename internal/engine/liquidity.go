@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/ArchdevilForge/kairos/internal/data"
+	"github.com/ArchdevilForge/kairos/internal/types"
 )
 
 func (p *Pipeline) isMajorSymbol(symbol string) bool {
@@ -19,14 +20,86 @@ func (p *Pipeline) isMajorSymbol(symbol string) bool {
 	return false
 }
 
+// IsVettedSymbol reports whether sym belongs to the vetted Top-100 market-cap
+// universe. Returns true for "MARKET", empty, BTC/ETH majors, or before rank data loads.
+func (p *Pipeline) IsVettedSymbol(sym string) bool {
+	if p == nil {
+		return true
+	}
+	s := strings.TrimSpace(sym)
+	if s == "" || strings.EqualFold(s, "MARKET") {
+		return true
+	}
+	if p.isMajorSymbol(s) {
+		return true
+	}
+	base := data.CanonicalMarketCapBase(s)
+	if base == "BTC" || base == "ETH" {
+		return true
+	}
+
+	p.liqMu.RLock()
+	entries := p.marketCapEntries
+	n := len(entries)
+	entry, ok := entries[base]
+	p.liqMu.RUnlock()
+
+	if n == 0 {
+		return true
+	}
+	return ok && entry.Rank > 0 && entry.Rank <= 100
+}
+
+func (p *Pipeline) isTop20ExtremeBreakout(evt types.AnomalyEvent) bool {
+	if p == nil || evt.EventType != "price_velocity" {
+		return false
+	}
+	base := data.CanonicalMarketCapBase(evt.Symbol)
+	if base == "" {
+		return false
+	}
+	isBTCETH := base == "BTC" || base == "ETH"
+
+	p.liqMu.RLock()
+	entry, hasEntry := p.marketCapEntries[base]
+	p.liqMu.RUnlock()
+
+	inTop20 := isBTCETH || p.isMajorSymbol(evt.Symbol) || (hasEntry && entry.Rank > 0 && entry.Rank <= 20)
+	if !inTop20 {
+		return false
+	}
+
+	changePct := math.Abs(floatFromMapDefault(evt.Data, "change_pct", 0.0))
+	winSec := floatFromMapDefault(evt.Data, "window_seconds", 60.0)
+	if winSec <= 0 {
+		winSec = 60.0
+	}
+	shortWin := winSec <= 60.0
+
+	if isBTCETH {
+		if shortWin {
+			return changePct >= 1.8
+		}
+		return changePct >= 2.4
+	}
+	if shortWin {
+		return changePct >= 2.2
+	}
+	return changePct >= 3.0
+}
+
 func (p *Pipeline) symbolMarketCap(symbol string) float64 {
-	base, err := data.NormalizeCoinSymbol(symbol)
-	if err != nil || base == "" {
-		return 0
+	base := data.CanonicalMarketCapBase(symbol)
+	if base == "" {
+		norm, err := data.NormalizeCoinSymbol(symbol)
+		if err != nil || norm == "" {
+			return 0
+		}
+		base = strings.ToUpper(norm)
 	}
 	p.liqMu.RLock()
 	defer p.liqMu.RUnlock()
-	return p.marketCapByCoin[strings.ToUpper(base)]
+	return p.marketCapByCoin[base]
 }
 
 // liquidityWeight returns 0..1 from cached CoinGlass market cap (fetched at subscribe/refresh).

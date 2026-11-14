@@ -282,3 +282,114 @@ func TestFeedState_DisconnectClearsSubscription(t *testing.T) {
 		t.Fatalf("disconnect must clear subscription+message state, got %+v", st)
 	}
 }
+
+func TestBinanceSubscribeKline_MockWS(t *testing.T) {
+	var connNum int
+	var mu sync.Mutex
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
+
+		mu.Lock()
+		connNum++
+		n := connNum
+		mu.Unlock()
+
+		if n == 1 {
+			_ = conn.Write(r.Context(), websocket.MessageText, []byte(`not-json`))
+			_ = conn.Write(r.Context(), websocket.MessageText, []byte(`{"e":"aggTrade"}`))
+			_ = conn.Write(r.Context(), websocket.MessageText, []byte(`{"e":"kline","k":{"t":1704067200000,"o":"65000","h":"65100","l":"64900","c":"65050","v":"12.5","q":"812500","x":false}}`))
+			_ = conn.Close(websocket.StatusNormalClosure, "reconnect")
+			return
+		}
+		_ = conn.Write(r.Context(), websocket.MessageText, []byte(`{"e":"kline","k":{"t":1704067200000,"o":"65000","h":"65200","l":"64900","c":"65180","v":"20.0","q":"1303600","x":true}}`))
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+
+	cleanup := SetBinanceTestHooks(nil, "ws"+strings.TrimPrefix(srv.URL, "http"))
+	defer cleanup()
+
+	if err := SubscribeKline(context.Background(), "", "5m", nil); err == nil {
+		t.Fatal("expected error for empty symbol")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	type klineEvt struct {
+		candle types.Candle
+		closed bool
+	}
+	ch := make(chan klineEvt, 4)
+	done := make(chan error, 1)
+	b := newBinance()
+	go func() {
+		done <- b.SubscribeKline(ctx, "BTC/USDT:USDT", "5m", func(c types.Candle, closed bool) {
+			ch <- klineEvt{candle: c, closed: closed}
+		})
+	}()
+
+	var got []klineEvt
+	deadline := time.After(4 * time.Second)
+	for len(got) < 2 {
+		select {
+		case evt := <-ch:
+			got = append(got, evt)
+		case <-deadline:
+			t.Fatalf("timed out waiting for 2 kline frames, got %d", len(got))
+		}
+	}
+	cancel()
+	<-done
+
+	if got[0].closed || got[0].candle.Timestamp != 1704067200 || got[0].candle.Close != 65050 {
+		t.Fatalf("unexpected open kline: %+v", got[0])
+	}
+	if !got[1].closed || got[1].candle.Close != 65180 || got[1].candle.QuoteVol != 1303600 {
+		t.Fatalf("unexpected closed kline: %+v", got[1])
+	}
+}
+
+func TestBinanceSubscribeTickers_MockWS(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
+		_ = conn.Write(r.Context(), websocket.MessageText, []byte(`{"s":"BTCUSDT","c":"65432.1","q":"987654","P":"1.75"}`))
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+
+	cleanup := SetBinanceTestHooks(nil, "ws"+strings.TrimPrefix(srv.URL, "http"))
+	defer cleanup()
+
+	b := newBinance()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	tickerCh := make(chan types.Ticker, 4)
+	done := make(chan error, 1)
+	go func() {
+		done <- b.SubscribeTickers(ctx, []string{"BTC/USDT:USDT"}, tickerCh)
+	}()
+
+	select {
+	case tk := <-tickerCh:
+		if tk.Symbol != "BTC/USDT:USDT" || tk.LastPrice == nil || *tk.LastPrice != 65432.1 {
+			t.Fatalf("unexpected ticker: %+v", tk)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for mock Binance ticker")
+	}
+	if !b.FeedStats().Subscribed {
+		t.Fatal("expected FeedStats.Subscribed == true")
+	}
+	cancel()
+	<-done
+}

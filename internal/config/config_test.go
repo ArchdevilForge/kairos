@@ -15,13 +15,13 @@ func TestLoadString_Defaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadString empty: %v", err)
 	}
-	if cfg.Exchange != "okx" {
-		t.Fatalf("exchange: got %q want okx", cfg.Exchange)
+	if cfg.Exchange != "binance" {
+		t.Fatalf("exchange: got %q want binance", cfg.Exchange)
 	}
 	if cfg.DataManager.TopSymbols != 30 {
 		t.Fatalf("topSymbols: got %d want 30", cfg.DataManager.TopSymbols)
 	}
-	if cfg.Exchanges.Primary != "okx" {
+	if cfg.Exchanges.Primary != "binance" {
 		t.Fatalf("primary: got %q", cfg.Exchanges.Primary)
 	}
 }

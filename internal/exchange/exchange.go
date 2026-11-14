@@ -27,6 +27,11 @@ type FundingEnricher interface {
 	EnrichFunding(ctx context.Context, tickers map[string]*types.Ticker, symbols []string)
 }
 
+// KlineSubscriber is implemented by exchanges that stream real-time candlesticks.
+type KlineSubscriber interface {
+	SubscribeKline(ctx context.Context, symbol, tf string, onKline func(candle types.Candle, closed bool)) error
+}
+
 // Endpoints carries per-exchange WebSocket endpoint overrides from config
 // (config: exchanges.wsEndpoints). An empty field keeps the adapter default, so
 // exchanges can migrate endpoints without a code change.
