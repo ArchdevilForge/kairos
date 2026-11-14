@@ -18,29 +18,6 @@ type ResonanceEvent struct {
 	Timestamp      float64                       `json:"timestamp" yaml:"timestamp"`
 }
 
-// ToAlertEvent converts the ResonanceEvent to a standard AnomalyEvent.
-func (r *ResonanceEvent) ToAlertEvent() types.AnomalyEvent {
-	dimKeys := make([]string, 0, len(r.Dimensions))
-	for k := range r.Dimensions {
-		dimKeys = append(dimKeys, k)
-	}
-	data := map[string]any{
-		"signal_score":    r.SignalScore,
-		"dimension_count": r.DimensionCount,
-		"dimensions":      dimKeys,
-	}
-	for dim, ev := range r.Dimensions {
-		data[dim+"_data"] = ev.Data
-	}
-	return types.AnomalyEvent{
-		Symbol:    r.Symbol,
-		EventType: "resonance",
-		Severity:  types.SeverityHigh,
-		Data:      data,
-		Timestamp: r.Timestamp,
-	}
-}
-
 // ResonanceScorer aggregates AnomalyEvents from multiple detectors.
 // When multiple dimensions fire for the same symbol within a window,
 // it computes a Signal Quality Score (0-100) and emits a ResonanceEvent.
@@ -66,7 +43,6 @@ type ResonanceScorer struct {
 	mu           sync.RWMutex
 	windows      map[string]map[string]types.AnomalyEvent // symbol -> event_type -> event
 	lastEmission map[string]float64                       // symbol -> timestamp
-	callbacks    []func(ResonanceEvent)
 	logger       *slog.Logger
 	events       chan ResonanceEvent
 }
@@ -126,11 +102,6 @@ func (rs *ResonanceScorer) OnEvent(event types.AnomalyEvent) {
 	rs.evaluate(symbol, now)
 }
 
-// SetCallback registers a callback for ResonanceEvents.
-func (rs *ResonanceScorer) SetCallback(cb func(ResonanceEvent)) {
-	rs.callbacks = append(rs.callbacks, cb)
-}
-
 // Events returns the read-only resonance event channel.
 func (rs *ResonanceScorer) Events() <-chan ResonanceEvent {
 	return rs.events
@@ -186,45 +157,6 @@ func (rs *ResonanceScorer) evaluate(symbol string, now float64) {
 	case rs.events <- rEvent:
 	default:
 		rs.logger.Warn("resonance event channel full, dropping event")
-	}
-
-	// Callback delivery.
-	for _, cb := range rs.callbacks {
-		func(cb func(ResonanceEvent), ev ResonanceEvent) {
-			defer func() {
-				if r := recover(); r != nil {
-					rs.logger.Error("resonance callback panic", "recover", r)
-				}
-			}()
-			cb(ev)
-		}(cb, rEvent)
-	}
-}
-
-// Reset clears all windows and emission history.
-func (rs *ResonanceScorer) Reset() {
-	rs.mu.Lock()
-	defer rs.mu.Unlock()
-	clear(rs.windows)
-	clear(rs.lastEmission)
-}
-
-// UpdateConfig hot-reloads configuration at runtime.
-func (rs *ResonanceScorer) UpdateConfig(cfg types.ResonanceScorerConfig) {
-	rs.mu.Lock()
-	defer rs.mu.Unlock()
-	rs.enabled = cfg.Enabled
-	if cfg.WindowSeconds > 0 {
-		rs.windowSeconds = float64(cfg.WindowSeconds)
-	}
-	if cfg.MinDimensions > 0 {
-		rs.minDimensions = cfg.MinDimensions
-	}
-	if cfg.MinScore > 0 {
-		rs.minScore = cfg.MinScore
-	}
-	if cfg.CooldownSeconds > 0 {
-		rs.cooldownSeconds = float64(cfg.CooldownSeconds)
 	}
 }
 

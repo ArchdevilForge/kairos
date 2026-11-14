@@ -3,6 +3,7 @@ package opportunity
 import (
 	"github.com/ArchdevilForge/kairos/internal/ranker"
 	"github.com/ArchdevilForge/kairos/internal/types"
+	"github.com/ArchdevilForge/kairos/internal/utils"
 )
 
 // RankInputsFromPulse builds *soft* ranker inputs from pulse payload only.
@@ -14,8 +15,8 @@ func RankInputsFromPulse(evt types.AnomalyEvent) []ranker.Input {
 	if evt.Data == nil {
 		return nil
 	}
-	median := asFloat(evt.Data["median_return_60s_pct"])
-	btc := asFloat(evt.Data["btc_return_pct"])
+	median := utils.AsFloat(evt.Data["median_return_60s_pct"])
+	btc := utils.AsFloat(evt.Data["btc_return_pct"])
 	btcSet := evt.Data["btc_return_pct"] != nil
 
 	seen := map[string]ranker.Input{}
@@ -93,25 +94,10 @@ func moveFromAny(v any) (types.SymbolMove, bool) {
 	}
 	return types.SymbolMove{
 		Symbol:      sym,
-		ReturnPct:   asFloat(m["return_pct"]),
-		RelativePct: asFloat(m["relative_pct"]),
-		ZScore:      asFloat(m["z_score"]),
+		ReturnPct:   utils.AsFloat(m["return_pct"]),
+		RelativePct: utils.AsFloat(m["relative_pct"]),
+		ZScore:      utils.AsFloat(m["z_score"]),
 	}, true
-}
-
-func asFloat(v any) float64 {
-	switch x := v.(type) {
-	case float64:
-		return x
-	case float32:
-		return float64(x)
-	case int:
-		return float64(x)
-	case int64:
-		return float64(x)
-	default:
-		return 0
-	}
 }
 
 func asStringSlice(v any) []string {

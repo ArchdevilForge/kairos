@@ -67,10 +67,6 @@ func (m *refreshMockExchange) FetchTickers(context.Context) (map[string]*types.T
 	return out, nil
 }
 
-func (m *refreshMockExchange) FetchTicker(context.Context, string) (*types.Ticker, error) {
-	return nil, nil
-}
-
 func (m *refreshMockExchange) FetchOHLCV(context.Context, string, string, int, int64) ([]types.Candle, error) {
 	return nil, nil
 }

@@ -23,16 +23,6 @@ func TestRollingZScore_KnownWindow(t *testing.T) {
 	}
 }
 
-func TestRollingZScore_Reset(t *testing.T) {
-	z := NewRollingZScore(3)
-	z.Add(1)
-	z.Add(2)
-	z.Reset()
-	if got := z.Add(5); got != 0 {
-		t.Fatalf("after reset first z-score should be 0, got %v", got)
-	}
-}
-
 func TestNormalizeSymbol(t *testing.T) {
 	cases := []struct {
 		in, want string

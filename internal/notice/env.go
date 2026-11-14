@@ -8,6 +8,7 @@ import (
 
 	"github.com/ArchdevilForge/kairos/internal/cycle"
 	"github.com/ArchdevilForge/kairos/internal/types"
+	"github.com/ArchdevilForge/kairos/internal/utils"
 )
 
 // IsSupportedTriggerEvent reports whether an AnomalyEvent type drives Phase 3c Notices (§3 B2).
@@ -232,31 +233,7 @@ func bestPriceFromMap(m map[string]any) float64 {
 }
 
 func numFromMap(m map[string]any, key string) float64 {
-	if m == nil {
-		return 0
-	}
-	v, ok := m[key]
-	if !ok || v == nil {
-		return 0
-	}
-	switch n := v.(type) {
-	case float64:
-		return n
-	case float32:
-		return float64(n)
-	case int:
-		return float64(n)
-	case int64:
-		return float64(n)
-	case int32:
-		return float64(n)
-	case uint:
-		return float64(n)
-	case uint64:
-		return float64(n)
-	default:
-		return 0
-	}
+	return utils.FloatFromMap(m, key)
 }
 
 func stringSliceFromMap(m map[string]any, key string) []string {

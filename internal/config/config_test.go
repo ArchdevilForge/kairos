@@ -21,9 +21,6 @@ func TestLoadString_Defaults(t *testing.T) {
 	if cfg.DataManager.TopSymbols != 30 {
 		t.Fatalf("topSymbols: got %d want 30", cfg.DataManager.TopSymbols)
 	}
-	if cfg.Scanner.UniverseSize != 30 {
-		t.Fatalf("universeSize: got %d want 30", cfg.Scanner.UniverseSize)
-	}
 	if cfg.Exchanges.Primary != "okx" {
 		t.Fatalf("primary: got %q", cfg.Exchanges.Primary)
 	}
@@ -34,8 +31,6 @@ func TestLoadString_Override(t *testing.T) {
 exchange: binance
 dataManager:
   topSymbols: 200
-scanner:
-  universeSize: 12
 `
 	cfg, err := LoadString(yaml)
 	if err != nil {
@@ -46,9 +41,6 @@ scanner:
 	}
 	if cfg.DataManager.TopSymbols != 200 {
 		t.Fatalf("topSymbols: got %d", cfg.DataManager.TopSymbols)
-	}
-	if cfg.Scanner.UniverseSize != 12 {
-		t.Fatalf("universeSize: got %d", cfg.Scanner.UniverseSize)
 	}
 	// Legacy alias must propagate to both authorities.
 	if cfg.Exchanges.Primary != "binance" {
@@ -140,16 +132,6 @@ func TestValidate_RejectsBrokenConfigs(t *testing.T) {
 			want: "not a supported exchange",
 		},
 		{
-			name: "missing core timeframe",
-			yaml: "scanner:\n  timeframes: [\"1d\", \"4h\"]\n",
-			want: "scanner.timeframes must include",
-		},
-		{
-			name: "negative deep analysis limit",
-			yaml: "scanner:\n  deepAnalysisLimit: -1\n",
-			want: "deepAnalysisLimit",
-		},
-		{
 			name: "bad severity",
 			yaml: "alertPolicy:\n  enabled: true\n  minSeverity: CRITICAL\n",
 			want: "minSeverity",
@@ -230,11 +212,11 @@ func TestLoadString_OKXWSEndpointOverride(t *testing.T) {
 }
 
 func TestValidate_AggregatesAllProblems(t *testing.T) {
-	_, err := LoadString("exchange: kraken\nscanner:\n  universeSize: -1\n  timeframes: [\"1d\"]\n")
+	_, err := LoadString("exchange: kraken\ndataManager:\n  topSymbols: -1\n  dedupWindowSeconds: -1\n")
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	for _, want := range []string{"kraken", "universeSize", "timeframes"} {
+	for _, want := range []string{"kraken", "topSymbols", "dedupWindowSeconds"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("aggregated error missing %q: %v", want, err)
 		}
@@ -345,12 +327,6 @@ func TestLoad_ExampleConfigAlignsWithTypes(t *testing.T) {
 	cfg, err := Load(filepath.Join("..", "..", "config", "config.yaml.example"))
 	if err != nil {
 		t.Fatal(err)
-	}
-	if cfg.Scoring.CandidateWeights["rsihotness"] != 1.0 {
-		t.Fatalf("rsiHotness: %v", cfg.Scoring.CandidateWeights)
-	}
-	if cfg.Scoring.CandidateWeights["btcrelativestrength"] != 1.5 {
-		t.Fatalf("btcRelativeStrength: %v", cfg.Scoring.CandidateWeights)
 	}
 	if cfg.LongShortRatio.Enabled || cfg.Liquidation.Enabled || cfg.ResonanceScorer.Enabled {
 		t.Fatalf("detector sections: ls=%v liq=%v res=%v",

@@ -19,29 +19,6 @@ const (
 	ExitReasonImpulseEarly    ExitReason = "IMPULSE_EARLY"
 )
 
-var validExitReasons = []ExitReason{
-	ExitReasonProtectiveStop,
-	ExitReasonFakeoutAbort,
-	ExitReasonStructuralTrail,
-	ExitReasonTargetPartial,
-	ExitReasonImpulseEarly,
-}
-
-// ValidExitReasons returns all canonical exit reasons in single-key menu order.
-func ValidExitReasons() []ExitReason {
-	return append([]ExitReason(nil), validExitReasons...)
-}
-
-// IsValidExitReason reports whether r is a canonical ExitReason.
-func IsValidExitReason(r ExitReason) bool {
-	for _, v := range validExitReasons {
-		if r == v {
-			return true
-		}
-	}
-	return false
-}
-
 // ParseExitReasonKey parses a single-key shortcut ("1".."5" or "p"/"f"/"s"/"t"/"i")
 // or full enum name into a canonical ExitReason.
 func ParseExitReasonKey(input string) (ExitReason, bool) {

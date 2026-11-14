@@ -4,17 +4,82 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ArchdevilForge/kairos/internal/types"
 )
 
+const (
+	wsInitialBackoff = time.Second
+	wsMaxBackoff     = 30 * time.Second
+)
+
 func newHTTPClient() *http.Client {
 	return &http.Client{Timeout: 15 * time.Second}
+}
+
+func doHTTPGet(ctx context.Context, cli *http.Client, url string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := cli.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read: %w", err)
+	}
+	return body, nil
+}
+
+type wsLifecycle struct {
+	mu     sync.Mutex
+	cancel context.CancelFunc
+	closed bool
+}
+
+func (w *wsLifecycle) begin(ctx context.Context, name string) (context.Context, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.closed {
+		return nil, fmt.Errorf("%s: exchange closed", name)
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	w.cancel = cancel
+	return ctx, nil
+}
+
+func (w *wsLifecycle) close() error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.closed {
+		return nil
+	}
+	w.closed = true
+	if w.cancel != nil {
+		w.cancel()
+	}
+	return nil
+}
+
+func nextWSBackoff(cur time.Duration) time.Duration {
+	if cur <= 0 {
+		return wsInitialBackoff
+	}
+	next := cur * 2
+	if next > wsMaxBackoff {
+		return wsMaxBackoff
+	}
+	return next
 }
 
 func parseFloat(s string) float64 {

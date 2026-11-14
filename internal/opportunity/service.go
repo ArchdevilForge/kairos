@@ -243,18 +243,9 @@ func (s *Service) HandlePulseEvent(evt types.AnomalyEvent) (*types.OpportunitySe
 	return &sess, nil
 }
 
-// Evaluate runs the full Gate path and persists session + tickets.
-// Fails if a session for EventID already exists — use EvaluateOrAttach after pulse.
-func (s *Service) Evaluate(req EvaluateRequest) (EvaluateResult, error) {
-	return s.evaluate(req, false)
-}
-
-// EvaluateOrAttach is Evaluate, but if the pulse session already exists it attaches tickets to it.
+// EvaluateOrAttach runs the full Gate path and persists session + tickets;
+// if the pulse session already exists it attaches tickets to it.
 func (s *Service) EvaluateOrAttach(req EvaluateRequest) (EvaluateResult, error) {
-	return s.evaluate(req, true)
-}
-
-func (s *Service) evaluate(req EvaluateRequest, attachExisting bool) (EvaluateResult, error) {
 	var res EvaluateResult
 	if s == nil || !s.cfg.Enabled {
 		return res, nil
@@ -271,10 +262,6 @@ func (s *Service) evaluate(req EvaluateRequest, attachExisting bool) (EvaluateRe
 	var sess types.OpportunitySession
 	s.mu.Lock()
 	if sid, ok := s.openEventIDs[eventID]; ok {
-		if !attachExisting {
-			s.mu.Unlock()
-			return res, fmt.Errorf("session already exists for event %s (%s)", eventID, sid)
-		}
 		sess = types.OpportunitySession{
 			SchemaVersion:  types.OpportunitySessionSchemaVersion,
 			ID:             sid,

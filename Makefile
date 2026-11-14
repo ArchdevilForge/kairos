@@ -1,7 +1,7 @@
 .PHONY: build vet test test-race lint fmt-check mod-check vuln check check-python check-all cover cover-check cross-check
 
-# 仍留在本仓的 Python: launch 采集 + research 判定。其它已回到独立仓。
-PYTHON_PROJECTS := floors/launch tools/research
+# 仍留在本仓的 Python: tools/research 研究查询与评测层。其它已回到独立仓。
+PYTHON_PROJECTS := tools/research
 
 # Platforms the release workflow ships. Keep in sync with the matrix in
 # .github/workflows/release.yml.
@@ -28,7 +28,7 @@ lint:
 	$(GOLANGCI_LINT) run ./...
 
 fmt-check:
-	@files=$$(gofmt -l cmd internal tests); \
+	@files=$$(gofmt -l cmd internal); \
 	if [ -n "$$files" ]; then \
 		echo "gofmt needed on:"; echo "$$files"; exit 1; \
 	fi

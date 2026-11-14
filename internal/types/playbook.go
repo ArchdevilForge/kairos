@@ -6,8 +6,6 @@ const PlaybookMatchSchemaVersion = "playbook_match.v1"
 // Playbook IDs (stage-1 only leader_pullback_v1 is enabled).
 const (
 	PlaybookLeaderPullbackV1 = "leader_pullback_v1"
-	PlaybookBoxBreakoutV1    = "box_breakout_v1"
-	PlaybookSecondWaveV1     = "second_wave_v1"
 )
 
 // TicketGrade is the discrete quality label (not a calibrated probability).

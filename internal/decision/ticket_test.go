@@ -78,11 +78,11 @@ func TestBuildTicket_AlignedAllowsAddOn(t *testing.T) {
 }
 
 func TestFormatTicket_ContainsGrade(t *testing.T) {
-	s := FormatTicket(types.DecisionTicket{
+	s := FormatTicketWithWarnings(types.DecisionTicket{
 		ID: "t", Symbol: "X", Direction: types.CycleDirectionUp,
 		Grade: types.TicketGradeA, PlaybookID: "p", TradeClass: types.TradeClassAlignedLong,
 		RiskPlan: types.RiskPlan{TemplateID: types.RiskTemplateAlignedSummer},
-	})
+	}, nil)
 	if !strings.Contains(s, "grade=A") {
 		t.Fatalf("format=%s", s)
 	}
@@ -311,19 +311,6 @@ func TestPhase3b_SetupPointEnumAndTicketFormatting(t *testing.T) {
 	} {
 		if !strings.Contains(cliCard, want) {
 			t.Fatalf("FormatTicketWithWarnings missing %q in:\n%s", want, cliCard)
-		}
-	}
-
-	tgCard := FormatTicketTelegram(tk, warn)
-	for _, want := range []string{
-		"非入场指令，决定权在你。",
-		"<b>点位标签</b>: POINT_2_MINOR_DIV (点位2(主升小分歧回踩))",
-		"<b>结构止损</b>: 损 97.5000 (入 100.0000) | 1R=2.5000 (2.50%) | 依据: 15m HL swing low 97.50",
-		"<b>分仓计划</b>: 基数 $10000 | 杠杆上限 <=5.0x | 建议名义 $3000.00 (上限 $3750.00)",
-		"⚠ <b>行为提示</b>: WARN_TILT_REVERSE [上头反手]",
-	} {
-		if !strings.Contains(tgCard, want) {
-			t.Fatalf("FormatTicketTelegram missing %q in:\n%s", want, tgCard)
 		}
 	}
 }

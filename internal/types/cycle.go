@@ -100,7 +100,6 @@ type CycleAlignment string
 
 const (
 	AlignmentFull         CycleAlignment = "full_alignment"
-	AlignmentPullback     CycleAlignment = "trend_pullback"
 	AlignmentCounterTrend CycleAlignment = "counter_trend"
 	AlignmentMixed        CycleAlignment = "mixed"
 	AlignmentNoTrade      CycleAlignment = "no_trade"

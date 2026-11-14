@@ -8,7 +8,6 @@ require (
 	github.com/spf13/viper v1.21.0
 	go.yaml.in/yaml/v3 v3.0.4
 	golang.org/x/sync v0.16.0
-	gonum.org/v1/gonum v0.17.0
 )
 
 require (

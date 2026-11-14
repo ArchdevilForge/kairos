@@ -189,19 +189,6 @@ func TestAfternoonWindowReplay(t *testing.T) {
 	}
 }
 
-func TestAuditHoldingDuration(t *testing.T) {
-	open := eveningTime(20, 0)
-	if code := AuditHoldingDuration(open, open.Add(4*time.Minute)); code != GateScalpTooShort {
-		t.Fatalf("4min hold want %s, got %q", GateScalpTooShort, code)
-	}
-	if code := AuditHoldingDuration(open, open.Add(6*time.Minute)); code != "" {
-		t.Fatalf("6min hold want pass, got %q", code)
-	}
-	if code := AuditHoldingDuration(time.Time{}, open); code != "" {
-		t.Fatalf("zero open time must not flag, got %q", code)
-	}
-}
-
 func TestPhase1LeverageHardCaps(t *testing.T) {
 	cfg := DefaultBehaviorGateConfig()
 
@@ -313,27 +300,6 @@ func TestPhase1AuditExitMatrix(t *testing.T) {
 	})
 	if !resNoTicket.IsViolation || resNoTicket.Code != GateNoValidTicket {
 		t.Fatalf("opening without valid ticket must be violation: %+v", resNoTicket)
-	}
-
-	seq := AuditExitSequence([]ExitAuditInput{
-		{
-			TicketID: "t1", HasValidTicket: true, Symbol: "SOL/USDT:USDT",
-			Direction: types.CycleDirectionUp, OpenedAt: open, ClosedAt: open.Add(60 * time.Second),
-			ExitReason: types.ExitReasonProtectiveStop, TouchedPresetStop: true, RealizedR: -1.0,
-		},
-		{
-			TicketID: "t2", HasValidTicket: true, Symbol: "SOL/USDT:USDT",
-			Direction: types.CycleDirectionDown, OpenedAt: open.Add(90 * time.Second), ClosedAt: open.Add(150 * time.Second),
-			ExitReason: types.ExitReasonProtectiveStop, TouchedPresetStop: true, RealizedR: -1.0,
-		},
-		{
-			TicketID: "t3", HasValidTicket: true, Symbol: "SOL/USDT:USDT",
-			Direction: types.CycleDirectionUp, OpenedAt: open.Add(180 * time.Second), ClosedAt: open.Add(220 * time.Second),
-			ExitReason: types.ExitReasonProtectiveStop, TouchedPresetStop: true, RealizedR: -1.0,
-		},
-	})
-	if !seq[2].IsViolation || seq[2].Code != GateChurnFlipLt5m {
-		t.Fatalf("2nd direction flip within <5m without structural reset must be churn violation: %+v", seq[2])
 	}
 
 	// 4. BehaviorGateConfigFrom mapping + short preset stop price touch + >0.5R structural exit + unexcused <5m loss

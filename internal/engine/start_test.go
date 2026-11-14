@@ -22,9 +22,6 @@ func (m *startMockExchange) SubscribeTickers(ctx context.Context, _ []string, _ 
 func (m *startMockExchange) FetchTickers(context.Context) (map[string]*types.Ticker, error) {
 	return m.tickers, nil
 }
-func (m *startMockExchange) FetchTicker(context.Context, string) (*types.Ticker, error) {
-	return nil, nil
-}
 func (m *startMockExchange) FetchOHLCV(context.Context, string, string, int, int64) ([]types.Candle, error) {
 	return nil, nil
 }

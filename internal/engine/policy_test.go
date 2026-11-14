@@ -284,9 +284,6 @@ func (m *mockPipelineExchange) SubscribeTickers(context.Context, []string, chan<
 func (m *mockPipelineExchange) FetchTickers(context.Context) (map[string]*types.Ticker, error) {
 	return m.tickers, nil
 }
-func (m *mockPipelineExchange) FetchTicker(context.Context, string) (*types.Ticker, error) {
-	return nil, nil
-}
 func (m *mockPipelineExchange) FetchOHLCV(context.Context, string, string, int, int64) ([]types.Candle, error) {
 	return nil, nil
 }

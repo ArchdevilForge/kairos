@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"math"
 	"net/http"
 	"strings"
 	"sync"
@@ -34,10 +32,9 @@ type okxExchange struct {
 	httpCli    *http.Client
 	wsEndpoint string
 	feed       feedState
-	mu         sync.Mutex
-	cancel     context.CancelFunc
-	closed     bool
+	ws         wsLifecycle
 
+	mu          sync.Mutex
 	cryptoIDs   map[string]struct{} // instId set, e.g. BTC-USDT-SWAP
 	cryptoIDsAt time.Time
 }
@@ -68,17 +65,12 @@ func (o *okxExchange) Name() string { return o.name }
 func (o *okxExchange) FeedStats() FeedStats { return o.feed.stats() }
 
 func (o *okxExchange) SubscribeTickers(ctx context.Context, symbols []string, tickerCh chan<- types.Ticker) error {
-	o.mu.Lock()
-	if o.closed {
-		o.mu.Unlock()
-		return fmt.Errorf("okx: exchange closed")
+	ctx, err := o.ws.begin(ctx, o.name)
+	if err != nil {
+		return err
 	}
-	ctx, cancel := context.WithCancel(ctx)
-	o.cancel = cancel
-	o.mu.Unlock()
 
-	backoff := 1 * time.Second
-	maxBackoff := 30 * time.Second
+	backoff := wsInitialBackoff
 
 	// Build subscription args once — symbol conversion is stable.
 	type subArg struct {
@@ -103,10 +95,10 @@ func (o *okxExchange) SubscribeTickers(ctx context.Context, symbols []string, ti
 			if err := ctxSleep(ctx, backoff); err != nil {
 				return err
 			}
-			backoff = time.Duration(math.Min(float64(backoff*2), float64(maxBackoff)))
+			backoff = nextWSBackoff(backoff)
 			continue
 		}
-		backoff = 1 * time.Second // reset on successful connect
+		backoff = wsInitialBackoff // reset on successful connect
 		flog.Info("ws connected", "endpoint", o.wsEndpoint, "symbols", len(args))
 
 		// Subscribe
@@ -138,20 +130,9 @@ func (o *okxExchange) SubscribeTickers(ctx context.Context, symbols []string, ti
 
 func (o *okxExchange) FetchTickers(ctx context.Context) (map[string]*types.Ticker, error) {
 	url := okxRESTEndpoint + "/api/v5/market/tickers?instType=SWAP"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	body, err := doHTTPGet(ctx, o.httpCli, url)
 	if err != nil {
 		return nil, fmt.Errorf("okx fetch tickers: %w", err)
-	}
-
-	resp, err := o.httpCli.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("okx fetch tickers: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("okx fetch tickers: read: %w", err)
 	}
 
 	var okxResp struct {
@@ -231,7 +212,7 @@ func (o *okxExchange) cryptoUSDTSwapIDs(ctx context.Context) map[string]struct{}
 }
 
 func fetchOKXCryptoUSDTSwapIDs(ctx context.Context, cli *http.Client) (map[string]struct{}, error) {
-	body, err := okxGET(ctx, cli, okxRESTEndpoint+"/api/v5/public/instruments?instType=SWAP")
+	body, err := doHTTPGet(ctx, cli, okxRESTEndpoint+"/api/v5/public/instruments?instType=SWAP")
 	if err != nil {
 		return nil, err
 	}
@@ -274,56 +255,6 @@ func okxIsCryptoUSDTSwap(instID string, cryptoIDs map[string]struct{}) bool {
 	return ok
 }
 
-func (o *okxExchange) FetchTicker(ctx context.Context, symbol string) (*types.Ticker, error) {
-	instID := normalizeSymbol(symbol)
-	url := fmt.Sprintf("%s/api/v5/market/ticker?instId=%s", okxRESTEndpoint, instID)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("okx fetch ticker: %w", err)
-	}
-	resp, err := o.httpCli.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("okx fetch ticker: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("okx fetch ticker: read: %w", err)
-	}
-	var okxResp struct {
-		Code string `json:"code"`
-		Data []struct {
-			InstID   string `json:"instId"`
-			Last     string `json:"last"`
-			VolCcy24 string `json:"volCcy24h"`
-			Open24h  string `json:"open24h"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(body, &okxResp); err != nil {
-		return nil, fmt.Errorf("okx fetch ticker: decode: %w", err)
-	}
-	if okxResp.Code != "0" || len(okxResp.Data) == 0 {
-		return nil, fmt.Errorf("okx fetch ticker: empty")
-	}
-	item := okxResp.Data[0]
-	sym := denormalizeSymbol(item.InstID)
-	t := &types.Ticker{Symbol: sym, Info: map[string]any{}}
-	if v := parseFloat(item.Last); v > 0 {
-		t.LastPrice = &v
-	}
-	if v := okxUSDTQuoteVolume(parseFloat(item.VolCcy24), parseFloat(item.Last)); v > 0 {
-		t.QuoteVolume = &v
-	}
-	if o, l := parseFloat(item.Open24h), parseFloat(item.Last); o > 0 && l > 0 {
-		pct := (l - o) / o * 100
-		t.ChangePct = &pct
-	}
-	one := map[string]*types.Ticker{sym: t}
-	enrichOKXOpenInterest(ctx, o.httpCli, one)
-	enrichOKXFunding(ctx, o.httpCli, one, []string{sym})
-	return t, nil
-}
-
 func (o *okxExchange) FetchOHLCV(ctx context.Context, symbol, timeframe string, limit int, beforeMs int64) ([]types.Candle, error) {
 	instID := normalizeSymbol(symbol)
 	bar := mapTimeframe(timeframe)
@@ -343,20 +274,9 @@ func (o *okxExchange) FetchOHLCV(ctx context.Context, symbol, timeframe string, 
 		url += fmt.Sprintf("&after=%d", beforeMs)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	body, err := doHTTPGet(ctx, o.httpCli, url)
 	if err != nil {
 		return nil, fmt.Errorf("okx fetch ohlcv: %w", err)
-	}
-
-	resp, err := o.httpCli.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("okx fetch ohlcv: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("okx fetch ohlcv: read: %w", err)
 	}
 
 	var okxResp struct {
@@ -376,16 +296,7 @@ func (o *okxExchange) FetchOHLCV(ctx context.Context, symbol, timeframe string, 
 }
 
 func (o *okxExchange) Close() error {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	if o.closed {
-		return nil
-	}
-	o.closed = true
-	if o.cancel != nil {
-		o.cancel()
-	}
-	return nil
+	return o.ws.close()
 }
 
 // ---------------------------------------------------------------------------
@@ -519,7 +430,7 @@ func (o *okxExchange) EnrichFunding(ctx context.Context, tickers map[string]*typ
 }
 
 func enrichOKXOpenInterest(ctx context.Context, cli *http.Client, tickers map[string]*types.Ticker) {
-	body, err := okxGET(ctx, cli, okxRESTEndpoint+"/api/v5/public/open-interest?instType=SWAP")
+	body, err := doHTTPGet(ctx, cli, okxRESTEndpoint+"/api/v5/public/open-interest?instType=SWAP")
 	if err != nil {
 		return
 	}
@@ -563,7 +474,7 @@ func enrichOKXFunding(ctx context.Context, cli *http.Client, tickers map[string]
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			instID := normalizeSymbol(sym)
-			fBody, err := okxGET(ctx, cli, okxRESTEndpoint+"/api/v5/public/funding-rate?instId="+instID)
+			fBody, err := doHTTPGet(ctx, cli, okxRESTEndpoint+"/api/v5/public/funding-rate?instId="+instID)
 			if err != nil {
 				return
 			}
@@ -590,17 +501,4 @@ func okxUSDTQuoteVolume(volCcy24, last float64) float64 {
 		return 0
 	}
 	return volCcy24 * last
-}
-
-func okxGET(ctx context.Context, cli *http.Client, url string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := cli.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	return io.ReadAll(resp.Body)
 }

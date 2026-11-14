@@ -5,6 +5,59 @@ import (
 	"strconv"
 )
 
+// AsFloat converts numeric values and json.Number to float64, returning 0 for
+// strings, booleans, nil, and unsupported types.
+func AsFloat(v any) float64 {
+	f, _ := numericFloat(v)
+	return f
+}
+
+// FloatFromMap returns the numeric value at key in m as float64, or 0 when m
+// is nil, key is absent, or the value is non-numeric (including strings).
+func FloatFromMap(m map[string]any, key string) float64 {
+	if m == nil {
+		return 0
+	}
+	return AsFloat(m[key])
+}
+
+func numericFloat(v any) (float64, bool) {
+	switch val := v.(type) {
+	case float64:
+		return val, true
+	case float32:
+		return float64(val), true
+	case int:
+		return float64(val), true
+	case int64:
+		return float64(val), true
+	case int32:
+		return float64(val), true
+	case int16:
+		return float64(val), true
+	case int8:
+		return float64(val), true
+	case uint:
+		return float64(val), true
+	case uint64:
+		return float64(val), true
+	case uint32:
+		return float64(val), true
+	case uint16:
+		return float64(val), true
+	case uint8:
+		return float64(val), true
+	case json.Number:
+		f, err := val.Float64()
+		if err != nil {
+			return 0, false
+		}
+		return f, true
+	default:
+		return 0, false
+	}
+}
+
 // FirstFloat returns the value of the first key in keys that can be parsed as
 // a float64, or nil if none match.
 func FirstFloat(m map[string]any, keys []string) *float64 {
@@ -13,25 +66,10 @@ func FirstFloat(m map[string]any, keys []string) *float64 {
 		if !ok || v == nil || v == "" {
 			continue
 		}
-		switch val := v.(type) {
-		case float64:
-			return &val
-		case int:
-			f := float64(val)
+		if f, ok := numericFloat(v); ok {
 			return &f
-		case int64:
-			f := float64(val)
-			return &f
-		case json.Number:
-			f, err := val.Float64()
-			if err != nil {
-				continue
-			}
-			return &f
-		case string:
-			if val == "" {
-				continue
-			}
+		}
+		if val, ok := v.(string); ok {
 			f, err := strconv.ParseFloat(val, 64)
 			if err != nil {
 				continue

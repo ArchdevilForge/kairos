@@ -786,17 +786,6 @@ func TestWarmupExcludesNewSymbol(t *testing.T) {
 	}
 }
 
-func TestRestartFromQuiet(t *testing.T) {
-	d := NewMarketPulseDetector(testMPConfig())
-	d.mu.Lock()
-	d.state = types.MarketStateTrendingUp
-	d.mu.Unlock()
-	d.Reset()
-	if d.State() != types.MarketStateQuiet {
-		t.Fatal(d.State())
-	}
-}
-
 func TestSameSecondTickerUpdate(t *testing.T) {
 	d := NewMarketPulseDetector(testMPConfig())
 	clock := 130_000.2

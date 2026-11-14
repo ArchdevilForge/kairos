@@ -304,7 +304,7 @@ func (s *Service) buildSymbolCycle(ctx context.Context, fetch OHLCVFetcher, symb
 			closes[i], highs[i], lows[i], vols[i] = c.Close, c.High, c.Low, c.Volume
 		}
 		last := candles[len(candles)-1]
-		openTS := normCandleTS(last.Timestamp)
+		openTS := normTS(last.Timestamp)
 		closeTS := barCloseUnix(openTS, tf)
 		if closeTS > asOf {
 			asOf = closeTS
@@ -326,13 +326,6 @@ func (s *Service) buildSymbolCycle(ctx context.Context, fetch OHLCVFetcher, symb
 		return s.cycles.Map(symbol, asOf, legacy, series), nil
 	}
 	return cycle.MapStateless(symbol, asOf, legacy, series), nil
-}
-
-func normCandleTS(ts int64) int64 {
-	if ts > 1_000_000_000_000 {
-		return ts / 1000
-	}
-	return ts
 }
 
 // barCloseUnix assumes exchange timestamps are bar *open* times.

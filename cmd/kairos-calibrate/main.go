@@ -438,15 +438,6 @@ func alertExcludeWindows(events []eventRecord, outcomes []outcomeRecord) []exclu
 	return out
 }
 
-func inExclude(ts float64, wins []excludeWindow) bool {
-	for _, w := range wins {
-		if ts >= w.lo && ts <= w.hi {
-			return true
-		}
-	}
-	return false
-}
-
 // intervalOverlapsExclude is true when [start, end] shares any time with an
 // alert exclusion window. Baseline must drop samples whose whole +5m horizon
 // leaks into alert buildup/aftermath, not only those whose start is inside.

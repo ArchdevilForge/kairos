@@ -3,7 +3,6 @@ package decision
 
 import (
 	"fmt"
-	"html"
 	"math"
 	"strings"
 	"time"
@@ -250,12 +249,7 @@ func BuildTicket(in BuildInput) types.DecisionTicket {
 	}
 }
 
-// FormatTicket returns a compact human card (CLI/desk) including A2 stop+basis+1R and A3 tranche plan.
-func FormatTicket(t types.DecisionTicket) string {
-	return FormatTicketWithWarnings(t, nil)
-}
-
-// FormatTicketWithWarnings renders FormatTicket plus any journal-derived A1/A4 non-blocking warnings.
+// FormatTicketWithWarnings renders a compact human card (CLI/desk) including A2 stop+basis+1R, A3 tranche plan, and A1/A4 non-blocking warnings.
 func FormatTicketWithWarnings(t types.DecisionTicket, behaviorWarnings []string) string {
 	dir := string(t.Direction)
 	addOn := "no"
@@ -303,44 +297,6 @@ func FormatTicketWithWarnings(t types.DecisionTicket, behaviorWarnings []string)
 		fmt.Sprintf("invalidations: %v", t.Invalidations),
 	)
 	return strings.Join(lines, "\n")
-}
-
-// FormatTicketTelegram renders a Telegram HTML card for a DecisionTicket with A2 stop/basis/1R, A3 tranche, and A4 warnings.
-func FormatTicketTelegram(t types.DecisionTicket, behaviorWarnings []string) string {
-	basis := t.StopBasisText()
-	if basis == "" {
-		basis = "缺少结构依据"
-	}
-	trancheBase := t.RiskPlan.TrancheBaseUSD
-	if trancheBase <= 0 {
-		trancheBase = DefaultTrancheBaseUSD
-	}
-	maxLev := t.RiskPlan.MaxLeverage
-	if maxLev <= 0 {
-		maxLev = MaxAssetLeverage(t.Symbol, DefaultMajorLeverageCap, DefaultAltLeverageCap)
-	}
-	parts := []string{
-		fmt.Sprintf("<b>Kairos 决策票</b> <code>%s</code> | <b>%s</b> %s | grade=%s",
-			html.EscapeString(t.ID), html.EscapeString(t.Symbol), html.EscapeString(string(t.Direction)), html.EscapeString(string(t.Grade))),
-		"<i>非入场指令，决定权在你。</i>",
-	}
-	if norm := types.NormalizeSetupPoint(t.SetupPoint); norm != "" {
-		parts = append(parts, fmt.Sprintf("<b>点位标签</b>: %s (%s)",
-			html.EscapeString(string(norm)), html.EscapeString(types.SetupPointLabelZH(norm))))
-	}
-	parts = append(parts,
-		fmt.Sprintf("<b>结构止损</b>: 损 %.4f (入 %.4f) | 1R=%.4f (%.2f%%) | 依据: %s",
-			t.RiskPlan.StopPrice, t.RiskPlan.EntryPrice, t.OneRPriceDistance(), t.OneRPct(), html.EscapeString(basis)),
-		fmt.Sprintf("<b>分仓计划</b>: 基数 $%.0f | 杠杆上限 <=%.1fx | 建议名义 $%.2f (上限 $%.2f)",
-			trancheBase, maxLev, t.RiskPlan.SuggestedNotional, t.RiskPlan.MaxNotional),
-	)
-	if t.WinterDefenseHint != "" {
-		parts = append(parts, fmt.Sprintf("<b>冬季提示</b>: %s", html.EscapeString(t.WinterDefenseHint)))
-	}
-	for _, w := range behaviorWarnings {
-		parts = append(parts, fmt.Sprintf("⚠ <b>行为提示</b>: %s", html.EscapeString(w)))
-	}
-	return strings.Join(parts, "\n")
 }
 
 // RecordDecision attaches a human decision (pure data helper).

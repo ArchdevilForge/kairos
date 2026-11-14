@@ -1,9 +1,6 @@
 package cycle
 
 import (
-	"encoding/json"
-	"math"
-	"os"
 	"testing"
 
 	"github.com/ArchdevilForge/kairos/internal/types"
@@ -63,16 +60,16 @@ func TestClassifySeasonFromAggregates_RulesAndBoundaries(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := ClassifySeasonFromAggregates(tc.breadthFast, tc.breadthSlow, tc.volRatio)
+			got := ClassifySeasonWithThresholds(tc.breadthFast, tc.breadthSlow, tc.volRatio, DefaultSeasonThresholds())
 			if got != tc.want {
-				t.Fatalf("ClassifySeasonFromAggregates(%v, %v, %v) = %s, want %s",
+				t.Fatalf("ClassifySeasonWithThresholds(%v, %v, %v) = %s, want %s",
 					tc.breadthFast, tc.breadthSlow, tc.volRatio, got, tc.want)
 			}
 		})
 	}
 }
 
-func TestBuild5mBarsFrom1m_AndHysteresisTimeline(t *testing.T) {
+func TestHysteresisTimeline(t *testing.T) {
 	syms := []string{
 		"BTC/USDT:USDT",
 		"ETH/USDT:USDT",
@@ -86,47 +83,42 @@ func TestBuild5mBarsFrom1m_AndHysteresisTimeline(t *testing.T) {
 	fundingBySym := make(map[string]map[int64]float64, len(syms))
 
 	for sIdx, sym := range syms {
-		var b1m []SeasonBar1m
+		b5 := make([]SeasonBar5m, 0, 40)
 		px := 100.0 + float64(sIdx*10)
-		// 40 5m bars = 200 1m bars
 		for bar5 := 0; bar5 < 40; bar5++ {
-			for m := 0; m < 5; m++ {
-				ts := baseTS + int64(bar5*300+m*60)
-				open := px
-				// Bars 0..14: flat/down chop (WINTER)
-				// Bars 15..29: broad expansion with high volume (SUMMER)
-				// Bars 30..39: breadth/volume decay (AUTUMN/WINTER)
-				var step, qv float64
-				switch {
-				case bar5 < 15:
-					step = -0.02
-					qv = 50_000
-				case bar5 < 30:
+			open := px
+			var step, qv float64
+			switch {
+			case bar5 < 15:
+				step = -0.10
+				qv = 250_000
+			case bar5 < 30:
+				step = 1.25
+				qv = 750_000
+			default:
+				if sIdx < 3 {
 					step = 0.25
-					qv = 150_000
-				default:
-					if sIdx < 3 {
-						step = 0.05
-					} else {
-						step = -0.15
-					}
-					qv = 90_000
+				} else {
+					step = -0.75
 				}
-				closePx := open + step
-				b1m = append(b1m, SeasonBar1m{
-					TS:       ts,
-					Open:     open,
-					High:     math.Max(open, closePx) + 0.05,
-					Low:      math.Min(open, closePx) - 0.05,
-					Close:    closePx,
-					QuoteVol: qv,
-				})
-				px = closePx
+				qv = 450_000
 			}
-		}
-		b5 := Build5mBarsFrom1m(b1m)
-		if len(b5) != 40 {
-			t.Fatalf("%s: expected 40 5m bars, got %d", sym, len(b5))
+			closePx := open + step
+			hi := open + 0.05
+			lo := closePx - 0.05
+			if closePx > open {
+				hi = closePx + 0.05
+				lo = open - 0.05
+			}
+			b5 = append(b5, SeasonBar5m{
+				CloseTS:  baseTS + int64((bar5+1)*300),
+				Open:     open,
+				High:     hi,
+				Low:      lo,
+				Close:    closePx,
+				QuoteVol: qv,
+			})
+			px = closePx
 		}
 		bars5mBySym[sym] = b5
 		fundingBySym[sym] = map[int64]float64{
@@ -167,128 +159,17 @@ func TestBuild5mBarsFrom1m_AndHysteresisTimeline(t *testing.T) {
 	if !ok || latest.TS != summerTS || latest.SeasonRegime != types.SeasonRegimeSummer {
 		t.Fatalf("LatestSeasonObservationAtOrBefore = %+v (ok=%v), want TS=%d SUMMER", latest, ok, summerTS)
 	}
-
-	// CalibrateOOSSeasonRegime with >= 20 prior observations.
-	var prior []SeasonObservation
-	for bar5 := 3; bar5 < 25; bar5++ {
-		if o, exists := timeline[baseTS+int64(bar5+1)*300]; exists {
-			prior = append(prior, o)
-		}
-	}
-	oosRegime := CalibrateOOSSeasonRegime(obsSummer, prior)
-	if !types.IsValidSeasonRegime(oosRegime) {
-		t.Fatalf("invalid OOS regime: %s", oosRegime)
-	}
 }
 
-type consistencyDump struct {
-	Bars1mBySym  map[string][]SeasonBar1m     `json:"bars_1m_by_sym"`
-	FundingBySym map[string]map[int64]float64 `json:"funding_by_sym"`
-	PyTimeline   map[int64]SeasonObservation  `json:"py_timeline"`
-	PyTickets    []struct {
-		SignalID        string             `json:"signal_id"`
-		WaveClusterID   string             `json:"wave_cluster_id"`
-		Symbol          string             `json:"symbol"`
-		EntryTS         int64              `json:"entry_ts"`
-		FeatureTS       int64              `json:"feature_ts"`
-		SeasonRegime    types.SeasonRegime `json:"season_regime"`
-		SeasonRegimeOOS types.SeasonRegime `json:"season_regime_oos"`
-		BreadthFast     float64            `json:"breadth_fast"`
-		BreadthSlow     float64            `json:"breadth_slow"`
-		VolumeRatio     float64            `json:"volume_ratio"`
-	} `json:"py_tickets"`
-}
-
-func TestPhase2bConsistencyWithPython(t *testing.T) {
-	dumpPath := os.Getenv("KAIROS_PHASE2B_DUMP")
-	if dumpPath == "" {
-		dumpPath = "/tmp/phase2b_consistency_dump.json"
-	}
-	raw, err := os.ReadFile(dumpPath)
-	if err != nil {
-		t.Skipf("skipping live Phase 2b dump comparison (%s not present: %v)", dumpPath, err)
-	}
-
-	var dump consistencyDump
-	if err := json.Unmarshal(raw, &dump); err != nil {
-		t.Fatalf("unmarshal dump: %v", err)
-	}
-
-	bars5mBySym := make(map[string][]SeasonBar5m, len(dump.Bars1mBySym))
-	for sym, b1m := range dump.Bars1mBySym {
-		if len(b1m) == 0 {
-			continue
-		}
-		bars5mBySym[sym] = Build5mBarsFrom1m(b1m)
-	}
-
-	goTimeline := BuildCausalSeasonTimeline(bars5mBySym, dump.FundingBySym)
-	if len(goTimeline) != len(dump.PyTimeline) {
-		t.Fatalf("timeline len mismatch: Go=%d vs Python=%d", len(goTimeline), len(dump.PyTimeline))
-	}
-
-	timelineMatches := 0
-	var timelineMismatches []string
-	for ts, pyObs := range dump.PyTimeline {
-		goObs, ok := goTimeline[ts]
-		if !ok {
-			timelineMismatches = append(timelineMismatches, "missing ts")
-			continue
-		}
-		if goObs.SeasonRegime == pyObs.SeasonRegime &&
-			math.Abs(goObs.BreadthFast-pyObs.BreadthFast) < 1e-12 &&
-			math.Abs(goObs.BreadthSlow-pyObs.BreadthSlow) < 1e-12 &&
-			math.Abs(goObs.VolumeRatio-pyObs.VolumeRatio) < 1e-12 &&
-			goObs.BTCNearHigh == pyObs.BTCNearHigh &&
-			math.Abs(goObs.CrowdingPct-pyObs.CrowdingPct) < 1e-12 {
-			timelineMatches++
-		} else {
-			t.Errorf("mismatch at ts=%d: Go=%+v vs Py=%+v", ts, goObs, pyObs)
-			timelineMismatches = append(timelineMismatches, string(goObs.SeasonRegime))
-		}
-	}
-
-	ticketMatches := 0
-	for _, tk := range dump.PyTickets {
-		goObs, ok := goTimeline[tk.EntryTS]
-		if !ok {
-			t.Errorf("ticket %s missing timeline at entry_ts=%d", tk.SignalID, tk.EntryTS)
-			continue
-		}
-		if goObs.SeasonRegime == tk.SeasonRegime &&
-			math.Abs(goObs.BreadthFast-tk.BreadthFast) < 1e-12 &&
-			math.Abs(goObs.BreadthSlow-tk.BreadthSlow) < 1e-12 &&
-			math.Abs(goObs.VolumeRatio-tk.VolumeRatio) < 1e-12 {
-			ticketMatches++
-		} else {
-			t.Errorf("ticket %s mismatch at entry_ts=%d: Go=%s vs Py=%s",
-				tk.SignalID, tk.EntryTS, goObs.SeasonRegime, tk.SeasonRegime)
-		}
-	}
-
-	timelineRate := float64(timelineMatches) / float64(len(dump.PyTimeline)) * 100.0
-	ticketRate := float64(ticketMatches) / float64(len(dump.PyTickets)) * 100.0
-	t.Logf("Phase 2b consistency: timeline=%d/%d (%.4f%%), tickets=%d/%d (%.4f%%), mismatches=%d",
-		timelineMatches, len(dump.PyTimeline), timelineRate,
-		ticketMatches, len(dump.PyTickets), ticketRate, len(timelineMismatches))
-
-	if timelineRate < 99.9 || ticketRate < 99.9 {
-		t.Fatalf("consistency below 99.9%% bar: timeline=%.4f%% tickets=%.4f%%", timelineRate, ticketRate)
-	}
-}
-
-func TestSeasonBar5mFromCandle_MatchesBuild5mBarsFrom1mConvention(t *testing.T) {
+func TestSeasonBar5mFromCandle_CloseTSAndQuoteVol(t *testing.T) {
 	openTS := int64(1_762_646_400) // aligned 5m open timestamp
-	b1m := []SeasonBar1m{
-		{TS: openTS + 0, Open: 100.0, High: 101.0, Low: 99.5, Close: 100.4, QuoteVol: 10_000},
-		{TS: openTS + 60, Open: 100.4, High: 102.5, Low: 100.2, Close: 102.0, QuoteVol: 20_000},
-		{TS: openTS + 120, Open: 102.0, High: 102.2, Low: 99.0, Close: 99.8, QuoteVol: 30_000},
-		{TS: openTS + 180, Open: 99.8, High: 101.5, Low: 99.7, Close: 101.2, QuoteVol: 15_000},
-		{TS: openTS + 240, Open: 101.2, High: 101.8, Low: 100.9, Close: 101.5, QuoteVol: 25_000},
-	}
-	built := Build5mBarsFrom1m(b1m)
-	if len(built) != 1 {
-		t.Fatalf("expected 1 aggregated 5m bar, got %d", len(built))
+	want := SeasonBar5m{
+		CloseTS:  openTS + 300,
+		Open:     100.0,
+		High:     102.5,
+		Low:      99.0,
+		Close:    101.5,
+		QuoteVol: 100_000,
 	}
 
 	candleSec := types.Candle{
@@ -301,8 +182,8 @@ func TestSeasonBar5mFromCandle_MatchesBuild5mBarsFrom1mConvention(t *testing.T) 
 		QuoteVol:  100_000,
 	}
 	gotSec := SeasonBar5mFromCandle(candleSec)
-	if gotSec != built[0] {
-		t.Fatalf("SeasonBar5mFromCandle(sec) = %+v, want exact match with Build5mBarsFrom1m %+v", gotSec, built[0])
+	if gotSec != want {
+		t.Fatalf("SeasonBar5mFromCandle(sec) = %+v, want %+v", gotSec, want)
 	}
 	if gotSec.CloseTS != openTS+300 {
 		t.Fatalf("CloseTS = %d, want %d", gotSec.CloseTS, openTS+300)
@@ -311,8 +192,8 @@ func TestSeasonBar5mFromCandle_MatchesBuild5mBarsFrom1mConvention(t *testing.T) 
 	// Millisecond timestamp defensive normalization must yield identical CloseTS.
 	candleMs := candleSec
 	candleMs.Timestamp = openTS * 1000
-	if gotMs := SeasonBar5mFromCandle(candleMs); gotMs != built[0] {
-		t.Fatalf("SeasonBar5mFromCandle(ms) = %+v, want %+v", gotMs, built[0])
+	if gotMs := SeasonBar5mFromCandle(candleMs); gotMs != want {
+		t.Fatalf("SeasonBar5mFromCandle(ms) = %+v, want %+v", gotMs, want)
 	}
 }
 

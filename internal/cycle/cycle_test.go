@@ -1,7 +1,6 @@
 package cycle
 
 import (
-	"math"
 	"testing"
 
 	"github.com/ArchdevilForge/kairos/internal/types"
@@ -59,8 +58,21 @@ func TestMirrorSymmetry_DirectionAndPhase(t *testing.T) {
 	closes, highs, lows, vols := synthUp(80, 100, 0.8)
 	upNode := classifyRaw(Series{Timeframe: "1d", Role: types.TimeframeRoleContext, Closes: closes, Highs: highs, Lows: lows, Volumes: vols})
 
-	mCloses := mirrorCloses(closes)
-	mHighs, mLows := mirrorHL(highs, lows)
+	mCloses := make([]float64, len(closes))
+	baseC := closes[0]
+	for i, c := range closes {
+		mCloses[i] = baseC - (c - baseC)
+	}
+	baseHL := (highs[0] + lows[0]) / 2
+	mHighs := make([]float64, len(highs))
+	mLows := make([]float64, len(lows))
+	for i := range highs {
+		mHighs[i] = baseHL - (lows[i] - baseHL)
+		mLows[i] = baseHL - (highs[i] - baseHL)
+		if mHighs[i] < mLows[i] {
+			mHighs[i], mLows[i] = mLows[i], mHighs[i]
+		}
+	}
 	downNode := classifyRaw(Series{Timeframe: "1d", Role: types.TimeframeRoleContext, Closes: mCloses, Highs: mHighs, Lows: mLows, Volumes: vols})
 
 	if upNode.Direction != types.CycleDirectionUp {
@@ -222,14 +234,6 @@ func TestTransition_RequiresConfirm(t *testing.T) {
 	}
 	if out.Direction != types.CycleDirectionDown || out.Phase != types.WavePhaseSpring {
 		t.Fatalf("after confirm want down/spring got %s/%s", out.Direction, out.Phase)
-	}
-}
-
-func TestMirrorHelpers(t *testing.T) {
-	c := []float64{100, 110, 120}
-	m := mirrorCloses(c)
-	if math.Abs(m[0]-100) > 1e-9 || math.Abs(m[2]-80) > 1e-9 {
-		t.Fatalf("mirror closes %v", m)
 	}
 }
 

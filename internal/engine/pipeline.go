@@ -1764,14 +1764,6 @@ func (p *Pipeline) shouldGateIndividualAlert(evt types.AnomalyEvent) bool {
 	return p.marketPulseDet.State() == types.MarketStateQuiet
 }
 
-// MarketState returns the current MarketPulse state, or QUIET if disabled.
-func (p *Pipeline) MarketState() types.MarketState {
-	if p.marketPulseDet == nil {
-		return types.MarketStateQuiet
-	}
-	return p.marketPulseDet.State()
-}
-
 // marketPulseSnapshotLoop persists a lightweight cross-sectional sample about
 // once per minute for attention-lift baselines. The store throttles to 60s.
 func (p *Pipeline) marketPulseSnapshotLoop(ctx context.Context) {
@@ -1927,34 +1919,18 @@ func floatFromMap(m map[string]any, key string) (float64, bool) {
 		return 0, false
 	}
 	switch n := v.(type) {
-	case float64:
-		return n, true
-	case int:
-		return float64(n), true
-	case int64:
-		return float64(n), true
-	case uint64:
-		return float64(n), true
-	case uint:
-		return float64(n), true
-	case int32:
-		return float64(n), true
-	case uint32:
-		return float64(n), true
-	case float32:
-		return float64(n), true
-	case uint8:
-		return float64(n), true
-	case int8:
-		return float64(n), true
 	case bool:
 		if n {
 			return 1, true
 		}
 		return 0, true
-	default:
+	case string:
 		return 0, false
 	}
+	if f := utils.FirstFloat(m, []string{key}); f != nil {
+		return *f, true
+	}
+	return 0, false
 }
 
 // floatFromMapDefault extracts a float64 with a fallback default.

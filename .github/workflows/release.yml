@@ -118,8 +118,6 @@ jobs:
             for cmd in ${listed}; do
               case "${cmd}" in
                 kairosd)              echo "   ./kairosd --config ~/.config/kairos/config.yaml               # 实时大盘/单币告警守护进程" ;;
-                kairos-alert)         echo "   ./kairos-alert --config ~/.config/kairos/config.yaml --dry-run # 一次性扫描摘要（由 cron 调度）" ;;
-                kairos-backtest)      echo "   ./kairos-backtest --symbol BTC/USDT --start 2024-01-01 --end 2024-06-01" ;;
                 kairos-market-replay) echo "   ./kairos-market-replay --input ticks.jsonl                      # MarketPulse 算法回放" ;;
                 kairos-calibrate)     echo "   ./kairos-calibrate --config ~/.config/kairos/config.yaml        # 用实测结果校准告警阈值" ;;
                 *)                    echo "   ./${cmd}" ;;

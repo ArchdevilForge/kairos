@@ -69,16 +69,6 @@ func DefaultSeasonTimelineConfig() SeasonTimelineConfig {
 	}
 }
 
-// SeasonBar1m represents a 1-minute historical bar with quote volume (matching research MinuteBar).
-type SeasonBar1m struct {
-	TS       int64   `json:"ts"`
-	Open     float64 `json:"open"`
-	High     float64 `json:"high"`
-	Low      float64 `json:"low"`
-	Close    float64 `json:"close"`
-	QuoteVol float64 `json:"quote_vol"`
-}
-
 // SeasonBar5m represents a closed 5-minute bar indexed by CloseTS = open_ts + 300.
 type SeasonBar5m struct {
 	CloseTS  int64   `json:"close_ts"`
@@ -123,12 +113,6 @@ type SeasonObservation struct {
 	CrowdingPct     float64            `json:"crowding_pct"`
 }
 
-// ClassifySeasonFromAggregates maps (breadthFast, breadthSlow, volumeRatio) -> SeasonRegime
-// using the canonical thresholds from tools/research/h1_experiment.py.
-func ClassifySeasonFromAggregates(breadthFast, breadthSlow, volumeRatio float64) types.SeasonRegime {
-	return ClassifySeasonWithThresholds(breadthFast, breadthSlow, volumeRatio, DefaultSeasonThresholds())
-}
-
 // ClassifySeasonWithThresholds is the deterministic causal rule mapping
 // (breadthFast, breadthSlow, volumeRatio) -> SeasonRegime with explicit thresholds.
 //
@@ -153,53 +137,6 @@ func ClassifySeasonWithThresholds(breadthFast, breadthSlow, volumeRatio float64,
 		return types.SeasonRegimeSpring
 	}
 	return types.SeasonRegimeWinter
-}
-
-// Build5mBarsFrom1m aggregates sorted 1m bars into complete 5m bars (len(grp) >= 5),
-// setting CloseTS = b_open + 300 and summing QuoteVol exactly as in h1_experiment.py.
-func Build5mBarsFrom1m(series []SeasonBar1m) []SeasonBar5m {
-	if len(series) == 0 {
-		return nil
-	}
-	buckets := make(map[int64][]SeasonBar1m)
-	var keys []int64
-	for _, b := range series {
-		bOpen := (b.TS / 300) * 300
-		if _, exists := buckets[bOpen]; !exists {
-			keys = append(keys, bOpen)
-		}
-		buckets[bOpen] = append(buckets[bOpen], b)
-	}
-	sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
-
-	out := make([]SeasonBar5m, 0, len(keys))
-	for _, bOpen := range keys {
-		grp := buckets[bOpen]
-		if len(grp) < 5 {
-			continue
-		}
-		hi := grp[0].High
-		lo := grp[0].Low
-		qSum := 0.0
-		for _, x := range grp {
-			if x.High > hi {
-				hi = x.High
-			}
-			if x.Low < lo {
-				lo = x.Low
-			}
-			qSum += x.QuoteVol
-		}
-		out = append(out, SeasonBar5m{
-			CloseTS:  bOpen + 300,
-			Open:     grp[0].Open,
-			High:     hi,
-			Low:      lo,
-			Close:    grp[len(grp)-1].Close,
-			QuoteVol: qSum,
-		})
-	}
-	return out
 }
 
 // BuildCausalSeasonTimeline computes causal SeasonObservation at every 5m close timestamp t
@@ -474,42 +411,6 @@ func BuildCausalSeasonTimelineWithConfig(
 	}
 
 	return timeline
-}
-
-// CalibrateOOSSeasonRegime computes the walk-forward out-of-sample SeasonRegime
-// calibrated on prior timeline observations strictly before the ticket's wave cluster
-// start timestamp (matching lines 708-728 of tools/research/h1_experiment.py).
-func CalibrateOOSSeasonRegime(obs SeasonObservation, priorObs []SeasonObservation) types.SeasonRegime {
-	if len(priorObs) < 20 {
-		return obs.SeasonRegime
-	}
-	bSorted := make([]float64, len(priorObs))
-	vSorted := make([]float64, len(priorObs))
-	for i, o := range priorObs {
-		bSorted[i] = o.BreadthFast
-		vSorted[i] = o.VolumeRatio
-	}
-	sort.Float64s(bSorted)
-	sort.Float64s(vSorted)
-
-	nMinus1 := float64(len(bSorted) - 1)
-	q65B := bSorted[int(0.65*nMinus1)]
-	q45B := bSorted[int(0.45*nMinus1)]
-	q50V := vSorted[int(0.50*nMinus1)]
-	q30V := vSorted[int(0.30*nMinus1)]
-
-	return ClassifySeasonWithThresholds(
-		obs.BreadthFast,
-		obs.BreadthSlow,
-		obs.VolumeRatio,
-		SeasonThresholds{
-			SummerBreadthMin:     math.Max(0.52, math.Min(0.68, q65B)),
-			SpringBreadthMin:     math.Max(0.42, math.Min(0.54, q45B)),
-			AutumnSlowBreadthMin: math.Max(0.48, math.Min(0.60, 0.5*(q65B+q45B))),
-			SummerVolMin:         math.Max(0.90, math.Min(1.15, q50V)),
-			WinterVolMax:         math.Max(0.75, math.Min(0.92, q30V)),
-		},
-	)
 }
 
 // LatestSeasonObservationAtOrBefore returns the SeasonObservation at the greatest

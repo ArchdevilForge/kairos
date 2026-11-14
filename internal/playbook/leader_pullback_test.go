@@ -205,9 +205,11 @@ func TestLeaderPullback_MissingInvalidation(t *testing.T) {
 }
 
 func TestLeaderPullback_BareMatchFailClosed(t *testing.T) {
-	m := (&LeaderPullback{}).Match(alignedLongInput().PlaybookContext)
+	m := (&LeaderPullback{}).MatchInput(LeaderPullbackInput{
+		PlaybookContext: alignedLongInput().PlaybookContext,
+	})
 	if m.Matched {
-		t.Fatal("bare Match without structure/invalidation must fail closed")
+		t.Fatal("bare MatchInput without structure/invalidation must fail closed")
 	}
 }
 

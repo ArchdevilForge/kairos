@@ -68,11 +68,6 @@ func NewFuturesMetricsDetector(cfg types.FuturesMetricsConfig) *FuturesMetricsDe
 	return d
 }
 
-func (d *FuturesMetricsDetector) Name() string { return "futures_metrics" }
-
-// OnTicker is unused — FuturesMetricsDetector receives data via OnMetricsUpdate.
-func (d *FuturesMetricsDetector) OnTicker(_ context.Context, _ types.Ticker) {}
-
 // OnMetricsUpdate processes an OI/funding-rate snapshot. oi and fundingRate
 // are optional: nil means the exchange did not report the metric, which is
 // different from a real zero. price is the latest ticker price for event
@@ -93,42 +88,6 @@ func (d *FuturesMetricsDetector) OnMetricsUpdate(_ context.Context, symbol strin
 }
 
 func (d *FuturesMetricsDetector) Events() <-chan types.AnomalyEvent { return d.events }
-
-func (d *FuturesMetricsDetector) Reset() {
-	d.oiMu.Lock()
-	clear(d.lastOI)
-	d.oiMu.Unlock()
-	d.fundingMu.Lock()
-	clear(d.lastFunding)
-	d.fundingMu.Unlock()
-	d.cdMu.Lock()
-	clear(d.Cooldowns)
-	d.cdMu.Unlock()
-}
-
-// UpdateConfig hot-reloads configuration at runtime.
-func (d *FuturesMetricsDetector) UpdateConfig(cfg types.FuturesMetricsConfig) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.enabled = cfg.Enabled
-	d.oiEnabled = cfg.OpenInterest.Enabled
-	if cfg.OpenInterest.MinChangePct > 0 {
-		d.oiMinChangePct = cfg.OpenInterest.MinChangePct
-	}
-	if cfg.OpenInterest.MinNotifyInterval != "" {
-		d.oiMinNotifyInterval = parseDuration(cfg.OpenInterest.MinNotifyInterval)
-	}
-	d.fundingEnabled = cfg.FundingRate.Enabled
-	if cfg.FundingRate.AbsRateThreshold > 0 {
-		d.fundingAbsThreshold = cfg.FundingRate.AbsRateThreshold
-	}
-	if cfg.FundingRate.MinChangeAbs > 0 {
-		d.fundingMinChangeAbs = cfg.FundingRate.MinChangeAbs
-	}
-	if cfg.FundingRate.MinNotifyInterval != "" {
-		d.fundingMinNotify = parseDuration(cfg.FundingRate.MinNotifyInterval)
-	}
-}
 
 // ---------------------------------------------------------------------------
 // Open interest

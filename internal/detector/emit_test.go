@@ -1,7 +1,6 @@
 package detector
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -71,44 +70,6 @@ func TestPriceVelocityDetector_Emits(t *testing.T) {
 	}
 }
 
-func TestVolumeSpikeDetector_UpdateConfigAndReset(t *testing.T) {
-	d := NewVolumeSpikeDetector(types.VolumeSpikeConfig{Enabled: true})
-	d.OnTicker(context.Background(), types.Ticker{
-		Symbol: "ETH/USDT:USDT", QuoteVolume: ptrFloat(1), LastPrice: ptrFloat(2),
-	})
-	d.Reset()
-	d.UpdateConfig(types.VolumeSpikeConfig{
-		Enabled: true, Multiplier: 4, WindowMinutes: 5, MinHistorySeconds: 120, MinNotifyInterval: "30s",
-	})
-	if d.multiplier != 4 || d.windowMinutes != 5 {
-		t.Fatalf("config: mult=%v win=%v", d.multiplier, d.windowMinutes)
-	}
-}
-
-func TestResonanceEvent_ToAlertEventAndScorerHooks(t *testing.T) {
-	re := ResonanceEvent{
-		Symbol: "BTC/USDT:USDT", SignalScore: 80, DimensionCount: 2,
-		Dimensions: map[string]types.AnomalyEvent{
-			"price_velocity": {Data: map[string]any{"change_pct": 2.0}},
-		},
-		Timestamp: 123,
-	}
-	evt := re.ToAlertEvent()
-	if evt.EventType != "resonance" || evt.Data["price_velocity_data"] == nil {
-		t.Fatalf("ToAlertEvent: %+v", evt)
-	}
-
-	rs := NewResonanceScorer(types.ResonanceScorerConfig{Enabled: true})
-	got := false
-	rs.SetCallback(func(re ResonanceEvent) { got = true })
-	rs.Reset()
-	rs.UpdateConfig(types.ResonanceScorerConfig{Enabled: true, MinScore: 40, MinDimensions: 1, CooldownSeconds: 0, WindowSeconds: 300})
-	if rs.minScore != 40 {
-		t.Fatalf("UpdateConfig: %v", rs.minScore)
-	}
-	_ = got
-}
-
 func TestParseDuration(t *testing.T) {
 	if parseDuration("30s") != 30*time.Second {
 		t.Fatal("30s")
@@ -120,5 +81,3 @@ func TestParseDuration(t *testing.T) {
 		t.Fatal("empty")
 	}
 }
-
-func ptrFloat(v float64) *float64 { return &v }

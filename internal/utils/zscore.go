@@ -75,13 +75,3 @@ func (z *RollingZScore) compute(value float64) float64 {
 	}
 	return (value - mean) / math.Sqrt(variance)
 }
-
-// Reset clears all stored values.
-func (z *RollingZScore) Reset() {
-	z.mu.Lock()
-	defer z.mu.Unlock()
-	z.count = 0
-	z.head = 0
-	// Zeroing the buffer isn't strictly needed but prevents stale data leaks.
-	clear(z.buffer)
-}

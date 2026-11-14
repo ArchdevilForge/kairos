@@ -27,7 +27,7 @@ func TestResolveCoinGlassDecryptRoot_FromEnv(t *testing.T) {
 	}
 }
 
-func TestFetchSpotRSIMap_LivePython(t *testing.T) {
+func TestFetchMarketCapMap_LivePython(t *testing.T) {
 	if os.Getenv("KAIROS_LIVE") == "" {
 		t.Skip("set KAIROS_LIVE=1 to run")
 	}
@@ -41,11 +41,11 @@ func TestFetchSpotRSIMap_LivePython(t *testing.T) {
 	t.Setenv(envCoinGlassDecrypt, decrypt)
 	t.Setenv(envCoinGlassUsePy, "1")
 
-	m, err := FetchSpotRSIMap(context.Background(), 20*time.Second)
+	m, err := FetchMarketCapMap(context.Background(), 20*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m["BTC"].RSI4h <= 0 {
-		t.Fatalf("BTC rsi missing: %+v", m["BTC"])
+	if m["BTC"] <= 0 {
+		t.Fatalf("BTC market cap missing: %v", m["BTC"])
 	}
 }

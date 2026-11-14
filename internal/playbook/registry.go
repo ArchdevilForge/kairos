@@ -34,14 +34,3 @@ func (r *Registry) Get(id string) (Playbook, bool) {
 	p, ok := r.byID[id]
 	return p, ok
 }
-
-// All returns a snapshot of registered playbooks.
-func (r *Registry) All() []Playbook {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	out := make([]Playbook, 0, len(r.byID))
-	for _, p := range r.byID {
-		out = append(out, p)
-	}
-	return out
-}

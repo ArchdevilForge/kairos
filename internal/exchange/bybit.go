@@ -4,11 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"math"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/ArchdevilForge/kairos/internal/types"
@@ -23,9 +20,7 @@ const (
 type bybitExchange struct {
 	httpCli *http.Client
 	feed    feedState
-	mu      sync.Mutex
-	cancel  context.CancelFunc
-	closed  bool
+	ws      wsLifecycle
 }
 
 func newBybit() *bybitExchange {
@@ -38,14 +33,10 @@ func (b *bybitExchange) Name() string { return "bybit" }
 func (b *bybitExchange) FeedStats() FeedStats { return b.feed.stats() }
 
 func (b *bybitExchange) SubscribeTickers(ctx context.Context, symbols []string, tickerCh chan<- types.Ticker) error {
-	b.mu.Lock()
-	if b.closed {
-		b.mu.Unlock()
-		return fmt.Errorf("bybit: exchange closed")
+	ctx, err := b.ws.begin(ctx, "bybit")
+	if err != nil {
+		return err
 	}
-	ctx, cancel := context.WithCancel(ctx)
-	b.cancel = cancel
-	b.mu.Unlock()
 
 	args := make([]string, 0, len(symbols))
 	lookup := make(map[string]string, len(symbols))
@@ -58,8 +49,7 @@ func (b *bybitExchange) SubscribeTickers(ctx context.Context, symbols []string, 
 		return fmt.Errorf("bybit: no symbols to subscribe")
 	}
 
-	backoff := time.Second
-	maxBackoff := 30 * time.Second
+	backoff := wsInitialBackoff
 	flog := newFeedLog("bybit")
 	for {
 		if ctx.Err() != nil {
@@ -72,10 +62,10 @@ func (b *bybitExchange) SubscribeTickers(ctx context.Context, symbols []string, 
 			if err := ctxSleep(ctx, backoff); err != nil {
 				return err
 			}
-			backoff = time.Duration(math.Min(float64(backoff*2), float64(maxBackoff)))
+			backoff = nextWSBackoff(backoff)
 			continue
 		}
-		backoff = time.Second
+		backoff = wsInitialBackoff
 		flog.Info("ws connected", "endpoint", bybitWSEndpoint, "symbols", len(args))
 
 		sub := map[string]any{"op": "subscribe", "args": args}
@@ -156,53 +146,6 @@ func (b *bybitExchange) FetchTickers(ctx context.Context) (map[string]*types.Tic
 	return result, nil
 }
 
-func (b *bybitExchange) FetchTicker(ctx context.Context, symbol string) (*types.Ticker, error) {
-	url := fmt.Sprintf("%s/v5/market/tickers?category=linear&symbol=%s", bybitRESTEndpoint, bybitSymbol(symbol))
-	body, err := b.get(ctx, url)
-	if err != nil {
-		return nil, err
-	}
-	var resp struct {
-		RetCode int `json:"retCode"`
-		Result  struct {
-			List []struct {
-				Symbol       string `json:"symbol"`
-				LastPrice    string `json:"lastPrice"`
-				Turnover24h  string `json:"turnover24h"`
-				Price24hPcnt string `json:"price24hPcnt"`
-				FundingRate  string `json:"fundingRate"`
-				OpenInterest string `json:"openInterest"`
-			} `json:"list"`
-		} `json:"result"`
-	}
-	if err := json.Unmarshal(body, &resp); err != nil {
-		return nil, fmt.Errorf("bybit fetch ticker: decode: %w", err)
-	}
-	if resp.RetCode != 0 || len(resp.Result.List) == 0 {
-		return nil, fmt.Errorf("bybit fetch ticker: empty")
-	}
-	row := resp.Result.List[0]
-	sym := toCanonicalBybit(row.Symbol)
-	t := &types.Ticker{Symbol: sym, Info: map[string]any{"instType": "SWAP"}}
-	if v := parseFloat(row.LastPrice); v > 0 {
-		t.LastPrice = &v
-	}
-	if v := parseFloat(row.Turnover24h); v > 0 {
-		t.QuoteVolume = &v
-	}
-	if v := parseFloatPtr(row.Price24hPcnt); v != nil {
-		pct := *v * 100
-		t.ChangePct = &pct
-	}
-	if v := parseFloatPtr(row.OpenInterest); v != nil {
-		t.OpenInterest = v
-	}
-	if v := parseFloatPtr(row.FundingRate); v != nil {
-		t.FundingRate = v
-	}
-	return t, nil
-}
-
 func (b *bybitExchange) FetchOHLCV(ctx context.Context, symbol, timeframe string, limit int, beforeMs int64) ([]types.Candle, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 200
@@ -259,29 +202,15 @@ func (b *bybitExchange) FetchOHLCV(ctx context.Context, symbol, timeframe string
 }
 
 func (b *bybitExchange) Close() error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if b.closed {
-		return nil
-	}
-	b.closed = true
-	if b.cancel != nil {
-		b.cancel()
-	}
-	return nil
+	return b.ws.close()
 }
 
 func (b *bybitExchange) get(ctx context.Context, url string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	body, err := doHTTPGet(ctx, b.httpCli, url)
 	if err != nil {
 		return nil, fmt.Errorf("bybit request: %w", err)
 	}
-	resp, err := b.httpCli.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("bybit request: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	return io.ReadAll(resp.Body)
+	return body, nil
 }
 
 func (b *bybitExchange) readTickers(ctx context.Context, conn *websocket.Conn, tickerCh chan<- types.Ticker, lookup map[string]string) error {

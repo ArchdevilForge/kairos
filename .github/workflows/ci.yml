@@ -43,5 +43,5 @@ jobs:
 
       - uses: astral-sh/setup-uv@v5
 
-      # 本仓仅剩 launch 采集 + research 判定。
+      # 本仓仅剩 tools/research 判定。
       - run: make check-python

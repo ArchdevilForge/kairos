@@ -2,7 +2,6 @@ package evaluation
 
 import (
 	"math"
-	"sort"
 
 	"github.com/ArchdevilForge/kairos/internal/storage"
 	"github.com/ArchdevilForge/kairos/internal/types"
@@ -420,17 +419,4 @@ func round4(v float64) float64 {
 		return 0
 	}
 	return r
-}
-
-// SortedKeys helper for stable CLI output.
-func SortedKeys(m map[string]GroupStats) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		if k == "" {
-			continue
-		}
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
 }

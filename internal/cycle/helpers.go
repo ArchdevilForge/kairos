@@ -100,36 +100,3 @@ func clamp01(x float64) float64 {
 	}
 	return x
 }
-
-// mirrorCloses turns an up series into a down series around the first price.
-// Used for long/short symmetry tests.
-func mirrorCloses(closes []float64) []float64 {
-	if len(closes) == 0 {
-		return nil
-	}
-	out := make([]float64, len(closes))
-	base := closes[0]
-	for i, c := range closes {
-		out[i] = base - (c - base)
-	}
-	return out
-}
-
-func mirrorHL(highs, lows []float64) (mirroredHighs, mirroredLows []float64) {
-	// After price mirror, high/low swap relative to base path:
-	// new_high[i] = base - (low[i]-base), new_low[i] = base - (high[i]-base)
-	if len(highs) == 0 || len(lows) == 0 || len(highs) != len(lows) {
-		return nil, nil
-	}
-	base := (highs[0] + lows[0]) / 2
-	mh := make([]float64, len(highs))
-	ml := make([]float64, len(lows))
-	for i := range highs {
-		mh[i] = base - (lows[i] - base)
-		ml[i] = base - (highs[i] - base)
-		if mh[i] < ml[i] {
-			mh[i], ml[i] = ml[i], mh[i]
-		}
-	}
-	return mh, ml
-}
