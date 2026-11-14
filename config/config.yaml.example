@@ -1,7 +1,7 @@
 # Kairos human-controlled futures alert config
 #
 # Default profile: price-velocity Telegram alerts only (human opens chart).
-# CoinGlass is optional enrichment (market-cap weight, scanner RSI); enable
+# CoinGlass is optional enrichment (market-cap weight); enable
 # longShortRatio / liquidation / resonance in alertPolicy if you want them back.
 #
 # Usage:
@@ -9,12 +9,10 @@
 #   2. Export TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.
 #   3. Optional DingTalk mirror: DINGTALK_WEBHOOK_URL + DINGTALK_SECRET, dingTalk.enabled=true.
 #   4. Run `go run ./cmd/kairosd` (or built binary) for realtime MarketPulse / price alerts.
-#   5. Optional: after a market alert, run `kairos-alert --dry-run` for a scanner
-#      explanation of leaders (not a scheduled trade-signal product).
-#   6. Calibrate: `go run ./cmd/kairos-calibrate --config ...` → lift_5m vs random.
+#   5. Calibrate: `go run ./cmd/kairos-calibrate --config ...` → lift_5m vs random.
 
 # Exchange authorities:
-#   exchanges.primary     — scanner / MarketPulse / provenance authority
+#   exchanges.primary     — MarketPulse / provenance authority
 #   dataManager.exchanges — realtime adapter set (primary must be included)
 # (The old top-level `exchange` key still works as a legacy alias.)
 
@@ -124,76 +122,13 @@ resonanceScorer:
   minScore: 55
   cooldownSeconds: 600
 
-# scanner is one-shot and optional. Prefer running it manually after a
-# MarketPulse alert (post-alert explanation). Do not cron it as the primary product.
-scanner:
-  universeSize: 30
-  candidateLimit: 20
-  deepAnalysisLimit: 10
-  totalTimeoutSeconds: 75
-  exchangeRequestTimeoutSeconds: 8
-  symbolAnalysisTimeoutSeconds: 12
-  timeframes:
-    - "1d"
-    - "4h"
-    - "15m"
-  generateChartsByDefault: false
-
 exchanges:
   primary: "okx"
-  backups: []
   # Ticker WebSocket endpoint overrides. Empty/missing = adapter default.
   # OKX retired WS port 8443 (notice code 64010), so the default is now 443:
   #   okx: "wss://ws.okx.com:443/ws/v5/public"
   wsEndpoints:
     okx: "wss://ws.okx.com:443/ws/v5/public"
-
-scoring:
-  candidateWeights:
-    quoteVolume: 4.0
-    priceVelocity: 2.0
-    openInterest: 1.0
-    funding: 1.0
-    relativeStrength: 2.0
-    btcRelativeStrength: 1.5
-    rsiHotness: 1.0
-  setupWeights:
-    dailyTrend: 1.5
-    structure: 2.0
-    entryTrigger: 2.0
-    btcResonance: 1.0
-    marketCycle: 1.0
-    volumeConfirmation: 1.0
-    riskReward: 1.5
-  cycleThresholds:
-    spring: 5.5
-    summer: 5.5
-    autumn: 6.5
-    winter: 7.5
-  minimumLiquidityQuoteVolume: 30000000.0
-  minimumRiskReward: 1.8
-  strictRiskReward: 2.2
-  shortThresholdPremium: 0.5
-  cycleDetector:
-    springBtcChangeMin: 10.0
-    summerBtcChangeMin: 30.0
-    autumnBtcChangeMax: 50.0
-    winterBtcChangeMax: -10.0
-    highVolatilityThreshold: 5.0
-    lowVolatilityThreshold: 2.0
-    highFundingThreshold: 0.05
-    lowFundingThreshold: -0.01
-
-risk:
-  maxPositionPct:
-    major: 33.0
-    altcoin: 33.0
-  maxLeverage:
-    major: 10.0
-    altcoin: 5.0
-  weakCyclePositionMultiplier: 0.5
-  shortPositionMultiplier: 0.75
-  inverseCyclePositionMultiplier: 0.5
 
 # databasePath anchors the storage directory. Sidecar JSONL next to it:
 #   market-pulse-events.jsonl / market-pulse-outcomes.jsonl /
@@ -204,7 +139,7 @@ storage:
   watchHintRetentionHours: 24
   watchHintScoreBoost: 0.5
 
-# CoinGlass (optional: market-cap weight at subscribe, scanner RSI hotness):
+# CoinGlass (optional: market-cap weight at subscribe):
 # Clone https://github.com/ArchdevilForge/coinglass-decrypt as ../coinglass-decrypt
 # or set KAIROS_COINGLASS_DECRYPT=/path/to/coinglass-decrypt
 # Prefer Python decrypt (handles rotating v=0/1/2 keys):
@@ -277,12 +212,6 @@ marketPulse:
   stressCooldownSeconds: 900
   # Ignored while shadowMode=true (shadow must not change single-coin alerts).
   gateIndividualAlertsWhenQuiet: false
-
-# Kairos emits chart specs only; rendering is a downstream concern.
-charts:
-  defaultChartCount: 1
-  outputPath: "~/.local/share/kairos/charts"
-  multiTimeframeScoreThreshold: 8.0
 
 # Decision desk / OpportunitySession (off by default — fail closed).
 # Behavior Risk Gate (KAIROS_DOCTRINE §9b, from 2026-08 trading-profile audit).

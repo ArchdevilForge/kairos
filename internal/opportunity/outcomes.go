@@ -201,10 +201,7 @@ func abs(v float64) float64 {
 func forwardBars(candles []types.Candle, entryAt int64) []evaluation.Bar {
 	out := make([]evaluation.Bar, 0, len(candles))
 	for _, c := range candles {
-		ts := c.Timestamp
-		if ts > 1_000_000_000_000 {
-			ts = ts / 1000
-		}
+		ts := normTS(c.Timestamp)
 		if ts >= entryAt {
 			out = append(out, evaluation.Bar{
 				TS: ts, Open: c.Open, High: c.High, Low: c.Low, Close: c.Close,

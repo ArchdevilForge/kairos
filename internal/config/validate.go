@@ -17,7 +17,7 @@ var knownExchanges = map[string]bool{
 
 // Normalize resolves the legacy top-level `exchange` alias into
 // exchanges.primary and dataManager.exchanges so the rest of the codebase has
-// exactly two authorities: exchanges.primary (scanner/MarketPulse/provenance)
+// exactly two authorities: exchanges.primary (MarketPulse/provenance)
 // and dataManager.exchanges (realtime adapter set).
 func Normalize(cfg *types.Config) {
 	if cfg.Exchanges.Primary == "" {
@@ -93,13 +93,8 @@ func Validate(cfg *types.Config) error {
 		}
 	}
 	if !primaryInRealtime {
-		addf("exchanges.primary %q must be included in dataManager.exchanges %v (MarketPulse/scanner would otherwise run on an exchange with no realtime data)",
+		addf("exchanges.primary %q must be included in dataManager.exchanges %v (MarketPulse would otherwise run on an exchange with no realtime data)",
 			cfg.Exchanges.Primary, cfg.DataManager.Exchanges)
-	}
-	for _, ex := range cfg.Exchanges.Backups {
-		if !knownExchanges[ex] {
-			addf("exchanges.backups contains unsupported exchange %q", ex)
-		}
 	}
 	// WS endpoint overrides: empty keeps the adapter default; anything set must
 	// be a dialable ws:// or wss:// URL (a typo would otherwise look like a dead feed).
@@ -124,36 +119,6 @@ func Validate(cfg *types.Config) error {
 	}
 	if cfg.DataManager.FeedSilentWarnSeconds < 0 {
 		addf("dataManager.feedSilentWarnSeconds must be >= 0 (0 disables the silent-feed WARN), got %d", cfg.DataManager.FeedSilentWarnSeconds)
-	}
-
-	// --- scanner --------------------------------------------------------------
-	required := []string{"1d", "4h", "15m"}
-	have := map[string]bool{}
-	for _, tf := range cfg.Scanner.Timeframes {
-		have[tf] = true
-	}
-	for _, tf := range required {
-		if !have[tf] {
-			addf("scanner.timeframes must include %q (analyzer dereferences 1d/4h/15m unconditionally), got %v", tf, cfg.Scanner.Timeframes)
-		}
-	}
-	if cfg.Scanner.UniverseSize <= 0 {
-		addf("scanner.universeSize must be > 0, got %d", cfg.Scanner.UniverseSize)
-	}
-	if cfg.Scanner.CandidateLimit <= 0 {
-		addf("scanner.candidateLimit must be > 0, got %d", cfg.Scanner.CandidateLimit)
-	}
-	if cfg.Scanner.DeepAnalysisLimit <= 0 {
-		addf("scanner.deepAnalysisLimit must be > 0, got %d", cfg.Scanner.DeepAnalysisLimit)
-	}
-	if cfg.Scanner.TotalTimeoutSeconds <= 0 {
-		addf("scanner.totalTimeoutSeconds must be > 0, got %d", cfg.Scanner.TotalTimeoutSeconds)
-	}
-	if cfg.Scanner.ExchangeRequestTimeoutSeconds <= 0 {
-		addf("scanner.exchangeRequestTimeoutSeconds must be > 0, got %d", cfg.Scanner.ExchangeRequestTimeoutSeconds)
-	}
-	if cfg.Scanner.SymbolAnalysisTimeoutSeconds <= 0 {
-		addf("scanner.symbolAnalysisTimeoutSeconds must be > 0, got %d", cfg.Scanner.SymbolAnalysisTimeoutSeconds)
 	}
 
 	// --- alert policy ---------------------------------------------------------

@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -94,17 +93,7 @@ func (nj *NoticeJournal) append(kind, id string, at time.Time, payload any) erro
 		ExperimentID:    nj.meta.ExperimentID,
 		Mode:            nj.meta.Mode,
 	}
-	line, err := json.Marshal(rec)
-	if err != nil {
-		return err
-	}
-	f, err := os.OpenFile(nj.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = f.Close() }()
-	_, err = f.Write(append(line, '\n'))
-	return err
+	return appendJSONLLine(nj.path, rec)
 }
 
 // SaveNotice persists a Notice record (sent, suppressed, dry_run, or failed).
@@ -159,28 +148,13 @@ func (nj *NoticeJournal) readAll() ([]types.Notice, map[string]types.NoticeFeedb
 	nj.mu.Lock()
 	defer nj.mu.Unlock()
 
-	f, err := os.Open(nj.path)
-	if os.IsNotExist(err) {
-		return nil, map[string]types.NoticeFeedback{}, nil
-	}
-	if err != nil {
-		return nil, nil, err
-	}
-	defer func() { _ = f.Close() }()
-
 	byNoticeID := make(map[string]types.Notice)
 	feedbacks := make(map[string]types.NoticeFeedback)
 
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
-	for sc.Scan() {
-		raw := strings.TrimSpace(sc.Text())
-		if raw == "" {
-			continue
-		}
+	err := scanJSONLLines(nj.path, 4*1024*1024, func(raw string) {
 		var line journalLine
 		if err := json.Unmarshal([]byte(raw), &line); err != nil {
-			continue
+			return
 		}
 		switch line.Kind {
 		case NoticeJournalKindNotice:
@@ -194,8 +168,11 @@ func (nj *NoticeJournal) readAll() ([]types.Notice, map[string]types.NoticeFeedb
 				feedbacks[fb.NoticeID] = fb
 			}
 		}
+	})
+	if os.IsNotExist(err) {
+		return nil, map[string]types.NoticeFeedback{}, nil
 	}
-	if err := sc.Err(); err != nil {
+	if err != nil {
 		return nil, nil, err
 	}
 

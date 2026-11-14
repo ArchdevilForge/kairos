@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/ArchdevilForge/kairos/internal/types"
+	"github.com/ArchdevilForge/kairos/internal/utils"
 	"github.com/go-telegram/bot"
 )
 
@@ -62,12 +63,7 @@ func (t *TelegramClient) SendEvent(ctx context.Context, event types.AlertEvent) 
 // ---------------------------------------------------------------------------
 
 func formatEvent(event types.AlertEvent) string {
-	symbol := html.EscapeString(
-		strings.ReplaceAll(
-			strings.ReplaceAll(event.Symbol, "/USDT:USDT", ""),
-			"/USDT", "",
-		),
-	)
+	symbol := html.EscapeString(shortSymbol(event.Symbol))
 	eventName := html.EscapeString(eventNameZh(event.Event))
 	severity := html.EscapeString(severityZh(string(event.Severity)))
 	ts := formatTimestamp(event.Timestamp)
@@ -305,22 +301,7 @@ func shortSymbol(sym string) string {
 }
 
 func anyFloat(m map[string]any, key string) float64 {
-	v, ok := m[key]
-	if !ok || v == nil {
-		return 0
-	}
-	switch n := v.(type) {
-	case float64:
-		return n
-	case float32:
-		return float64(n)
-	case int:
-		return float64(n)
-	case int64:
-		return float64(n)
-	default:
-		return 0
-	}
+	return utils.FloatFromMap(m, key)
 }
 
 func anyFloatPtr(m map[string]any, key string) *float64 {

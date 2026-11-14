@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"bufio"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -98,25 +97,15 @@ func (j *Journal) append(kind, id string, payload any) error {
 	if err != nil {
 		return err
 	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
 	rec := journalLine{
 		Kind: kind, ID: id, At: time.Now().UTC(), Payload: raw,
 		GitSHA: j.meta.GitSHA, ConfigHash: j.meta.ConfigHash,
 		StrategyVersion: j.meta.StrategyVersion,
 		ExperimentID:    j.meta.ExperimentID, Mode: j.meta.Mode,
 	}
-	line, err := json.Marshal(rec)
-	if err != nil {
-		return err
-	}
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	f, err := os.OpenFile(j.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = f.Close() }()
-	_, err = f.Write(append(line, '\n'))
-	return err
+	return appendJSONLLine(j.path, rec)
 }
 
 // SaveSession persists an opportunity session.
@@ -398,31 +387,18 @@ func (j *Journal) readAll() ([]journalLine, error) {
 	}
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	f, err := os.Open(j.path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	defer func() { _ = f.Close() }()
 	var lines []journalLine
-	sc := bufio.NewScanner(f)
-	// tickets can be large; raise buffer
-	buf := make([]byte, 0, 64*1024)
-	sc.Buffer(buf, 2*1024*1024)
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if line == "" {
-			continue
-		}
+	err := scanJSONLLines(j.path, 2*1024*1024, func(line string) {
 		var rec journalLine
 		if err := json.Unmarshal([]byte(line), &rec); err != nil {
-			continue
+			return
 		}
 		lines = append(lines, rec)
+	})
+	if os.IsNotExist(err) {
+		return nil, nil
 	}
-	return lines, sc.Err()
+	return lines, err
 }
 
 // ListSessions returns sessions, last-write-wins by id, newest-first.

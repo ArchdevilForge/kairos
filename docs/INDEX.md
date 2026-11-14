@@ -24,7 +24,7 @@ Observe  →  Interpret  →  Select  →  Decide  →  Execute  →  Learn
 
 | 步骤 | 组件 | 仓库位置 |
 |---|---|---|
-| Observe | MarketPulse / kairos-oiscan / launch 采集 | `internal/detector`, `cmd/kairos-oiscan`, `floors/launch` |
+| Observe | MarketPulse / kairos-oiscan | `internal/detector`, `cmd/kairos-oiscan` |
 | Interpret | CycleMap | `internal/cycle` |
 | Select | Directional Ranker | `internal/ranker` |
 | Decide | Playbook → Decision Ticket → BehaviorGate（教义 9b 机械执行） | `internal/playbook`, `internal/opportunity`, `internal/decision` |
@@ -47,20 +47,19 @@ Observe  →  Interpret  →  Select  →  Decide  →  Execute  →  Learn
 - `ARCHITECTURE_2026-06-27.md` — 旧权威架构（1d/4h/15m 旧策略模型），已降级
 - `architecture-review.md` — 旧架构评审
 - `GOAL_LAUNCH_DATA_AND_RISK_GATE.md` — Launch 数据管道与行为 Risk Gate 目标文档（已归档）
-- `40-research/` — 历史研究报告、Phase 1-3 实验记录与 Bit浪浪案例库（已归档；`40-research/experiments/` 保留 `2026-11-11-phase3c-notice-eval-template.md` 模板）
+- `40-research/` — 历史研究报告、Phase 1-3 实验记录、Bit浪浪案例库与已 reject 假设（已归档；`40-research/experiments/` 保留 `2026-11-11-phase3c-notice-eval-template.md` 模板）
+- `90-engineering/specs/kairos-desk-watch-range-spec.md` — watch-range 规格草案（已归档）
 
 ## 路线图（待办，非权威）
 
 > 第一性原理：仓库的价值 = 闭环转速（观点 → 数据 → EV → canonical → ticket → 复盘）。
-> 采集器已经够多，当前瓶颈不是写更多代码，而是**让闭环真正跑起来**：假设按样本量出判定、每笔交易过 gate。
-> 数据分两类：**链上事件永久可重放**（launch/bid/graduation → 按需回填，不需要常驻 daemon）；
-> **链下时序易逝**（交易所细粒度 OI 只保留 ~30 天、订单簿、社交热度 → 只有这类才值得持续落盘）。
+> 采集器已经够多，当前瓶颈不是写更多代码，而是**让闭环真正跑起来**：每笔交易过 gate、数据持续沉淀进复盘。
 > 新增任何 floor/工具前先回答两个问题：它属于六步哪一步？现有 floor 的数据被消费了吗？
 
 已完成：
 
 - [x] P0: schemas/event.v1.json → 各 floor 统一契约（bus Event + oiscan 已对齐）
-- [x] P0: make check-all + Python CI（本仓仅 launch + research）
+- [x] P0: make check-all + Python CI（本仓仅 tools/research）
 - [x] P1: Journal metadata（git_sha/config_hash/strategy_version/experiment_id/mode）
 - [x] P1: Alpha Attribution（SelectionAlpha + HumanAlpha；Entry/Exit 拆分待数据积累）
 - [x] P2: JSONL → DuckDB research layer（tools/research/）
@@ -69,8 +68,6 @@ Observe  →  Interpret  →  Select  →  Decide  →  Execute  →  Learn
 
 进行中（运营闭环，不是写新代码）：
 
-- [ ] P0: launch 历史回填 + 研究前增量补扫（`watch --once` 断点续扫，本地按需跑；监控 `launch_scan_gap` 缺口）
 - [ ] P0: 每笔真实交易走 `kairos-desk` 决策（BehaviorGate 机械执法），复盘进 `50-reviews/`
-- [ ] P1: H-005 拍卖样本 ≥100 场后跑 `tools/research h005` 出判定（promote/reject）；H-006/H-007 同理
 - [ ] P1: 首个 playbook 积累数据后扩展第二/第三 playbook
 - [ ] P3: Rust / ML（暂无必要）

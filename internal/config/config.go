@@ -186,86 +186,10 @@ func setDefaults(v *viper.Viper) {
 		"cooldownSeconds": 600,
 	})
 
-	v.SetDefault("scanner", map[string]any{
-		"universeSize":                  30,
-		"candidateLimit":                20,
-		"deepAnalysisLimit":             10,
-		"totalTimeoutSeconds":           75,
-		"exchangeRequestTimeoutSeconds": 8,
-		"symbolAnalysisTimeoutSeconds":  12,
-		"timeframes":                    []string{"1d", "4h", "15m"},
-		"generateChartsByDefault":       false,
-	})
-
-	v.SetDefault("exchanges", map[string]any{
-		"backups": []string{},
-	})
-
-	v.SetDefault("scoring", map[string]any{
-		"candidateWeights": map[string]any{
-			"quoteVolume":         4.0,
-			"priceVelocity":       2.0,
-			"openInterest":        1.0,
-			"funding":             1.0,
-			"relativeStrength":    2.0,
-			"btcRelativeStrength": 1.5,
-			"rsiHotness":          1.0,
-		},
-		"setupWeights": map[string]any{
-			"dailyTrend":         1.5,
-			"structure":          2.0,
-			"entryTrigger":       2.0,
-			"btcResonance":       1.0,
-			"marketCycle":        1.0,
-			"volumeConfirmation": 1.0,
-			"riskReward":         1.5,
-		},
-		"cycleThresholds": map[string]any{
-			"spring": 5.5,
-			"summer": 5.5,
-			"autumn": 6.5,
-			"winter": 7.5,
-		},
-		"minimumLiquidityQuoteVolume": 30_000_000.0,
-		"minimumRiskReward":           1.8,
-		"strictRiskReward":            2.2,
-		"shortThresholdPremium":       0.5,
-		"cycleDetector": map[string]any{
-			"springBtcChangeMin":      10.0,
-			"summerBtcChangeMin":      30.0,
-			"autumnBtcChangeMax":      50.0,
-			"winterBtcChangeMax":      -10.0,
-			"highVolatilityThreshold": 5.0,
-			"lowVolatilityThreshold":  2.0,
-			"highFundingThreshold":    0.05,
-			"lowFundingThreshold":     -0.01,
-		},
-	})
-
-	v.SetDefault("risk", map[string]any{
-		"maxPositionPct": map[string]any{
-			"major":   33.0,
-			"altcoin": 33.0,
-		},
-		"maxLeverage": map[string]any{
-			"major":   10.0,
-			"altcoin": 5.0,
-		},
-		"weakCyclePositionMultiplier":    0.5,
-		"shortPositionMultiplier":        0.75,
-		"inverseCyclePositionMultiplier": 0.5,
-	})
-
 	v.SetDefault("storage", map[string]any{
 		"databasePath":            "~/.local/share/kairos/kairos.db",
 		"watchHintRetentionHours": 24.0,
 		"watchHintScoreBoost":     0.5,
-	})
-
-	v.SetDefault("charts", map[string]any{
-		"defaultChartCount":            1,
-		"outputPath":                   "~/.local/share/kairos/charts",
-		"multiTimeframeScoreThreshold": 8.0,
 	})
 
 	v.SetDefault("riskGate", map[string]any{

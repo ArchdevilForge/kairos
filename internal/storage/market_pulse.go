@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +8,7 @@ import (
 	"time"
 
 	"github.com/ArchdevilForge/kairos/internal/types"
+	"github.com/ArchdevilForge/kairos/internal/utils"
 )
 
 // MarketPulseRecord is one persisted market event + snapshot fields.
@@ -115,29 +115,19 @@ func (s *MarketPulseStore) Record(evt types.AnomalyEvent) error {
 		Direction:        fmt.Sprint(data["direction"]),
 		StateFrom:        fmt.Sprint(data["state_from"]),
 		StateTo:          fmt.Sprint(data["state_to"]),
-		MedianReturn60s:  asFloat(data["median_return_60s_pct"]),
-		MedianReturn300s: asFloat(data["median_return_300s_pct"]),
-		MedianZ60s:       asFloat(data["median_z_60s"]),
-		Breadth:          asFloat(data["breadth"]),
+		MedianReturn60s:  utils.AsFloat(data["median_return_60s_pct"]),
+		MedianReturn300s: utils.AsFloat(data["median_return_300s_pct"]),
+		MedianZ60s:       utils.AsFloat(data["median_z_60s"]),
+		Breadth:          utils.AsFloat(data["breadth"]),
 		ValidSymbols:     asInt(data["valid_symbols"]),
-		FreshRatio:       asFloat(data["fresh_ratio"]),
+		FreshRatio:       utils.AsFloat(data["fresh_ratio"]),
 		ShadowMode:       asBool(data["shadow_mode"]),
 		Payload:          data,
 		RecordedAt:       time.Now().UTC(),
 	}
-	line, err := json.Marshal(rec)
-	if err != nil {
-		return err
-	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	f, err := os.OpenFile(s.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = f.Close() }()
-	_, err = f.Write(append(line, '\n'))
-	return err
+	return appendJSONLLine(s.path, rec)
 }
 
 // MarketPulseOutcomeRecord is one completed post-event performance sample.
@@ -208,16 +198,7 @@ func (s *MarketPulseStore) RecordSnapshot(snap types.MarketSnapshot, state strin
 		DownBreadth60s:   snap.DownBreadth60s,
 		RecordedAt:       time.Now().UTC(),
 	}
-	line, err := json.Marshal(rec)
-	if err != nil {
-		return err
-	}
-	f, err := os.OpenFile(s.snapshotPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = f.Close() }()
-	if _, err = f.Write(append(line, '\n')); err != nil {
+	if err := appendJSONLLine(s.snapshotPath, rec); err != nil {
 		return err
 	}
 	s.lastSnapTS = snap.Timestamp
@@ -237,15 +218,15 @@ func (s *MarketPulseStore) RecordOutcome(evt types.AnomalyEvent) error {
 		Timestamp:        evt.Timestamp,
 		SourceEvent:      fmt.Sprint(data["source_event"]),
 		Direction:        fmt.Sprint(data["direction"]),
-		EventTS:          asFloat(data["event_ts"]),
-		MedianReturn1m:   asFloat(data["median_return_1m"]),
-		MedianReturn3m:   asFloat(data["median_return_3m"]),
-		MedianReturn5m:   asFloat(data["median_return_5m"]),
-		MedianReturn15m:  asFloat(data["median_return_15m"]),
-		MFE:              asFloat(data["mfe"]),
-		MAE:              asFloat(data["mae"]),
-		MaxBreadth:       asFloat(data["max_breadth"]),
-		TrendDurationS:   asFloat(data["trend_duration_s"]),
+		EventTS:          utils.AsFloat(data["event_ts"]),
+		MedianReturn1m:   utils.AsFloat(data["median_return_1m"]),
+		MedianReturn3m:   utils.AsFloat(data["median_return_3m"]),
+		MedianReturn5m:   utils.AsFloat(data["median_return_5m"]),
+		MedianReturn15m:  utils.AsFloat(data["median_return_15m"]),
+		MFE:              utils.AsFloat(data["mfe"]),
+		MAE:              utils.AsFloat(data["mae"]),
+		MaxBreadth:       utils.AsFloat(data["max_breadth"]),
+		TrendDurationS:   utils.AsFloat(data["trend_duration_s"]),
 		Reversed:         asBool(data["reversed"]),
 		ImpulsePrecision: asBool(data["impulse_precision"]),
 		TrendPrecision:   asBool(data["trend_precision"]),
@@ -253,34 +234,9 @@ func (s *MarketPulseStore) RecordOutcome(evt types.AnomalyEvent) error {
 		Payload:          data,
 		RecordedAt:       time.Now().UTC(),
 	}
-	line, err := json.Marshal(rec)
-	if err != nil {
-		return err
-	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	f, err := os.OpenFile(s.outcomePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = f.Close() }()
-	_, err = f.Write(append(line, '\n'))
-	return err
-}
-
-func asFloat(v any) float64 {
-	switch n := v.(type) {
-	case float64:
-		return n
-	case float32:
-		return float64(n)
-	case int:
-		return float64(n)
-	case int64:
-		return float64(n)
-	default:
-		return 0
-	}
+	return appendJSONLLine(s.outcomePath, rec)
 }
 
 func asInt(v any) int {

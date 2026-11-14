@@ -63,21 +63,9 @@ func (h *HintStore) Record(symbol, eventType, exchange string) error {
 		Exchange:  exchange,
 		At:        time.Now().UTC(),
 	}
-	line, err := json.Marshal(rec)
-	if err != nil {
-		return err
-	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	f, err := os.OpenFile(h.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = f.Close() }()
-	if _, err := f.Write(append(line, '\n')); err != nil {
-		return err
-	}
-	return nil
+	return appendJSONLLine(h.path, rec)
 }
 
 // ActiveBoosts returns per-symbol candidate_score boost for hints inside retention.
@@ -99,33 +87,54 @@ func (h *HintStore) readActiveLocked() map[string]watchHint {
 	cutoff := time.Now().UTC().Add(-h.retention)
 	latest := make(map[string]watchHint)
 
-	f, err := os.Open(h.path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return latest
+	_ = scanJSONLLines(h.path, 0, func(line string) {
+		var rec watchHint
+		if err := json.Unmarshal([]byte(line), &rec); err != nil || rec.Symbol == "" {
+			return
 		}
-		return latest
+		if rec.At.Before(cutoff) {
+			return
+		}
+		if prev, ok := latest[rec.Symbol]; !ok || rec.At.After(prev.At) {
+			latest[rec.Symbol] = rec
+		}
+	})
+	return latest
+}
+
+func appendJSONLLine(path string, v any) error {
+	line, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = f.Close() }()
+	_, err = f.Write(append(line, '\n'))
+	return err
+}
+
+func scanJSONLLines(path string, maxTokenSize int, fn func(line string)) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
 	}
 	defer func() { _ = f.Close() }()
 
 	sc := bufio.NewScanner(f)
+	if maxTokenSize > 0 {
+		sc.Buffer(make([]byte, 0, 64*1024), maxTokenSize)
+	}
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
 		if line == "" {
 			continue
 		}
-		var rec watchHint
-		if err := json.Unmarshal([]byte(line), &rec); err != nil || rec.Symbol == "" {
-			continue
-		}
-		if rec.At.Before(cutoff) {
-			continue
-		}
-		if prev, ok := latest[rec.Symbol]; !ok || rec.At.After(prev.At) {
-			latest[rec.Symbol] = rec
-		}
+		fn(line)
 	}
-	return latest
+	return sc.Err()
 }
 
 func expandPath(p string) string {

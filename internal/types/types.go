@@ -225,12 +225,8 @@ type Config struct {
 	LongShortRatio  LongShortRatioConfig  `mapstructure:"longShortRatio" json:"longShortRatio" yaml:"longShortRatio"`
 	Liquidation     LiquidationConfig     `mapstructure:"liquidation" json:"liquidation" yaml:"liquidation"`
 	ResonanceScorer ResonanceScorerConfig `mapstructure:"resonanceScorer" json:"resonanceScorer" yaml:"resonanceScorer"`
-	Scanner         ScannerConfig         `mapstructure:"scanner" json:"scanner" yaml:"scanner"`
 	Exchanges       ExchangesConfig       `mapstructure:"exchanges" json:"exchanges" yaml:"exchanges"`
-	Scoring         ScoringConfig         `mapstructure:"scoring" json:"scoring" yaml:"scoring"`
-	Risk            RiskConfig            `mapstructure:"risk" json:"risk" yaml:"risk"`
 	Storage         StorageConfig         `mapstructure:"storage" json:"storage" yaml:"storage"`
-	Charts          ChartConfig           `mapstructure:"charts" json:"charts" yaml:"charts"`
 	MarketPulse     MarketPulseConfig     `mapstructure:"marketPulse" json:"marketPulse" yaml:"marketPulse"`
 	Opportunity     OpportunityConfig     `mapstructure:"opportunity" json:"opportunity" yaml:"opportunity"`
 	RiskGate        RiskGateConfig        `mapstructure:"riskGate" json:"riskGate" yaml:"riskGate"`
@@ -413,24 +409,10 @@ type ResonanceScorerConfig struct {
 	CooldownSeconds int     `mapstructure:"cooldownSeconds" json:"cooldownSeconds" yaml:"cooldownSeconds"`
 }
 
-// ScannerConfig defines scanner workflow limits and timeout budgets.
-// Scheduling is external (cron/systemd timer); the scanner itself is one-shot.
-type ScannerConfig struct {
-	UniverseSize                  int      `mapstructure:"universeSize" json:"universeSize" yaml:"universeSize"`
-	CandidateLimit                int      `mapstructure:"candidateLimit" json:"candidateLimit" yaml:"candidateLimit"`
-	DeepAnalysisLimit             int      `mapstructure:"deepAnalysisLimit" json:"deepAnalysisLimit" yaml:"deepAnalysisLimit"`
-	TotalTimeoutSeconds           int      `mapstructure:"totalTimeoutSeconds" json:"totalTimeoutSeconds" yaml:"totalTimeoutSeconds"`
-	ExchangeRequestTimeoutSeconds int      `mapstructure:"exchangeRequestTimeoutSeconds" json:"exchangeRequestTimeoutSeconds" yaml:"exchangeRequestTimeoutSeconds"`
-	SymbolAnalysisTimeoutSeconds  int      `mapstructure:"symbolAnalysisTimeoutSeconds" json:"symbolAnalysisTimeoutSeconds" yaml:"symbolAnalysisTimeoutSeconds"`
-	Timeframes                    []string `mapstructure:"timeframes" json:"timeframes" yaml:"timeframes"`
-	GenerateChartsByDefault       bool     `mapstructure:"generateChartsByDefault" json:"generateChartsByDefault" yaml:"generateChartsByDefault"`
-}
-
 // ExchangesConfig defines exchange selection. Symbol normalization is fixed
 // to canonical USDT perpetuals in the adapters.
 type ExchangesConfig struct {
-	Primary string   `mapstructure:"primary" json:"primary" yaml:"primary"`
-	Backups []string `mapstructure:"backups" json:"backups" yaml:"backups"`
+	Primary string `mapstructure:"primary" json:"primary" yaml:"primary"`
 	// WSEndpoints overrides adapter ticker WebSocket endpoints. Empty means the
 	// adapter default, so an exchange-side endpoint migration is config-only.
 	WSEndpoints WSEndpointsConfig `mapstructure:"wsEndpoints" json:"wsEndpoints,omitempty" yaml:"wsEndpoints,omitempty"`
@@ -441,39 +423,6 @@ type WSEndpointsConfig struct {
 	OKX string `mapstructure:"okx" json:"okx,omitempty" yaml:"okx,omitempty"`
 }
 
-// ScoringConfig defines deterministic scoring thresholds and weights.
-type ScoringConfig struct {
-	CandidateWeights            map[string]float64      `mapstructure:"candidateWeights" json:"candidateWeights" yaml:"candidateWeights"`
-	SetupWeights                map[string]float64      `mapstructure:"setupWeights" json:"setupWeights" yaml:"setupWeights"`
-	CycleThresholds             map[string]float64      `mapstructure:"cycleThresholds" json:"cycleThresholds" yaml:"cycleThresholds"`
-	CycleDetector               CycleDetectorYAMLConfig `mapstructure:"cycleDetector" json:"cycleDetector" yaml:"cycleDetector"`
-	MinimumLiquidityQuoteVolume float64                 `mapstructure:"minimumLiquidityQuoteVolume" json:"minimumLiquidityQuoteVolume" yaml:"minimumLiquidityQuoteVolume"`
-	MinimumRiskReward           float64                 `mapstructure:"minimumRiskReward" json:"minimumRiskReward" yaml:"minimumRiskReward"`
-	StrictRiskReward            float64                 `mapstructure:"strictRiskReward" json:"strictRiskReward" yaml:"strictRiskReward"`
-	ShortThresholdPremium       float64                 `mapstructure:"shortThresholdPremium" json:"shortThresholdPremium" yaml:"shortThresholdPremium"`
-}
-
-// CycleDetectorYAMLConfig maps yaml thresholds to indicators.CycleDetectorConfig.
-type CycleDetectorYAMLConfig struct {
-	SpringBtcChangeMin      float64 `mapstructure:"springBtcChangeMin" json:"springBtcChangeMin" yaml:"springBtcChangeMin"`
-	SummerBtcChangeMin      float64 `mapstructure:"summerBtcChangeMin" json:"summerBtcChangeMin" yaml:"summerBtcChangeMin"`
-	AutumnBtcChangeMax      float64 `mapstructure:"autumnBtcChangeMax" json:"autumnBtcChangeMax" yaml:"autumnBtcChangeMax"`
-	WinterBtcChangeMax      float64 `mapstructure:"winterBtcChangeMax" json:"winterBtcChangeMax" yaml:"winterBtcChangeMax"`
-	HighVolatilityThreshold float64 `mapstructure:"highVolatilityThreshold" json:"highVolatilityThreshold" yaml:"highVolatilityThreshold"`
-	LowVolatilityThreshold  float64 `mapstructure:"lowVolatilityThreshold" json:"lowVolatilityThreshold" yaml:"lowVolatilityThreshold"`
-	HighFundingThreshold    float64 `mapstructure:"highFundingThreshold" json:"highFundingThreshold" yaml:"highFundingThreshold"`
-	LowFundingThreshold     float64 `mapstructure:"lowFundingThreshold" json:"lowFundingThreshold" yaml:"lowFundingThreshold"`
-}
-
-// RiskConfig defines signal-only risk bounds (not execution commands).
-type RiskConfig struct {
-	MaxPositionPct                 map[string]float64 `mapstructure:"maxPositionPct" json:"maxPositionPct" yaml:"maxPositionPct"`
-	MaxLeverage                    map[string]float64 `mapstructure:"maxLeverage" json:"maxLeverage" yaml:"maxLeverage"`
-	WeakCyclePositionMultiplier    float64            `mapstructure:"weakCyclePositionMultiplier" json:"weakCyclePositionMultiplier" yaml:"weakCyclePositionMultiplier"`
-	ShortPositionMultiplier        float64            `mapstructure:"shortPositionMultiplier" json:"shortPositionMultiplier" yaml:"shortPositionMultiplier"`
-	InverseCyclePositionMultiplier float64            `mapstructure:"inverseCyclePositionMultiplier" json:"inverseCyclePositionMultiplier" yaml:"inverseCyclePositionMultiplier"`
-}
-
 // StorageConfig defines persistence configuration. DatabasePath anchors the
 // storage directory; MarketPulse events/outcomes and watch hints are JSONL
 // sidecar files next to it.
@@ -482,12 +431,4 @@ type StorageConfig struct {
 	WatchHintsPath          string  `mapstructure:"watchHintsPath" json:"watchHintsPath" yaml:"watchHintsPath"`
 	WatchHintRetentionHours float64 `mapstructure:"watchHintRetentionHours" json:"watchHintRetentionHours" yaml:"watchHintRetentionHours"`
 	WatchHintScoreBoost     float64 `mapstructure:"watchHintScoreBoost" json:"watchHintScoreBoost" yaml:"watchHintScoreBoost"`
-}
-
-// ChartConfig defines chart-spec generation policy. Kairos emits chart specs
-// only; rendering is a downstream concern.
-type ChartConfig struct {
-	DefaultChartCount            int     `mapstructure:"defaultChartCount" json:"defaultChartCount" yaml:"defaultChartCount"`
-	OutputPath                   string  `mapstructure:"outputPath" json:"outputPath" yaml:"outputPath"`
-	MultiTimeframeScoreThreshold float64 `mapstructure:"multiTimeframeScoreThreshold" json:"multiTimeframeScoreThreshold" yaml:"multiTimeframeScoreThreshold"`
 }

@@ -23,38 +23,40 @@ It scans futures markets, detects hard-data anomalies, scores deterministic setu
 | 教义/策略 | `docs/10-doctrine/KAIROS_DOCTRINE.md` | canonical freeze: 工作流 + 硬规则(唯一权威) |
 | 模型 | `docs/20-models/` | MarketPulse / CycleModel |
 | 工程架构 | `docs/90-engineering/adr/` | 架构决策记录 |
-| Config changes | `config/config.yaml.example` | Detector thresholds, scanner limits, Telegram settings |
+| Config changes | `config/config.yaml.example` | Detector thresholds, risk gate, Telegram settings |
 
 ## Trading System Boundary
 
 ### Architecture
 
 - **kairosd** (`cmd/kairosd`): realtime WebSocket anomaly watcher → Telegram
-- **kairos-alert** (`cmd/kairos-alert`): one-shot deterministic scanner summary → Telegram
 - **kairos-desk** (`cmd/kairos-desk`): human decision CLI; accept 前经 BehaviorGate（教义 9b 行为红线）机械判定
 - **kairos-eval** (`cmd/kairos-eval`): journal EV attribution + gate 合规报告
+- **kairos-calibrate** (`cmd/kairos-calibrate`): events + outcomes + 60s snapshots → lift_5m 校准
+- **kairos-market-replay** (`cmd/kairos-market-replay`): MarketPulse 影子算法回放
+- **kairos-oiscan** (`cmd/kairos-oiscan`): 全市场 OI 异动扫描 → data/inbound/futures
 - **human**: final chart review, trade selection, sizing, entries, exits
 
 ### CLI Commands
 ```bash
 go build -o kairosd ./cmd/kairosd
-go build -o kairos-alert ./cmd/kairos-alert
-go build -o kairos-backtest ./cmd/kairos-backtest
+go build -o kairos-desk ./cmd/kairos-desk
+go build -o kairos-eval ./cmd/kairos-eval
+go build -o kairos-calibrate ./cmd/kairos-calibrate
+go build -o kairos-market-replay ./cmd/kairos-market-replay
 go build -o kairos-oiscan ./cmd/kairos-oiscan   # 全市场 OI 异动扫描 → data/inbound/futures
 
 ./kairosd --config config/config.yaml               # Realtime hard-data Telegram alerts
-./kairos-alert --config config/config.yaml --dry-run
-./kairos-backtest --symbol BTC/USDT --start 2024-01-01 --end 2024-06-01
 go run ./cmd/kairos-desk gate <ticket-id>           # BehaviorGate dry-run 判定
 go run ./cmd/kairos-eval gate                       # gate 合规报告
 make check                                          # build + vet + lint + test -race
-make check-python                                   # floors/launch + tools/research
+make check-python                                   # tools/research
 ```
 
 ### Risk Constraints
 - Altcoins: 33% position, max 5x leverage
 - BTC/ETH: 33% position, max 10x leverage
-- Scanner risk output is a bound, not a trade instruction
+- Risk gate output is a bound, not a trade instruction
 - No automatic order placement
 
 ## Always-On Rules
@@ -62,7 +64,7 @@ make check-python                                   # floors/launch + tools/rese
 - **Language**: Default to Chinese for user communication
 - **Evidence**: Verify high-risk claims before citing
 - **Efficiency**: Batch operations, avoid redundant reads
-- **Commit messages**: Conventional Commits — `type(scope): description`, e.g. `feat(scanner): add volume confirmation gate`. Types: feat/fix/refactor/docs/test/chore. Scope is the module name (scanner, base, blacklist, etc). Keep under 72 chars. If you need more detail, use the body (blank line after subject).
+- **Commit messages**: Conventional Commits — `type(scope): description`, e.g. `feat(detector): add volume confirmation gate`. Types: feat/fix/refactor/docs/test/chore. Scope is the module name (detector, decision, engine, etc). Keep under 72 chars. If you need more detail, use the body (blank line after subject).
 
 ## Priority
 
@@ -70,25 +72,3 @@ make check-python                                   # floors/launch + tools/rese
 2. Nearest project instruction file.
 3. This file.
 4. Routed docs details.
-
-<!-- TRELLIS:START -->
-# Trellis Instructions
-
-These instructions are for AI assistants working in this project.
-
-This project is managed by Trellis. The working knowledge you need lives under `.trellis/`:
-
-- `.trellis/workflow.md` — development phases, when to create tasks, skill routing
-- `.trellis/spec/` — package- and layer-scoped coding guidelines (read before writing code in a given layer)
-- `.trellis/workspace/` — per-developer journals and session traces
-- `.trellis/tasks/` — active and archived tasks (PRDs, research, jsonl context)
-
-If a Trellis command is available on your platform (e.g. `/trellis:finish-work`, `/trellis:continue`), prefer it over manual steps. Not every platform exposes every command.
-
-If you're using Codex or another agent-capable tool, additional project-scoped helpers may live in:
-- `.agents/skills/` — reusable Trellis skills
-- `.codex/agents/` — optional custom subagents
-
-Managed by Trellis. Edits outside this block are preserved; edits inside may be overwritten by a future `trellis update`.
-
-<!-- TRELLIS:END -->

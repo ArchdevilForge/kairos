@@ -4,11 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"math"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/ArchdevilForge/kairos/internal/types"
@@ -23,9 +20,7 @@ const (
 type binanceExchange struct {
 	httpCli *http.Client
 	feed    feedState
-	mu      sync.Mutex
-	cancel  context.CancelFunc
-	closed  bool
+	ws      wsLifecycle
 }
 
 func newBinance() *binanceExchange {
@@ -38,14 +33,10 @@ func (b *binanceExchange) Name() string { return "binance" }
 func (b *binanceExchange) FeedStats() FeedStats { return b.feed.stats() }
 
 func (b *binanceExchange) SubscribeTickers(ctx context.Context, symbols []string, tickerCh chan<- types.Ticker) error {
-	b.mu.Lock()
-	if b.closed {
-		b.mu.Unlock()
-		return fmt.Errorf("binance: exchange closed")
+	ctx, err := b.ws.begin(ctx, "binance")
+	if err != nil {
+		return err
 	}
-	ctx, cancel := context.WithCancel(ctx)
-	b.cancel = cancel
-	b.mu.Unlock()
 
 	streams := make([]string, 0, len(symbols))
 	lookup := make(map[string]string, len(symbols))
@@ -59,8 +50,7 @@ func (b *binanceExchange) SubscribeTickers(ctx context.Context, symbols []string
 	}
 
 	uri := binanceWSEndpoint + "/" + strings.Join(streams, "/")
-	backoff := time.Second
-	maxBackoff := 30 * time.Second
+	backoff := wsInitialBackoff
 
 	flog := newFeedLog("binance")
 	for {
@@ -74,10 +64,10 @@ func (b *binanceExchange) SubscribeTickers(ctx context.Context, symbols []string
 			if err := ctxSleep(ctx, backoff); err != nil {
 				return err
 			}
-			backoff = time.Duration(math.Min(float64(backoff*2), float64(maxBackoff)))
+			backoff = nextWSBackoff(backoff)
 			continue
 		}
-		backoff = time.Second
+		backoff = wsInitialBackoff
 		flog.Info("ws connected", "endpoint", binanceWSEndpoint, "symbols", len(streams))
 		// Binance carries the subscription in the dial URL, so "subscribed" is
 		// reached as soon as the combined stream socket is up.
@@ -156,31 +146,13 @@ func (b *binanceExchange) FetchOHLCV(ctx context.Context, symbol, timeframe stri
 }
 
 func (b *binanceExchange) Close() error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if b.closed {
-		return nil
-	}
-	b.closed = true
-	if b.cancel != nil {
-		b.cancel()
-	}
-	return nil
+	return b.ws.close()
 }
 
 func (b *binanceExchange) get(ctx context.Context, url string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	body, err := doHTTPGet(ctx, b.httpCli, url)
 	if err != nil {
 		return nil, fmt.Errorf("binance request: %w", err)
-	}
-	resp, err := b.httpCli.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("binance request: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("binance read: %w", err)
 	}
 	return body, nil
 }

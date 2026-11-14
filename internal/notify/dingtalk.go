@@ -152,7 +152,7 @@ func dingTalkSign(timestamp, secret string) (string, error) {
 // ---------------------------------------------------------------------------
 
 func formatDingTalkEvent(event types.AlertEvent) (title, body string) {
-	symbol := strings.ReplaceAll(strings.ReplaceAll(event.Symbol, "/USDT:USDT", ""), "/USDT", "")
+	symbol := shortSymbol(event.Symbol)
 	eventName := eventNameZh(event.Event)
 	severity := severityZh(string(event.Severity))
 	ts := formatTimestamp(event.Timestamp)
