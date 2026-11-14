@@ -95,7 +95,7 @@ func setDefaults(v *viper.Viper) {
 		"topSymbols":            30,
 		"refreshIntervalHours":  4,
 		"dedupWindowSeconds":    5,
-		"symbolCooldownMinutes": 45,
+		"symbolCooldownMinutes": 30,
 		"feedSilentWarnSeconds": 300,
 	})
 

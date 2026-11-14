@@ -51,7 +51,7 @@ priceVelocity:
 dataManager:
   topSymbols: 30
   dedupWindowSeconds: 5
-  symbolCooldownMinutes: 45
+  symbolCooldownMinutes: 30
 ```
 
 Other detectors (`volumeSpike`, `futuresMetrics`, `longShortRatio`, `liquidation`, `resonanceScorer`) default **disabled**.
@@ -64,10 +64,10 @@ Path: `internal/engine/pipeline.go` → `deliverEvent` / `passesAlertPolicy`.
 2. **Event type allow-list** — only `price_velocity` by default.
 3. **Severity + liquidityWeight** — low-cap symbols get severity penalty and stricter `minPriceChangePct`.
 4. **Dedup window** — same `symbol__event_type` within `dedupWindowSeconds` (default 5s).
-5. **Symbol cooldown** — same key within `symbolCooldownMinutes` (default 45 min).
+5. **Symbol cooldown** — same key within `symbolCooldownMinutes` (default 30 min).
 6. **Detector-local cooldown** — `priceVelocity.cooldownSeconds` (default 120s) per `symbol_window`.
 
-Net effect: one symbol can still produce at most ~1 Telegram alert / 45 min after policy, but **many different symbols** can each fire independently → noisy “small-cap pump” nights.
+Net effect: one symbol can still produce at most ~1 Telegram alert / 30 min after policy, but **many different symbols** can each fire independently → noisy “small-cap pump” nights.
 
 ## 4. Typical false-positive classes (qualitative)
 
