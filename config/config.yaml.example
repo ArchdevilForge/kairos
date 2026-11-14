@@ -36,7 +36,7 @@ dataManager:
   topSymbols: 30
   refreshIntervalHours: 4
   dedupWindowSeconds: 5
-  symbolCooldownMinutes: 45
+  symbolCooldownMinutes: 30
   # A connected ticker feed that delivers nothing for this many seconds logs a
   # WARN "feed silent" and repeats it every interval until data returns (which
   # logs INFO "feed resumed"). Default 300 = 5m; 0 disables. Log-only.
