@@ -1,0 +1,152 @@
+@import "tailwindcss";
+
+:root,
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg-canvas: #141413;
+  --bg-surface: #1C1B19;
+  --bg-elevated: #262522;
+  --bg-overlay: rgba(20, 20, 19, 0.78);
+
+  --border-hairline: rgba(250, 249, 245, 0.09);
+  --border-strong: rgba(250, 249, 245, 0.16);
+
+  --text-primary: #FAF9F5;
+  --text-secondary: #B0AEA5;
+  --text-muted: #87867F;
+
+  --accent-brand: #D97757;
+  --accent-brand-hover: #C6613F;
+  --accent-brand-soft: rgba(217, 119, 87, 0.14);
+
+  --candle-bull: #788C5D;
+  --pnl-pos: #8FA670;
+  --candle-bull-soft: rgba(120, 140, 93, 0.15);
+
+  --candle-bear: #B85450;
+  --pnl-neg: #D16D68;
+  --candle-bear-soft: rgba(184, 84, 80, 0.15);
+
+  --accent-info: #6A9BCC;
+  --accent-info-soft: rgba(106, 155, 204, 0.14);
+
+  --state-warn: #C99A4E;
+  --state-warn-soft: rgba(201, 154, 78, 0.14);
+
+  --chart-grid: rgba(250, 249, 245, 0.045);
+  --chart-crosshair: rgba(250, 249, 245, 0.24);
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+
+  --bg-canvas: #FAF9F5;
+  --bg-surface: #F5F4ED;
+  --bg-elevated: #E8E6DC;
+  --bg-overlay: rgba(250, 249, 245, 0.82);
+
+  --border-hairline: rgba(20, 20, 19, 0.10);
+  --border-strong: rgba(20, 20, 19, 0.18);
+
+  --text-primary: #141413;
+  --text-secondary: #5E5D59;
+  --text-muted: #87867F;
+
+  --accent-brand: #D97757;
+  --accent-brand-hover: #C6613F;
+  --accent-brand-soft: rgba(217, 119, 87, 0.12);
+
+  --candle-bull: #788C5D;
+  --pnl-pos: #5B6E44;
+  --candle-bull-soft: rgba(120, 140, 93, 0.14);
+
+  --candle-bear: #B85450;
+  --pnl-neg: #A84440;
+  --candle-bear-soft: rgba(184, 84, 80, 0.12);
+
+  --accent-info: #4E7DAA;
+  --accent-info-soft: rgba(78, 125, 170, 0.13);
+
+  --state-warn: #A6792E;
+  --state-warn-soft: rgba(166, 121, 46, 0.13);
+
+  --chart-grid: rgba(20, 20, 19, 0.055);
+  --chart-crosshair: rgba(20, 20, 19, 0.24);
+}
+
+:root {
+  --font-serif: 'Newsreader', 'Source Serif 4', Georgia, serif;
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    background-color: var(--bg-canvas);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  button,
+  a,
+  [role="button"],
+  select,
+  summary {
+    cursor: pointer;
+    touch-action: manipulation;
+  }
+
+  :focus-visible {
+    outline: 1.5px solid var(--accent-brand);
+    outline-offset: 2px;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--border-strong);
+    border-radius: 3px;
+  }
+}
+
+.font-editorial {
+  font-family: var(--font-serif);
+  letter-spacing: -0.01em;
+}
+
+.tabular-nums {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1, "zero" 1;
+}
+
+.hairline-card {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--radius-md);
+}
+
+.hairline-divider {
+  border-color: var(--border-hairline);
+}

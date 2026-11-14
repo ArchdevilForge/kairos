@@ -1,0 +1,33 @@
+{
+  "name": "kairos-desk-desktop",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Kairos human-controlled crypto futures watch and trade review desktop client",
+  "type": "module",
+  "main": "electron/main.mjs",
+  "scripts": {
+    "dev:ui": "vite",
+    "build:ui": "tsc --noEmit && vite build",
+    "build": "pnpm run build:ui",
+    "typecheck": "tsc --noEmit --pretty false",
+    "verify:tokens": "node scripts/verify-tokens.mjs",
+    "desktop": "node scripts/run-electron.mjs"
+  },
+  "dependencies": {
+    "@tailwindcss/vite": "^4.1.18",
+    "lightweight-charts": "^5.1.0",
+    "lucide-react": "^0.562.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "tailwindcss": "^4.1.18"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "@types/react": "^19.2.5",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.1.1",
+    "electron": "^35.1.5",
+    "typescript": "~5.9.3",
+    "vite": "^7.2.4"
+  }
+}
