@@ -38,7 +38,6 @@ Observe  →  Interpret  →  Select  →  Decide  →  Execute  →  Learn
 | `40-research/hypotheses/` | 待验证假设（模板见 `HYPOTHESIS_TEMPLATE.md`） | 骨架 |
 | `40-research/experiments/` | 实验记录（shadow/backtest/live-small） | 骨架 |
 | `40-research/findings/` | 已验证发现（含 newsliquid 三维度研究、MarketPulse 基线/调参） | 有内容 |
-| `40-research/sources/` | 外部来源归档 | 骨架 |
 | `50-reviews/` | 交易复盘 / 周报 / 周期复盘 | 骨架 |
 
 ## 历史档案
@@ -47,6 +46,8 @@ Observe  →  Interpret  →  Select  →  Decide  →  Execute  →  Learn
 
 - `ARCHITECTURE_2026-06-27.md` — 旧权威架构（1d/4h/15m 旧策略模型），已降级
 - `architecture-review.md` — 旧架构评审
+- `GOAL_LAUNCH_DATA_AND_RISK_GATE.md` — Launch 数据管道与行为 Risk Gate 目标文档（已归档）
+- `40-research/` — 历史研究报告、Phase 1-3 实验记录与 Bit浪浪案例库（已归档；`40-research/experiments/` 保留 `2026-11-11-phase3c-notice-eval-template.md` 模板）
 
 ## 路线图（待办，非权威）
 
@@ -64,7 +65,7 @@ Observe  →  Interpret  →  Select  →  Decide  →  Execute  →  Learn
 - [x] P1: Alpha Attribution（SelectionAlpha + HumanAlpha；Entry/Exit 拆分待数据积累）
 - [x] P2: JSONL → DuckDB research layer（tools/research/）
 - [x] P2: 每个 floor 加 manifest.yaml（状态/数据源/事件/执行权限）
-- [x] P0: Launch 数据管道 + 行为 Risk Gate 机械化（2026-08-12 交付）→ `GOAL_LAUNCH_DATA_AND_RISK_GATE.md`
+- [x] P0: Launch 数据管道 + 行为 Risk Gate 机械化（2026-08-12 交付）→ `archive/GOAL_LAUNCH_DATA_AND_RISK_GATE.md`（已归档）
 
 进行中（运营闭环，不是写新代码）：
 
