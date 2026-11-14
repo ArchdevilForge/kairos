@@ -2,19 +2,28 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"log"
 	"log/slog"
+	"net"
+	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/ArchdevilForge/kairos/internal/cache"
 	"github.com/ArchdevilForge/kairos/internal/config"
+	"github.com/ArchdevilForge/kairos/internal/deskapi"
 	"github.com/ArchdevilForge/kairos/internal/engine"
 	"github.com/ArchdevilForge/kairos/internal/notify"
+	"github.com/ArchdevilForge/kairos/internal/types"
 )
 
 // pipelineRunner is the slice of engine.Pipeline that the daemon lifecycle
@@ -75,9 +84,11 @@ func run(ctx context.Context, p pipelineRunner) error {
 
 func main() {
 	cfgPath := flag.String("config", "config.yaml", "path to config YAML file")
+	deskListen := flag.String("desk-listen", "", "local loopback HTTP/WS listen address for Kairos Desk (e.g. 127.0.0.1:0)")
+	deskToken := flag.String("desk-token", "", "bearer token for Kairos Desk API (32-char hex generated if omitted)")
 	flag.Parse()
 
-	cfg, err := config.Load(*cfgPath)
+	cfg, err := loadDaemonConfig(*cfgPath, strings.TrimSpace(*deskListen) != "")
 	if err != nil {
 		log.Fatalf("config load: %v", err)
 	}
@@ -119,6 +130,61 @@ func main() {
 	if ding != nil {
 		pipeline.SetDingTalk(ding)
 	}
+
+	var (
+		cacheStore *cache.Store
+		deskSrv    *deskapi.Server
+		httpSrv    *http.Server
+	)
+	if listenAddr := strings.TrimSpace(*deskListen); listenAddr != "" {
+		if err := pipeline.EnsureDeskStorage(); err != nil {
+			log.Fatalf("desk storage init: %v", err)
+		}
+		cacheStore, err = cache.OpenFromStorageConfig(cfg.Storage)
+		if err != nil {
+			log.Fatalf("desk cache init: %v", err)
+		}
+		defer func() { _ = cacheStore.Close() }()
+		pipeline.SetCacheStore(cacheStore)
+
+		token := strings.TrimSpace(*deskToken)
+		if token == "" {
+			token, err = randomHexToken(16)
+			if err != nil {
+				log.Fatalf("generate desk token: %v", err)
+			}
+		}
+
+		deskSrv = deskapi.NewServer(pipeline, cacheStore, token)
+		pipeline.SetDesktopObserver(deskSrv.Observer())
+
+		ln, err := net.Listen("tcp", listenAddr)
+		if err != nil {
+			log.Fatalf("desk listen %s: %v", listenAddr, err)
+		}
+		httpSrv = &http.Server{
+			Handler:           deskSrv.Handler(),
+			ReadHeaderTimeout: 10 * time.Second,
+		}
+		go func() {
+			if err := httpSrv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				slog.Error("deskapi server error", "error", err)
+			}
+		}()
+
+		bound := normalizeBoundAddr(ln.Addr().String())
+		readyJSON, err := json.Marshal(map[string]string{
+			"url":    "http://" + bound,
+			"ws_url": "ws://" + bound + "/api/v1/ws",
+			"token":  token,
+		})
+		if err != nil {
+			log.Fatalf("marshal KAIROSD_DESK_READY: %v", err)
+		}
+		fmt.Printf("KAIROSD_DESK_READY %s\n", readyJSON)
+		_ = os.Stdout.Sync()
+	}
+
 	startMsg := "🟢 kairosd started — monitoring pipeline"
 	if tg != nil {
 		_ = tg.SendText(ctx, startMsg)
@@ -128,6 +194,15 @@ func main() {
 	}
 
 	runErr := run(ctx, pipeline)
+
+	if httpSrv != nil {
+		shutCtx, shutCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = httpSrv.Shutdown(shutCtx)
+		shutCancel()
+	}
+	if deskSrv != nil {
+		deskSrv.Close()
+	}
 
 	stopMsg := "🔴 kairosd stopped"
 	if runErr != nil {
@@ -155,4 +230,61 @@ func parseChatID(s string) (int64, error) {
 	var chatID int64
 	_, err := fmt.Sscanf(s, "%d", &chatID)
 	return chatID, err
+}
+
+func applyDesktopDaemonProfile(cfg *types.Config) {
+	if cfg == nil {
+		return
+	}
+	cfg.MarketPulse.Enabled = true
+	cfg.MarketPulse.ShadowMode = false
+	cfg.MarketPulse.GateIndividualAlertsWhenQuiet = true
+	if cfg.MarketPulse.Stress.MinMedianReturnPct < 0.85 {
+		cfg.MarketPulse.Stress.MinMedianReturnPct = 0.85
+	}
+	if cfg.MarketPulse.Leaders.Limit > 3 || cfg.MarketPulse.Leaders.Limit <= 0 {
+		cfg.MarketPulse.Leaders.Limit = 3
+	}
+	cfg.Opportunity.Enabled = true
+	cfg.Notice.Enabled = true
+}
+
+func loadDaemonConfig(cfgPath string, deskFallback bool) (*types.Config, error) {
+	if deskFallback {
+		if _, err := os.Stat(cfgPath); errors.Is(err, os.ErrNotExist) {
+			cfg, err := config.LoadString("")
+			if err != nil {
+				return nil, err
+			}
+			applyDesktopDaemonProfile(cfg)
+			return cfg, nil
+		}
+	}
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		return nil, err
+	}
+	if deskFallback {
+		applyDesktopDaemonProfile(cfg)
+	}
+	return cfg, nil
+}
+
+func randomHexToken(nBytes int) (string, error) {
+	b := make([]byte, nBytes)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
+func normalizeBoundAddr(addr string) string {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return addr
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = "127.0.0.1"
+	}
+	return net.JoinHostPort(host, port)
 }

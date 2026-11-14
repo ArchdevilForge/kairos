@@ -9,6 +9,7 @@
 *.exe
 *.test
 *.out
+coverage.out
 
 # 日志文件
 *.log*
@@ -60,3 +61,13 @@ monitoring_report.json
 .ace-tool/
 openspec.planning/
 watch-hints.jsonl
+
+# Desktop (Electron + Vite)
+desktop/node_modules/
+desktop/dist/
+desktop/out/
+desktop/*.tsbuildinfo
+
+# Python
+__pycache__/
+*.py[cod]

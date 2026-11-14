@@ -55,8 +55,10 @@ cross-check:
 		echo "  ok $$os/$$arch ($$(ls -d ./cmd/*/ | wc -l) commands)"; \
 	done
 
+COVER_PKG_LIST := $(shell echo $(COVER_PACKAGES) | tr ' ' ',')
+
 cover:
-	go test $(COVER_PACKAGES) -coverprofile=coverage.out -covermode=atomic
+	go test $(COVER_PACKAGES) -coverpkg=$(COVER_PKG_LIST) -coverprofile=coverage.out -covermode=atomic
 	@go tool cover -func=coverage.out | tail -1
 
 cover-check: cover
