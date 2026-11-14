@@ -1,7 +1,6 @@
 package detector
 
 import (
-	"context"
 	"log/slog"
 	"math"
 	"sync"
@@ -76,10 +75,6 @@ func NewLongShortRatioDetector(cfg types.LongShortRatioConfig) *LongShortRatioDe
 	}
 	return d
 }
-
-func (d *LongShortRatioDetector) Name() string { return "long_short_ratio" }
-
-func (d *LongShortRatioDetector) OnTicker(_ context.Context, _ types.Ticker) {}
 
 // OnLSSnapshot processes one long/short ratio snapshot.
 func (d *LongShortRatioDetector) OnLSSnapshot(symbol string, longRate, shortRate float64) {
@@ -162,40 +157,6 @@ func (d *LongShortRatioDetector) OnLSSnapshot(symbol string, longRate, shortRate
 }
 
 func (d *LongShortRatioDetector) Events() <-chan types.AnomalyEvent { return d.events }
-
-func (d *LongShortRatioDetector) Reset() {
-	d.zsMu.Lock()
-	clear(d.zscore)
-	d.zsMu.Unlock()
-	d.lastMu.Lock()
-	clear(d.last)
-	d.lastMu.Unlock()
-	d.cdMu.Lock()
-	clear(d.Cooldowns)
-	d.cdMu.Unlock()
-}
-
-// UpdateConfig hot-reloads configuration at runtime.
-func (d *LongShortRatioDetector) UpdateConfig(cfg types.LongShortRatioConfig) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.enabled = cfg.Enabled
-	if cfg.AbsThreshold > 0 {
-		d.absThreshold = cfg.AbsThreshold
-	}
-	if cfg.ZscoreThreshold > 0 {
-		d.zscoreThreshold = cfg.ZscoreThreshold
-	}
-	if cfg.ZscoreWindow > 0 {
-		d.zscoreWindow = cfg.ZscoreWindow
-	}
-	if cfg.VelocityThresholdPct > 0 {
-		d.velocityThresholdPct = cfg.VelocityThresholdPct
-	}
-	if cfg.MinNotifyInterval != "" {
-		d.minNotifyInterval = parseDuration(cfg.MinNotifyInterval)
-	}
-}
 
 func (d *LongShortRatioDetector) emitLS(symbol string, ts, longRate, shortRate float64,
 	reason string, value, zs float64, nowTime time.Time) {

@@ -232,87 +232,6 @@ func (s *MarketScanner) ScanMarket(ctx context.Context, exchangeName string) *ty
 		warnings, errors)
 }
 
-// AnalyzeSymbolSetup runs the setup analyzer for a single manually-requested symbol.
-func (s *MarketScanner) AnalyzeSymbolSetup(ctx context.Context, symbol, exchangeName string) *types.SignalEnvelope {
-	if exchangeName == "" {
-		exchangeName = s.config.Exchanges.Primary
-	}
-	var warnings, errors []string
-
-	canonical, err := utils.NormalizeSymbol(symbol)
-	if err != nil {
-		return makeSignalEnvelope(false, map[string]any{}, "", nil, nil, nil, []string{err.Error()})
-	}
-
-	exch, err := s.getExchange(exchangeName)
-	if err != nil {
-		return makeSignalEnvelope(false, map[string]any{"exchange": exchangeName}, canonical, nil, nil, nil,
-			[]string{fmt.Sprintf("Cannot connect to %s: %v", exchangeName, err)})
-	}
-	defer func() { _ = exch.Close() }()
-
-	ticker := s.fetchTicker(ctx, exch, canonical)
-	rsiMap, rsiWarn := s.loadRSIMap(ctx)
-	if rsiWarn != "" {
-		warnings = append(warnings, rsiWarn)
-	}
-	btcChange := s.btcChangeFromTicker(ctx, exch)
-	cand := s.scoreCandidate(canonical, exchangeName, ticker, btcChange, 0, rsiMap)
-	minLiq := s.config.Scoring.MinimumLiquidityQuoteVolume
-
-	quoteVolume := 0.0
-	if ticker != nil && ticker.QuoteVolume != nil {
-		quoteVolume = *ticker.QuoteVolume
-	}
-
-	if quoteVolume < minLiq {
-		actionState := types.ActionStateWatch
-		if quoteVolume <= 0 {
-			actionState = types.ActionStateNoTrade
-		}
-		warning := fmt.Sprintf("%s quoteVolume %.0f is below minimum %.0f; not eligible for trade_candidate.",
-			canonical, quoteVolume, minLiq)
-		warnings = append(warnings, warning)
-		setup := s.emptySetup(canonical, actionState, []string{"minimum liquidity not satisfied"}, []string{warning})
-		return makeSignalEnvelope(true,
-			map[string]any{"exchange": exchangeName, "candidate": candidateToMap(cand), "setup": setupToMap(setup)},
-			canonical,
-			map[string]any{"candidate_score": cand.CandidateScore, "setup_score": 0.0},
-			[]string{"manual symbol analysis completed with liquidity gate"},
-			warnings, errors)
-	}
-
-	btcCtx, btcWarnings := s.loadBTCContext(ctx, exch)
-	warnings = append(warnings, btcWarnings...)
-
-	var setup types.Setup
-	if btcCtx == nil {
-		setup = s.emptySetup(canonical, types.ActionStateWatch,
-			[]string{"BTC context is required before a trade candidate can be returned"},
-			btcWarnings)
-	} else {
-		setup = s.analyzeCandidate(ctx, exch, cand, btcCtx)
-	}
-
-	var thresholdPtr *float64
-	if setup.Threshold != nil {
-		thresholdPtrVal := *setup.Threshold
-		thresholdPtr = &thresholdPtrVal
-	}
-
-	return makeSignalEnvelope(true,
-		map[string]any{"exchange": exchangeName, "candidate": candidateToMap(cand), "setup": setupToMap(setup)},
-		canonical,
-		map[string]any{
-			"candidate_score": cand.CandidateScore,
-			"setup_score":     setup.SetupScore,
-			"threshold":       thresholdPtr,
-		},
-		[]string{"manual symbol analysis completed with deterministic Kairos scoring"},
-		DedupeStrings(append(warnings, setup.Warnings...)),
-		errors)
-}
-
 // ---------------------------------------------------------------------------
 // Exchange helpers
 // ---------------------------------------------------------------------------
@@ -414,19 +333,6 @@ func (s *MarketScanner) discoverCandidates(ctx context.Context, exch exchange.Ex
 	return scored, universeSize, warnings
 }
 
-func (s *MarketScanner) btcChangeFromTicker(ctx context.Context, exch exchange.Exchange) *float64 {
-	btcSym, err := utils.NormalizeSymbol("BTC/USDT")
-	if err != nil {
-		return nil
-	}
-	t := s.fetchTicker(ctx, exch, btcSym)
-	if t == nil || t.ChangePct == nil {
-		return nil
-	}
-	v := *t.ChangePct
-	return &v
-}
-
 func sortSetupsByCandidateOrder(setups []types.Setup, candidates []types.Candidate) {
 	order := make(map[string]int, len(candidates))
 	for i, c := range candidates {
@@ -450,19 +356,6 @@ func (s *MarketScanner) btcChangeFromUniverse(universe []universeItem) *float64 
 		return &v
 	}
 	return nil
-}
-
-// ---------------------------------------------------------------------------
-// Ticker fetching
-// ---------------------------------------------------------------------------
-
-func (s *MarketScanner) fetchTicker(ctx context.Context, exch exchange.Exchange, symbol string) *types.Ticker {
-	t, err := exch.FetchTicker(ctx, symbol)
-	if err != nil {
-		s.log.Debug("fetch ticker failed", "symbol", symbol, "error", err)
-		return nil
-	}
-	return t
 }
 
 func (s *MarketScanner) loadRSIMap(ctx context.Context) (map[string]data.CoinRSI, string) {

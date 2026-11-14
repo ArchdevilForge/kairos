@@ -203,7 +203,6 @@ type GateInput struct {
 	// unlocks a 2nd ticket early after a small trial loss or completed wave.
 	NewStructuralConfirm15m1h bool
 	PlaybookSwitch            string // e.g. "SECOND_WAVE"
-	CompletedPriorWave        bool
 
 	// Track (b): Hard floor that cannot be overridden — 2 consecutive stops on the same coin
 	// within 24h, or same-coin cumulative trial loss <= -1.5R → rigid 24h lock.
@@ -488,7 +487,6 @@ type ExitAuditInput struct {
 	Direction          types.CycleDirection
 	OpenedAt           time.Time
 	ClosedAt           time.Time
-	EntryPrice         float64
 	ExitPrice          float64
 	PresetStopPrice    float64
 	RealizedR          float64
@@ -624,56 +622,4 @@ func isProtectiveStopExempt(in ExitAuditInput) bool {
 		}
 	}
 	return false
-}
-
-// AuditExitSequence evaluates a chronological sequence of trades, automatically tracking
-// <5m same-coin long/short direction flips without a structural reset (Work Item 8).
-func AuditExitSequence(trades []ExitAuditInput) []ExitAuditResult {
-	results := make([]ExitAuditResult, len(trades))
-	for i := range trades {
-		cur := trades[i]
-		if cur.SameCoinFlipsLt5m == 0 && cur.Symbol != "" && !cur.OpenedAt.IsZero() && !cur.StructuralReset {
-			flips := 0
-			lastDir := cur.Direction
-			for j := i - 1; j >= 0; j-- {
-				prev := trades[j]
-				if prev.Symbol != cur.Symbol || prev.OpenedAt.IsZero() {
-					continue
-				}
-				refTime := prev.ClosedAt
-				if refTime.IsZero() {
-					refTime = prev.OpenedAt
-				}
-				if cur.OpenedAt.Sub(refTime) >= 5*time.Minute {
-					break
-				}
-				if prev.Direction != "" && lastDir != "" && prev.Direction != lastDir {
-					flips++
-					lastDir = prev.Direction
-				}
-				if prev.StructuralReset {
-					break
-				}
-			}
-			cur.SameCoinFlipsLt5m = flips
-		}
-		results[i] = AuditExit(cur)
-	}
-	return results
-}
-
-// AuditHoldingDuration is the legacy §9b rule 2 wrapper around AuditExit.
-// Returns the violation code if IsViolation is true, or "" when compliant/note.
-func AuditHoldingDuration(openedAt, closedAt time.Time) string {
-	res := AuditExit(ExitAuditInput{
-		TicketID:       "legacy",
-		HasValidTicket: true,
-		OpenedAt:       openedAt,
-		ClosedAt:       closedAt,
-		RealizedR:      -0.2,
-	})
-	if res.IsViolation {
-		return res.Code
-	}
-	return ""
 }

@@ -265,9 +265,6 @@ func normalizeMarketPulseConfig(cfg types.MarketPulseConfig) types.MarketPulseCo
 	return cfg
 }
 
-// Name implements detector naming.
-func (d *MarketPulseDetector) Name() string { return "market_pulse" }
-
 // Events returns the anomaly event channel.
 func (d *MarketPulseDetector) Events() <-chan types.AnomalyEvent { return d.events }
 
@@ -288,38 +285,6 @@ func (d *MarketPulseDetector) LastSnapshot() types.MarketSnapshot {
 // ShadowMode reports whether the detector is in shadow (log-only delivery) mode.
 func (d *MarketPulseDetector) ShadowMode() bool {
 	return d.cfg.ShadowMode
-}
-
-// Enabled reports whether the detector is active.
-func (d *MarketPulseDetector) Enabled() bool {
-	return d.cfg.Enabled
-}
-
-// Config returns a copy of the active config.
-func (d *MarketPulseDetector) Config() types.MarketPulseConfig {
-	return d.cfg
-}
-
-// Reset clears all series and returns to QUIET.
-func (d *MarketPulseDetector) Reset() {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.symbols = make(map[string]*mpSymbolSeries)
-	d.eligible = make(map[string]struct{})
-	d.state = types.MarketStateQuiet
-	d.stateSince = 0
-	d.activeDir = ""
-	d.impulseSamples = nil
-	d.trendSamples = nil
-	d.decaySince = 0
-	d.decayActive = false
-	d.quietResetSince = 0
-	d.universeChangedAt = 0
-	d.unhealthySince = 0
-	d.healthAlerted = false
-	clear(d.lastEmitted)
-	d.lastSnap = types.MarketSnapshot{}
-	d.pendingOutcomes = nil
 }
 
 // UpdateUniverse replaces the eligible symbol set. New symbols start a warmup

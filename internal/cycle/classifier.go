@@ -1,7 +1,6 @@
 package cycle
 
 import (
-	"fmt"
 	"sync"
 
 	"github.com/ArchdevilForge/kairos/internal/types"
@@ -72,16 +71,6 @@ func (c *Classifier) ClassifyMap(symbol string, asOfUnix int64, legacy types.Mar
 		nodes[s.Timeframe] = c.ClassifyNode(symbol, s)
 	}
 	return BuildMap(asOfUnix, legacy, nodes)
-}
-
-// Reset clears hysteresis (tests / symbol rotation).
-func (c *Classifier) Reset() {
-	if c == nil {
-		return
-	}
-	c.mu.Lock()
-	c.state = make(map[stateKey]*stickyState)
-	c.mu.Unlock()
 }
 
 func classifyRaw(s Series) types.CycleNode {
@@ -182,9 +171,4 @@ func roleForTF(tf string) types.TimeframeRole {
 	default:
 		return types.TimeframeRoleSetup
 	}
-}
-
-// String is a compact debug line.
-func NodeString(n types.CycleNode) string {
-	return fmt.Sprintf("%s %s/%s conf=%.2f", n.Timeframe, n.Direction, n.Phase, n.Confidence)
 }

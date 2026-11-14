@@ -330,16 +330,6 @@ func (j *Journal) SameSymbolCooldownStats(symbol string, now time.Time) (Cooldow
 	return stats, nil
 }
 
-// LastLossAt returns the end time of the most recent finalized losing outcome
-// for symbol (accepted trades only — gate cooldown input). Zero time = none.
-func (j *Journal) LastLossAt(symbol string) (time.Time, error) {
-	st, err := j.SameSymbolCooldownStats(symbol, time.Time{})
-	if err != nil {
-		return time.Time{}, err
-	}
-	return st.LastLossAt, nil
-}
-
 // SessionCandidates is the ranked board attached to a session (may have 0 tickets).
 type SessionCandidates struct {
 	SessionID  string                       `json:"session_id"`

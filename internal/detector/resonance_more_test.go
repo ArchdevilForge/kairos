@@ -11,8 +11,6 @@ func TestResonanceScorer_CallbackAndPrune(t *testing.T) {
 	rs := NewResonanceScorer(types.ResonanceScorerConfig{
 		Enabled: true, MinScore: 30, MinDimensions: 2, CooldownSeconds: 0, WindowSeconds: 300,
 	})
-	var got ResonanceEvent
-	rs.SetCallback(func(re ResonanceEvent) { got = re })
 
 	now := float64(time.Now().UnixMilli()) / 1000
 	events := []types.AnomalyEvent{
@@ -23,8 +21,13 @@ func TestResonanceScorer_CallbackAndPrune(t *testing.T) {
 	for _, evt := range events {
 		rs.OnEvent(evt)
 	}
-	if got.Symbol == "" {
-		t.Fatal("expected callback resonance event")
+	select {
+	case got := <-rs.Events():
+		if got.Symbol == "" {
+			t.Fatal("expected non-empty resonance event symbol")
+		}
+	default:
+		t.Fatal("expected resonance event")
 	}
 
 	// Expired window prune path.
@@ -32,7 +35,6 @@ func TestResonanceScorer_CallbackAndPrune(t *testing.T) {
 		Symbol: "SOL/USDT:USDT", EventType: "price_velocity", Timestamp: now - 400,
 		Data: map[string]any{"change_pct": 1.0, "zscore": 1.0},
 	})
-	rs.Reset()
 }
 
 func TestResonanceScorer_DisabledIgnores(t *testing.T) {

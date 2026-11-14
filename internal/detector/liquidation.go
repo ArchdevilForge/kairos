@@ -1,7 +1,6 @@
 package detector
 
 import (
-	"context"
 	"log/slog"
 	"math"
 	"sync"
@@ -77,10 +76,6 @@ func NewLiquidationDetector(cfg types.LiquidationConfig) *LiquidationDetector {
 	}
 	return d
 }
-
-func (d *LiquidationDetector) Name() string { return "liquidation" }
-
-func (d *LiquidationDetector) OnTicker(_ context.Context, _ types.Ticker) {}
 
 // OnLiquidationSnapshot processes one liquidation data snapshot.
 func (d *LiquidationDetector) OnLiquidationSnapshot(symbol string, totalUSD, longUSD, shortUSD float64) {
@@ -164,40 +159,6 @@ func (d *LiquidationDetector) OnLiquidationSnapshot(symbol string, totalUSD, lon
 }
 
 func (d *LiquidationDetector) Events() <-chan types.AnomalyEvent { return d.events }
-
-func (d *LiquidationDetector) Reset() {
-	d.zsMu.Lock()
-	clear(d.zscore)
-	d.zsMu.Unlock()
-	d.lastMu.Lock()
-	clear(d.last)
-	d.lastMu.Unlock()
-	d.cdMu.Lock()
-	clear(d.Cooldowns)
-	d.cdMu.Unlock()
-}
-
-// UpdateConfig hot-reloads configuration at runtime.
-func (d *LiquidationDetector) UpdateConfig(cfg types.LiquidationConfig) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.enabled = cfg.Enabled
-	if cfg.AbsThresholdUsd > 0 {
-		d.absThresholdUsd = cfg.AbsThresholdUsd
-	}
-	if cfg.ZscoreThreshold > 0 {
-		d.zscoreThreshold = cfg.ZscoreThreshold
-	}
-	if cfg.ZscoreWindow > 0 {
-		d.zscoreWindow = cfg.ZscoreWindow
-	}
-	if cfg.ImbalanceThreshold > 0 {
-		d.imbalanceThreshold = cfg.ImbalanceThreshold
-	}
-	if cfg.MinNotifyInterval != "" {
-		d.minNotifyInterval = parseDuration(cfg.MinNotifyInterval)
-	}
-}
 
 func (d *LiquidationDetector) emitLiquidation(symbol string, ts, totalUSD, longUSD, shortUSD float64,
 	reason string, triggerValue, zs float64, nowTime time.Time) {

@@ -5,6 +5,7 @@ import (
 	"math"
 	"testing"
 
+	"github.com/ArchdevilForge/kairos/internal/indicators"
 	"github.com/ArchdevilForge/kairos/internal/types"
 )
 
@@ -111,7 +112,7 @@ func TestRun_InsufficientData(t *testing.T) {
 			endMs: {{Timestamp: endMs / 1000, Close: 1}},
 		},
 	}
-	runner := New(ex)
+	runner := NewWithConfig(ex, indicators.DefaultBoxDetectorConfig())
 	_, err := runner.Run(context.Background(), "BTC/USDT", "2024-01-01", "2024-03-01", RunOption{})
 	if err == nil {
 		t.Fatal("expected insufficient data error")
@@ -131,7 +132,7 @@ func TestRun_FlatSeries(t *testing.T) {
 		}
 	}
 	ex := &stubExchange{pages: map[int64][]types.Candle{endMs: candles}}
-	runner := New(ex)
+	runner := NewWithConfig(ex, indicators.DefaultBoxDetectorConfig())
 	res, err := runner.Run(context.Background(), "BTC/USDT", "2024-01-01", "2024-03-01", RunOption{})
 	if err != nil {
 		t.Fatal(err)

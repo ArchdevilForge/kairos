@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/ArchdevilForge/kairos/internal/indicators"
 	"github.com/ArchdevilForge/kairos/internal/types"
 )
 
@@ -19,10 +20,6 @@ func (s *stubExchange) SubscribeTickers(context.Context, []string, chan<- types.
 }
 
 func (s *stubExchange) FetchTickers(context.Context) (map[string]*types.Ticker, error) {
-	return nil, nil
-}
-
-func (s *stubExchange) FetchTicker(context.Context, string) (*types.Ticker, error) {
 	return nil, nil
 }
 
@@ -55,7 +52,7 @@ func TestFetchOHLCV_BackwardPagination(t *testing.T) {
 		},
 	}
 
-	runner := New(ex)
+	runner := NewWithConfig(ex, indicators.DefaultBoxDetectorConfig())
 	data, err := runner.fetchOHLCV(context.Background(), "BTC/USDT", "2024-01-01", "2024-03-01", "4h")
 	if err != nil {
 		t.Fatal(err)

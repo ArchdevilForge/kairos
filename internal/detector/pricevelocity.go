@@ -59,8 +59,6 @@ func NewPriceVelocityDetector(cfg types.PriceVelocityConfig) *PriceVelocityDetec
 	return d
 }
 
-func (d *PriceVelocityDetector) Name() string { return "price_velocity" }
-
 // OnTicker processes a ticker update. The timestamp is taken from the
 // system clock to match Python behaviour.
 func (d *PriceVelocityDetector) OnTicker(_ context.Context, ticker types.Ticker) {
@@ -87,27 +85,6 @@ func (d *PriceVelocityDetector) OnTicker(_ context.Context, ticker types.Ticker)
 }
 
 func (d *PriceVelocityDetector) Events() <-chan types.AnomalyEvent { return d.events }
-func (d *PriceVelocityDetector) Reset() {
-	d.priceMu.Lock()
-	clear(d.priceHistory)
-	d.priceMu.Unlock()
-	d.notifyMu.Lock()
-	clear(d.lastNotify)
-	d.notifyMu.Unlock()
-}
-
-// UpdateConfig hot-reloads configuration at runtime.
-func (d *PriceVelocityDetector) UpdateConfig(cfg types.PriceVelocityConfig) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.enabled = cfg.Enabled
-	if len(cfg.Windows) > 0 {
-		d.windows = cfg.Windows
-	}
-	if cfg.CooldownSeconds > 0 {
-		d.cooldown = time.Duration(cfg.CooldownSeconds) * time.Second
-	}
-}
 
 func (d *PriceVelocityDetector) checkVelocity(symbol string, currentPrice float64, now float64, nowTime time.Time) {
 	d.priceMu.RLock()

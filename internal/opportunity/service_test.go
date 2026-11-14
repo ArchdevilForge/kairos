@@ -97,7 +97,7 @@ func TestEvaluate_MaxThreeTickets(t *testing.T) {
 		entry[sym] = 100
 		stop[sym] = 97
 	}
-	res, err := s.Evaluate(EvaluateRequest{
+	res, err := s.EvaluateOrAttach(EvaluateRequest{
 		EventID:        "ev-max",
 		PulseState:     types.MarketStateImpulseUp,
 		PulseDirection: types.CycleDirectionUp,
@@ -125,7 +125,7 @@ func TestApplyHumanDecision_Reject(t *testing.T) {
 	j := testJournal(t)
 	s := NewService(j, DefaultConfig())
 	mkt := cycleUp()
-	res, err := s.Evaluate(EvaluateRequest{
+	res, err := s.EvaluateOrAttach(EvaluateRequest{
 		EventID:        "ev-dec",
 		PulseState:     types.MarketStateImpulseUp,
 		PulseDirection: types.CycleDirectionUp,
@@ -168,7 +168,7 @@ func TestEvaluate_WinterNoTickets(t *testing.T) {
 		Timeframe: "4h", Role: types.TimeframeRoleContext,
 		Direction: types.CycleDirectionNeutral, Phase: types.WavePhaseWinter,
 	}
-	res, err := s.Evaluate(EvaluateRequest{
+	res, err := s.EvaluateOrAttach(EvaluateRequest{
 		EventID:        "ev-win",
 		PulseDirection: types.CycleDirectionUp,
 		PulseState:     types.MarketStateImpulseUp,
@@ -189,7 +189,7 @@ func TestApplyHumanDecision_RequiresReasonCode(t *testing.T) {
 	j := testJournal(t)
 	s := NewService(j, DefaultConfig())
 	mkt := cycleUp()
-	res, err := s.Evaluate(EvaluateRequest{
+	res, err := s.EvaluateOrAttach(EvaluateRequest{
 		EventID:        "ev-reason",
 		PulseState:     types.MarketStateImpulseUp,
 		PulseDirection: types.CycleDirectionUp,
@@ -258,7 +258,7 @@ func TestEvaluate_SeasonTimelineShadowAdvisory(t *testing.T) {
 	mkt := cycleUp()
 
 	// 1. Without cross-sectional input: BOTH season_regime and winter_defense_hint MUST be absent.
-	resUnm, err := s.Evaluate(EvaluateRequest{
+	resUnm, err := s.EvaluateOrAttach(EvaluateRequest{
 		EventID:        "ev-season-unmeasured",
 		PulseState:     types.MarketStateImpulseUp,
 		PulseDirection: types.CycleDirectionUp,
@@ -310,7 +310,7 @@ func TestEvaluate_SeasonTimelineShadowAdvisory(t *testing.T) {
 	timeline := cycle.BuildCausalSeasonTimeline(universeBars, nil)
 	trigTS := baseClose + int64(29*300)
 
-	res, err := s.Evaluate(EvaluateRequest{
+	res, err := s.EvaluateOrAttach(EvaluateRequest{
 		EventID:        "ev-season-win",
 		PulseState:     types.MarketStateImpulseUp,
 		PulseDirection: types.CycleDirectionUp,

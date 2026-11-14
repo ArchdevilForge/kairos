@@ -255,10 +255,6 @@ func (m *seasonE2EExchange) FetchTickers(context.Context) (map[string]*types.Tic
 	return out, nil
 }
 
-func (m *seasonE2EExchange) FetchTicker(context.Context, string) (*types.Ticker, error) {
-	return nil, nil
-}
-
 func (m *seasonE2EExchange) FetchOHLCV(_ context.Context, symbol, timeframe string, limit int, _ int64) ([]types.Candle, error) {
 	if timeframe == "5m" {
 		m.mu.RLock()

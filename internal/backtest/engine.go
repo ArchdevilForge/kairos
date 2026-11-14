@@ -78,11 +78,6 @@ type BacktestRunner struct {
 	cycleDetector *indicators.CycleDetector
 }
 
-// New creates a BacktestRunner wrapping the given exchange.
-func New(exch exchange.Exchange) *BacktestRunner {
-	return NewWithConfig(exch, indicators.DefaultBoxDetectorConfig())
-}
-
 // NewWithConfig creates a BacktestRunner with custom box detector settings.
 func NewWithConfig(exch exchange.Exchange, boxCfg indicators.BoxDetectorConfig) *BacktestRunner {
 	return &BacktestRunner{

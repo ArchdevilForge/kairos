@@ -164,44 +164,6 @@ func OHLCVToArrays(candles []types.Candle) *types.OHLCVArrays {
 }
 
 // ---------------------------------------------------------------------------
-// MarketCycle → map  (ported from _cycle_to_dict)
-// ---------------------------------------------------------------------------
-
-// CycleToDict converts a MarketCycle struct to a map for JSON output.
-func CycleToDict(cycle types.MarketCycle) map[string]any {
-	return map[string]any{
-		"phase":                 string(cycle.Phase),
-		"confidence":            cycle.Confidence,
-		"btc_trend":             cycle.BtcTrend,
-		"btc_change_30d":        cycle.BtcChange30D,
-		"btc_change_7d":         cycle.BtcChange7D,
-		"volatility":            cycle.Volatility,
-		"volume_trend":          cycle.VolumeTrend,
-		"altcoin_correlation":   cycle.AltcoinCorrelation,
-		"funding_rates_avg":     cycle.FundingRatesAvg,
-		"market_cap_change_30d": cycle.MarketCapChange30D,
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Dedup  (ported from _dedupe_strings)
-// ---------------------------------------------------------------------------
-
-// DedupeStrings returns a new slice preserving order with duplicates removed.
-func DedupeStrings(v []string) []string {
-	seen := make(map[string]struct{}, len(v))
-	result := make([]string, 0, len(v))
-	for _, s := range v {
-		if _, ok := seen[s]; ok {
-			continue
-		}
-		seen[s] = struct{}{}
-		result = append(result, s)
-	}
-	return result
-}
-
-// ---------------------------------------------------------------------------
 // Fingerprint  (ported from _fingerprint)
 // ---------------------------------------------------------------------------
 

@@ -61,11 +61,6 @@ func TestBinanceFetchTickersAndOHLCV_Mock(t *testing.T) {
 		t.Fatalf("tickers: %+v", tickers["BTC/USDT:USDT"])
 	}
 
-	one, err := b.FetchTicker(context.Background(), "BTC/USDT:USDT")
-	if err != nil || one.LastPrice == nil {
-		t.Fatalf("fetch ticker: %+v %v", one, err)
-	}
-
 	candles, err := b.FetchOHLCV(context.Background(), "BTC/USDT", "4h", 10, 0)
 	if err != nil || len(candles) != 1 {
 		t.Fatalf("ohlcv: %+v %v", candles, err)
@@ -145,11 +140,6 @@ func TestOKXFetchTickersAndOHLCV_Mock(t *testing.T) {
 	candles, err := o.FetchOHLCV(context.Background(), "BTC/USDT:USDT", "4h", 10, 0)
 	if err != nil || len(candles) != 1 || candles[0].Volume != 10 || candles[0].QuoteVol != 15234.5 {
 		t.Fatalf("okx ohlcv: %v %+v", err, candles)
-	}
-
-	tk, err := o.FetchTicker(context.Background(), "BTC/USDT:USDT")
-	if err != nil || tk.FundingRate == nil {
-		t.Fatalf("okx ticker: %+v %v", tk, err)
 	}
 }
 

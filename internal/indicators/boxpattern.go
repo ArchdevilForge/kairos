@@ -182,34 +182,6 @@ func (d *BoxDetector) tryDetectBox(
 	}
 }
 
-// CheckBreakout checks if a box has broken out given the current price and volume.
-// Returns the (possibly modified) box. Volume must be at least 1.5x average to confirm.
-func (d *BoxDetector) CheckBreakout(box *types.BoxPattern, currentPrice, currentVolume, avgVolume float64) *types.BoxPattern {
-	if box.Status == types.BoxStatusBreakoutUp || box.Status == types.BoxStatusBreakoutDown {
-		return box
-	}
-
-	// Upward breakout: 0.5% above box high with volume confirmation
-	if currentPrice > box.High*1.005 && currentVolume > avgVolume*1.5 {
-		box.Status = types.BoxStatusBreakoutUp
-		box.BreakoutPrice = &currentPrice
-		inf := math.Inf(1)
-		box.BreakoutTime = &inf
-		return box
-	}
-
-	// Downward breakout: 0.5% below box low with volume confirmation
-	if currentPrice < box.Low*0.995 && currentVolume > avgVolume*1.5 {
-		box.Status = types.BoxStatusBreakoutDown
-		box.BreakoutPrice = &currentPrice
-		inf := math.Inf(1)
-		box.BreakoutTime = &inf
-		return box
-	}
-
-	return box
-}
-
 // --- helpers (replacing numpy vector operations) ---
 
 func maxVal(v []float64) float64 {

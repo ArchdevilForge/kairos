@@ -7,11 +7,9 @@ const OpportunitySessionSchemaVersion = "opportunity_session.v1"
 type OpportunitySessionStatus string
 
 const (
-	OpportunitySessionOpen        OpportunitySessionStatus = "open"
-	OpportunitySessionWatching    OpportunitySessionStatus = "watching"
-	OpportunitySessionExpired     OpportunitySessionStatus = "expired"
-	OpportunitySessionCompleted   OpportunitySessionStatus = "completed"
-	OpportunitySessionInvalidated OpportunitySessionStatus = "invalidated"
+	OpportunitySessionOpen     OpportunitySessionStatus = "open"
+	OpportunitySessionWatching OpportunitySessionStatus = "watching"
+	OpportunitySessionExpired  OpportunitySessionStatus = "expired"
 )
 
 // OpportunitySession groups candidates/tickets born from one market event.

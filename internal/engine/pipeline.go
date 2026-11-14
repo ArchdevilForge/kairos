@@ -1764,14 +1764,6 @@ func (p *Pipeline) shouldGateIndividualAlert(evt types.AnomalyEvent) bool {
 	return p.marketPulseDet.State() == types.MarketStateQuiet
 }
 
-// MarketState returns the current MarketPulse state, or QUIET if disabled.
-func (p *Pipeline) MarketState() types.MarketState {
-	if p.marketPulseDet == nil {
-		return types.MarketStateQuiet
-	}
-	return p.marketPulseDet.State()
-}
-
 // marketPulseSnapshotLoop persists a lightweight cross-sectional sample about
 // once per minute for attention-lift baselines. The store throttles to 60s.
 func (p *Pipeline) marketPulseSnapshotLoop(ctx context.Context) {

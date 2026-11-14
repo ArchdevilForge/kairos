@@ -20,10 +20,6 @@ import (
 const (
 	DefaultSymbolCooldownMinutes = 240 // 4h (§3 B4)
 	DefaultMaxNoticesPerDay      = 12  // 12/day (§3 B4)
-	// DefaultEventDedupSeconds collapses one underlying move reported by several
-	// velocity windows (60s then 120s) into one Notice. It is only the config
-	// default (config setDefaults): notice.eventDedupSeconds=0 disables dedup.
-	DefaultEventDedupSeconds = 300 // 5m
 )
 
 // TextSender abstracts the Telegram HTML delivery channel (satisfied by *notify.TelegramClient).
@@ -78,15 +74,6 @@ func NewService(cfg types.NoticeConfig, journal *storage.NoticeJournal, sender T
 		svc.save = journal.SaveNotice
 	}
 	return svc
-}
-
-// SetNowFunc overrides the wall clock for deterministic testing.
-func (s *Service) SetNowFunc(fn func() time.Time) {
-	if s != nil && fn != nil {
-		s.mu.Lock()
-		s.nowFunc = fn
-		s.mu.Unlock()
-	}
 }
 
 // ProcessRequest bundles a detector AnomalyEvent with optional causal OHLCV and Season context.

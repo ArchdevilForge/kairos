@@ -94,13 +94,6 @@ func TestComputeRiskBounds_ShortZeroTargets(t *testing.T) {
 	}
 }
 
-func TestDedupeStrings(t *testing.T) {
-	got := DedupeStrings([]string{"a", "b", "a", "c", "b"})
-	if len(got) != 3 || got[0] != "a" || got[1] != "b" || got[2] != "c" {
-		t.Fatalf("got %v", got)
-	}
-}
-
 func TestOHLCVToArrays(t *testing.T) {
 	candles := []types.Candle{
 		{Timestamp: 1000, Open: 1, High: 2, Low: 0.5, Close: 1.5, Volume: 10},

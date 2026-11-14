@@ -411,9 +411,6 @@ func (m *mockTickerSource) SubscribeTickers(context.Context, []string, chan<- ty
 func (m *mockTickerSource) FetchTickers(context.Context) (map[string]*types.Ticker, error) {
 	return nil, nil
 }
-func (m *mockTickerSource) FetchTicker(context.Context, string) (*types.Ticker, error) {
-	return nil, nil
-}
 func (m *mockTickerSource) FetchOHLCV(context.Context, string, string, int, int64) ([]types.Candle, error) {
 	return nil, nil
 }

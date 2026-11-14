@@ -57,12 +57,6 @@ func TestExcludeWindows(t *testing.T) {
 	if len(wins) != 1 {
 		t.Fatal(wins)
 	}
-	if !inExclude(1000, wins) || !inExclude(1000-300, wins) || !inExclude(1000+900, wins) {
-		t.Fatal("bounds should be excluded")
-	}
-	if inExclude(1000-301, wins) || inExclude(1000+901, wins) {
-		t.Fatal("outside window")
-	}
 	// Interval that starts outside but ends inside the alert window must count as overlap.
 	if !intervalOverlapsExclude(650, 950, wins) {
 		t.Fatal("650→950 should overlap exclude [700,1900]")

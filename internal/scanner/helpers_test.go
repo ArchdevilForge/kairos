@@ -52,7 +52,7 @@ func TestCycleDetectorConfig(t *testing.T) {
 	_ = indicators.DefaultCycleDetectorConfig()
 }
 
-func TestOHLCVToArraysAndCycleToDict(t *testing.T) {
+func TestOHLCVToArrays_Helpers(t *testing.T) {
 	if OHLCVToArrays(nil) != nil {
 		t.Fatal("empty candles")
 	}
@@ -60,17 +60,9 @@ func TestOHLCVToArraysAndCycleToDict(t *testing.T) {
 	if len(arr.Closes) != 1 {
 		t.Fatal("convert")
 	}
-	d := CycleToDict(types.MarketCycle{Phase: types.MarketPhaseSummer, Confidence: 0.8, BtcTrend: "up"})
-	if d["phase"] != string(types.MarketPhaseSummer) {
-		t.Fatal("cycle dict")
-	}
 }
 
-func TestDedupeStringsAndFingerprint(t *testing.T) {
-	got := DedupeStrings([]string{"a", "b", "a", "c"})
-	if len(got) != 3 {
-		t.Fatalf("dedupe: %v", got)
-	}
+func TestFingerprint(t *testing.T) {
 	stop := 9.5
 	fp := fingerprint("BTC/USDT:USDT", "long", "box_breakout", map[string]any{
 		"timeframe": "4h", "high": 100.0, "low": 90.0,

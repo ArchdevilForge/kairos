@@ -24,10 +24,6 @@ func (m *mockScanExchange) FetchTickers(context.Context) (map[string]*types.Tick
 	return m.tickers, nil
 }
 
-func (m *mockScanExchange) FetchTicker(context.Context, string) (*types.Ticker, error) {
-	return nil, nil
-}
-
 func (m *mockScanExchange) FetchOHLCV(context.Context, string, string, int, int64) ([]types.Candle, error) {
 	return syntheticOHLCV(60), nil
 }

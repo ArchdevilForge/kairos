@@ -69,8 +69,6 @@ func NewVolumeSpikeDetector(cfg types.VolumeSpikeConfig) *VolumeSpikeDetector {
 	return d
 }
 
-func (d *VolumeSpikeDetector) Name() string { return "volume_spike" }
-
 // OnTicker processes a ticker update — records both the cumulative volume
 // and the latest price.
 func (d *VolumeSpikeDetector) OnTicker(_ context.Context, ticker types.Ticker) {
@@ -107,37 +105,6 @@ func (d *VolumeSpikeDetector) OnTicker(_ context.Context, ticker types.Ticker) {
 }
 
 func (d *VolumeSpikeDetector) Events() <-chan types.AnomalyEvent { return d.events }
-func (d *VolumeSpikeDetector) Reset() {
-	d.volMu.Lock()
-	clear(d.volumeHistory)
-	d.volMu.Unlock()
-	d.priceMu.Lock()
-	clear(d.lastPrice)
-	d.priceMu.Unlock()
-	d.notifyMu.Lock()
-	clear(d.lastNotify)
-	d.notifyMu.Unlock()
-}
-
-// UpdateConfig hot-reloads configuration at runtime.
-func (d *VolumeSpikeDetector) UpdateConfig(cfg types.VolumeSpikeConfig) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.enabled = cfg.Enabled
-	if cfg.Multiplier > 0 {
-		d.multiplier = cfg.Multiplier
-	}
-	if cfg.WindowMinutes > 0 {
-		d.windowMinutes = cfg.WindowMinutes
-		d.minHistorySeconds = float64(cfg.WindowMinutes * 60)
-	}
-	if cfg.MinHistorySeconds > 0 {
-		d.minHistorySeconds = float64(cfg.MinHistorySeconds)
-	}
-	if cfg.MinNotifyInterval != "" {
-		d.minNotifyInterval = parseDuration(cfg.MinNotifyInterval)
-	}
-}
 
 func (d *VolumeSpikeDetector) checkSpike(symbol string, now float64) {
 	d.volMu.RLock()

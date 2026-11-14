@@ -22,9 +22,6 @@ const (
 // DefaultWaveKBE is the P0 plateau winner (k_be = 0.8R).
 const DefaultWaveKBE = 0.8
 
-// KBEGrid is the canonical breakeven activation grid from Work Item 5.
-var KBEGrid = []float64{0.8, 1.2, 1.5, 2.0, math.Inf(1)}
-
 // PolicySimInput configures one holding-policy simulation on causal forward bars.
 type PolicySimInput struct {
 	SignalID      string

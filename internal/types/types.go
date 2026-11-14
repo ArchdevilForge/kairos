@@ -176,11 +176,6 @@ func (b *BoxPattern) HeightPct() float64 {
 	return b.Height() / b.Low * 100
 }
 
-// Midpoint returns the box midpoint.
-func (b *BoxPattern) Midpoint() float64 {
-	return (b.High + b.Low) / 2
-}
-
 // IsReady returns whether the box is ready for breakout (has second test and convergence).
 func (b *BoxPattern) IsReady() bool {
 	return (b.SecondTestHigh || b.SecondTestLow) && b.ConvergencePct > 0.7

@@ -32,15 +32,6 @@ type LeaderPullbackInput struct {
 // ID implements Playbook.
 func (p *LeaderPullback) ID() string { return types.PlaybookLeaderPullbackV1 }
 
-// Match implements Playbook against bare context (no invalidation → fail closed).
-func (p *LeaderPullback) Match(ctx types.PlaybookContext) types.PlaybookMatch {
-	return p.MatchInput(LeaderPullbackInput{
-		PlaybookContext: ctx,
-		StructureValid:  false, // fail closed without explicit structure
-		Invalidations:   nil,
-	})
-}
-
 // MatchInput is the full gate path used by the desk.
 func (p *LeaderPullback) MatchInput(in LeaderPullbackInput) types.PlaybookMatch {
 	id := p.ID()
