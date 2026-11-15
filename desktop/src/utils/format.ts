@@ -13,15 +13,6 @@ export const TIMEFRAME_SECONDS: Record<Timeframe, number> = {
   '1d': 86400,
 };
 
-export const TIMEFRAME_MS: Record<Timeframe, number> = {
-  '1m': 60_000,
-  '5m': 300_000,
-  '15m': 900_000,
-  '1h': 3_600_000,
-  '4h': 14_400_000,
-  '1d': 86_400_000,
-};
-
 const dtfDateTimeSec = new Intl.DateTimeFormat('zh-CN', {
   timeZone: 'Asia/Shanghai',
   year: 'numeric',
@@ -40,21 +31,6 @@ const dtfDateTimeFull = new Intl.DateTimeFormat('zh-CN', {
   minute: '2-digit',
   second: '2-digit',
   hourCycle: 'h23',
-});
-
-const dtfTimeShort = new Intl.DateTimeFormat('zh-CN', {
-  timeZone: 'Asia/Shanghai',
-  hour: '2-digit',
-  minute: '2-digit',
-  second: '2-digit',
-  hourCycle: 'h23',
-});
-
-const dtfDateKey = new Intl.DateTimeFormat('zh-CN', {
-  timeZone: 'Asia/Shanghai',
-  year: 'numeric',
-  month: '2-digit',
-  day: '2-digit',
 });
 
 /** Adaptive price precision so sub-cent coins stay readable without scientific notation. */
@@ -81,17 +57,6 @@ export function fmtUsd(v: number | null | undefined, signed = false): string {
   if (v < 0) return `-$${absStr}`;
   if (signed && v > 0) return `+$${absStr}`;
   return `$${absStr}`;
-}
-
-/** Format compact USD volume / OI (e.g. $12.4M, $840K). */
-export function fmtCompactUsd(v: number | null | undefined): string {
-  if (v == null || !Number.isFinite(v)) return '—';
-  const abs = Math.abs(v);
-  const sign = v < 0 ? '-' : '';
-  if (abs >= 1e9) return `${sign}$${(abs / 1e9).toFixed(2)}B`;
-  if (abs >= 1e6) return `${sign}$${(abs / 1e6).toFixed(2)}M`;
-  if (abs >= 1e3) return `${sign}$${(abs / 1e3).toFixed(1)}K`;
-  return `${sign}$${abs.toFixed(0)}`;
 }
 
 /** Format R-multiple (e.g. +1.85R, -1.00R). */
@@ -124,14 +89,6 @@ export function fmtRatioPct(
   return `${sign}${pct.toFixed(decimals)}%`;
 }
 
-/** Format perp funding rate (fraction like 0.0001 -> +0.0100%). */
-export function fmtFundingRate(v: number | null | undefined): string {
-  if (v == null || !Number.isFinite(v)) return '—';
-  const pct = v * 100;
-  const sign = pct > 0 ? '+' : '';
-  return `${sign}${pct.toFixed(4)}%`;
-}
-
 /** Format contract quantity with adaptive precision. */
 export function fmtQty(v: number | null | undefined): string {
   if (v == null || !Number.isFinite(v)) return '—';
@@ -147,22 +104,10 @@ export function fmtDateTimeSec(sec: number | null | undefined): string {
   return dtfDateTimeSec.format(sec * 1000).replace(/\//g, '-');
 }
 
-/** Format Unix timestamp (milliseconds) in strict Asia/Shanghai (UTC+8). */
-export function fmtDateTimeMs(ms: number | null | undefined): string {
-  if (ms == null || !Number.isFinite(ms) || ms <= 0) return '—';
-  return dtfDateTimeSec.format(ms).replace(/\//g, '-');
-}
-
 /** Format Unix seconds with seconds precision (MM-DD HH:mm:ss, UTC+8). */
 export function fmtDateTimeWithSec(sec: number | null | undefined): string {
   if (sec == null || !Number.isFinite(sec) || sec <= 0) return '—';
   return dtfDateTimeFull.format(sec * 1000).replace(/\//g, '-');
-}
-
-/** Format HH:mm:ss in UTC+8 from Unix seconds. */
-export function fmtTimeShortSec(sec: number | null | undefined): string {
-  if (sec == null || !Number.isFinite(sec) || sec <= 0) return '—';
-  return dtfTimeShort.format(sec * 1000);
 }
 
 /** Format ISO timestamp string (like Notice.ts) into UTC+8 YYYY-MM-DD HH:mm. */
@@ -171,17 +116,6 @@ export function fmtIsoUtc8(iso: string | null | undefined): string {
   const ms = Date.parse(iso);
   if (!Number.isFinite(ms)) return iso;
   return dtfDateTimeFull.format(ms).replace(/\//g, '-');
-}
-
-/** Format YYYY-MM-DD in UTC+8 from Unix seconds. */
-export function fmtDateKeyUtc8(sec: number): string {
-  return dtfDateKey.format(sec * 1000).replace(/\//g, '-');
-}
-
-/** Return UTC+8 hour (0..23) for a Unix second timestamp. */
-export function hourUtc8FromSec(sec: number): number {
-  const shifted = new Date((sec + UTC8_OFFSET_SEC) * 1000);
-  return shifted.getUTCHours();
 }
 
 interface Utc8Parts {
@@ -274,14 +208,4 @@ export function fmtDurationSec(sec: number | null | undefined): string {
   return rh > 0 ? t('fmt.duration.dayHour', { d, h: rh }) : t('fmt.duration.day', { d });
 }
 
-/** Format duration in milliseconds. */
-export function fmtDurationMs(ms: number | null | undefined): string {
-  if (ms == null || !Number.isFinite(ms) || ms < 0) return '—';
-  return fmtDurationSec(ms / 1000);
-}
 
-/** Shorten perpetual symbol label e.g. BTC/USDT:USDT -> BTC/USDT. */
-export function fmtSymbolShort(sym: string): string {
-  if (!sym) return '—';
-  return sym.replace(/:USDT$/i, '');
-}

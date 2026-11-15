@@ -40,57 +40,49 @@ export type MarginMode = 'isolated' | 'cross' | string;
 export type DrawingKind = 'hline' | 'ruler' | 'trend' | 'ray' | 'region' | 'fib';
 export type ReviewSubjectType = 'ticket' | 'trade' | 'position';
 
-export const REASON_CODES = [
-  'structure_good',
-  'structure_bad',
-  'too_extended',
-  'not_real_leader',
-  'insufficient_room',
-  'counter_trend',
-  'market_breadth_weak',
-  'funding_crowded',
-  'late_to_event',
-  'emotional_skip',
-  'fear_of_loss',
-  'manual_override',
-] as const;
-export type ReasonCode = (typeof REASON_CODES)[number];
+export type ReasonCode =
+  | 'structure_good'
+  | 'structure_bad'
+  | 'too_extended'
+  | 'not_real_leader'
+  | 'insufficient_room'
+  | 'counter_trend'
+  | 'market_breadth_weak'
+  | 'funding_crowded'
+  | 'late_to_event'
+  | 'emotional_skip'
+  | 'fear_of_loss'
+  | 'manual_override';
 
-export const SETUP_POINTS = [
-  'POINT_1_BREAKOUT',
-  'POINT_2_MINOR_DIV',
-  'POINT_3_MID_TOP_SHORT',
-  'POINT_4_SECOND_WAVE',
-  'POINT_5_END_TOP_SHORT',
-  'POINT_6_BOX_BOUNCE',
-] as const;
-export type SetupPoint = (typeof SETUP_POINTS)[number];
+export type SetupPoint =
+  | 'POINT_1_BREAKOUT'
+  | 'POINT_2_MINOR_DIV'
+  | 'POINT_3_MID_TOP_SHORT'
+  | 'POINT_4_SECOND_WAVE'
+  | 'POINT_5_END_TOP_SHORT'
+  | 'POINT_6_BOX_BOUNCE';
 
-export const EXIT_REASONS = [
-  'PROTECTIVE_STOP',
-  'FAKEOUT_ABORT',
-  'STRUCTURAL_TRAIL',
-  'TARGET_PARTIAL',
-  'IMPULSE_EARLY',
-] as const;
-export type ExitReason = (typeof EXIT_REASONS)[number];
+export type ExitReason =
+  | 'PROTECTIVE_STOP'
+  | 'FAKEOUT_ABORT'
+  | 'STRUCTURAL_TRAIL'
+  | 'TARGET_PARTIAL'
+  | 'IMPULSE_EARLY';
 
-export const GATE_CODES = [
-  'GATE_CROSS_MARGIN',
-  'GATE_SCALP_LT_5M',
-  'GATE_COOLDOWN',
-  'GATE_COOLDOWN_24H_LOCK',
-  'GATE_COUNTER_CYCLE',
-  'GATE_OUTSIDE_WINDOW',
-  'GATE_RISK_TOO_LARGE',
-  'GATE_NO_STOP',
-  'GATE_NO_STOP_BASIS',
-  'GATE_LEVERAGE_EXCEEDED',
-  'GATE_NO_VALID_TICKET',
-  'GATE_CHURN_FLIP_LT_5M',
-  'GATE_SETUP_TRIAL_BUDGET',
-] as const;
-export type GateCode = (typeof GATE_CODES)[number];
+export type GateCode =
+  | 'GATE_CROSS_MARGIN'
+  | 'GATE_SCALP_LT_5M'
+  | 'GATE_COOLDOWN'
+  | 'GATE_COOLDOWN_24H_LOCK'
+  | 'GATE_COUNTER_CYCLE'
+  | 'GATE_OUTSIDE_WINDOW'
+  | 'GATE_RISK_TOO_LARGE'
+  | 'GATE_NO_STOP'
+  | 'GATE_NO_STOP_BASIS'
+  | 'GATE_LEVERAGE_EXCEEDED'
+  | 'GATE_NO_VALID_TICKET'
+  | 'GATE_CHURN_FLIP_LT_5M'
+  | 'GATE_SETUP_TRIAL_BUDGET';
 
 export interface Bar {
   time: number;
@@ -548,118 +540,12 @@ export interface BootstrapPayload {
   anomalies: AnomalyItem[];
 }
 
-export interface GatePreviewRequest {
-  symbol: string;
-  direction: CycleDirection;
-  margin_mode: MarginMode;
-  entry_price: number;
-  stop_price: number;
-  target_price?: number;
-  leverage: number;
-  max_loss_usd?: number;
-  stop_basis: string;
-  setup_point?: SetupPoint | '';
-  ticket_id?: string;
-  new_setup_id?: string;
-  new_structural_confirm_15m_1h?: boolean;
-  playbook_switch?: string;
-}
-
-export interface GatePreviewResponse {
-  live_eligible: boolean;
-  non_overridable: boolean;
-  rejections: string[];
-  warnings: string[];
-  one_r_distance: number;
-  one_r_pct: number;
-  max_loss_usd: number;
-  suggested_notional: number;
-  max_notional: number;
-  max_leverage: number;
-  risk_budget_pct: number;
-  template_id: string;
-  liq_price_est?: number;
-  market_cycle?: CycleMap | null;
-  symbol_cycle?: CycleMap | null;
-}
-
-export interface DraftTicketRequest {
-  symbol: string;
-  direction: CycleDirection;
-  margin_mode: MarginMode;
-  entry_price: number;
-  stop_price: number;
-  target_price?: number;
-  leverage: number;
-  max_loss_usd?: number;
-  stop_basis: string;
-  setup_point?: SetupPoint | '';
-  playbook_id?: string;
-  entry_mode?: string;
-  zone_low?: number;
-  zone_high?: number;
-  trigger?: string;
-  invalidations?: string[];
-  reasons?: string[];
-  reason_codes?: string[];
-  note?: string;
-  decision?: HumanDecision;
-  new_setup_id?: string;
-  new_structural_confirm_15m_1h?: boolean;
-  playbook_switch?: string;
-}
-
-export interface DraftTicketResponse {
-  bundle: TicketBundle;
-  gate: GatePreviewResponse;
-}
-
-export interface DecideTicketRequest {
-  decision: HumanDecision;
-  reason_codes: string[];
-  note: string;
-  margin_mode?: MarginMode;
-  leverage?: number;
-  stop_basis?: string;
-  setup_point?: SetupPoint | '';
-  planned_entry?: number;
-  planned_stop?: number;
-  planned_risk_r?: number;
-  planned_max_loss_usd?: number;
-  override?: boolean;
-  new_setup_id?: string;
-  new_structural_confirm_15m_1h?: boolean;
-  playbook_switch?: string;
-}
-
-export interface DecideTicketResponse {
-  bundle: TicketBundle;
-  gate: GatePreviewResponse;
-}
-
-export interface CloseTicketRequest {
-  exit_reason: ExitReason;
-  exit_price: number;
-  closed_at?: number;
-  realized_funding_usd?: number;
-  touched_preset_stop?: boolean;
-  fakeout_confirmed?: boolean;
-  market_stress_active?: boolean;
-  structure_intact?: boolean;
-}
-
 export interface ExitAuditResult {
   verdict: string;
   code?: string;
   is_violation: boolean;
   score_delta: number;
   suggestion?: string;
-}
-
-export interface CloseTicketResponse {
-  bundle: TicketBundle;
-  audit_code: string;
-  audit?: ExitAuditResult;
 }
 
 export interface ChartDrawingPoint {
@@ -701,17 +587,6 @@ export interface ReplayStateResponse {
   market_cycle?: CycleMap | null;
   symbol_cycle?: CycleMap | null;
   box?: BoxPattern | null;
-}
-
-export interface UpsertReviewRequest {
-  note: string;
-  setup_tags: string[];
-  error_tags: string[];
-  grade: string;
-  emotion: string;
-  planned_stop?: number | null;
-  planned_target?: number | null;
-  linked_ticket_id?: string;
 }
 
 export interface UpdateSettingsRequest {

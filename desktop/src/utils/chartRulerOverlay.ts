@@ -394,19 +394,6 @@ export function hitTestDrawingDetailed(
   return null;
 }
 
-/** Hit-test persisted drawings at cursor `(x, y)` for individual hover / single-click delete. */
-export function hitTestDrawing(
-  x: number,
-  y: number,
-  width: number,
-  drawings: readonly ChartDrawingItem[],
-  mapPoint: (p: ChartDrawingPoint) => Point2D | null,
-  priceToY: (price: number) => number | null,
-  tolerancePx = 8,
-): ChartDrawingItem | null {
-  return hitTestDrawingDetailed(x, y, width, drawings, mapPoint, priceToY, null, tolerancePx)?.drawing ?? null;
-}
-
 export function drawReplayCursor(
   ctx: CanvasRenderingContext2D,
   width: number,

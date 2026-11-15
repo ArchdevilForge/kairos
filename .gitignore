@@ -3,8 +3,6 @@
 
 # Go
 /kairosd
-/kairos-alert
-/kairos-backtest
 /bin/
 *.exe
 *.test
