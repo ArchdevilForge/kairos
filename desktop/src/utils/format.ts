@@ -1,4 +1,7 @@
+import { TickMarkType, type Time } from 'lightweight-charts';
 import type { Timeframe } from '../types/kairos';
+
+const UTC8_OFFSET_SEC = 8 * 3600;
 
 export const TIMEFRAME_SECONDS: Record<Timeframe, number> = {
   '1m': 60,
@@ -176,8 +179,82 @@ export function fmtDateKeyUtc8(sec: number): string {
 
 /** Return UTC+8 hour (0..23) for a Unix second timestamp. */
 export function hourUtc8FromSec(sec: number): number {
-  const shifted = new Date((sec + 8 * 3600) * 1000);
+  const shifted = new Date((sec + UTC8_OFFSET_SEC) * 1000);
   return shifted.getUTCHours();
+}
+
+interface Utc8Parts {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+  second: number;
+}
+
+function pad2(n: number): string {
+  return n < 10 && n >= 0 ? `0${n}` : String(n);
+}
+
+/** Convert a Lightweight Charts Time value into Unix seconds. */
+export function toUnixSecFromChartTime(time: Time): number | null {
+  if (typeof time === 'number') {
+    return Number.isFinite(time) ? time : null;
+  }
+  if (typeof time === 'string') {
+    const ms = Date.parse(time);
+    return Number.isFinite(ms) ? Math.floor(ms / 1000) : null;
+  }
+  if (time && typeof time === 'object' && 'year' in time && 'month' in time && 'day' in time) {
+    const ms = Date.UTC(time.year, time.month - 1, time.day);
+    return Number.isFinite(ms) ? Math.floor(ms / 1000) : null;
+  }
+  return null;
+}
+
+function toUtc8Parts(time: Time): Utc8Parts | null {
+  const sec = toUnixSecFromChartTime(time);
+  if (sec == null) return null;
+  const shifted = new Date((sec + UTC8_OFFSET_SEC) * 1000);
+  if (!Number.isFinite(shifted.getTime())) return null;
+  return {
+    year: shifted.getUTCFullYear(),
+    month: shifted.getUTCMonth() + 1,
+    day: shifted.getUTCDate(),
+    hour: shifted.getUTCHours(),
+    minute: shifted.getUTCMinutes(),
+    second: shifted.getUTCSeconds(),
+  };
+}
+
+/** Format chart X-axis tick mark strictly in Asia/Shanghai (UTC+8). */
+export function fmtChartTickUtc8(time: Time, tickMarkType: TickMarkType): string {
+  const p = toUtc8Parts(time);
+  if (!p) return '';
+  if (tickMarkType === TickMarkType.Year) {
+    return String(p.year);
+  }
+  if (tickMarkType === TickMarkType.Month) {
+    return `${p.year}-${pad2(p.month)}`;
+  }
+  if (p.hour === 0 && p.minute === 0 && p.second === 0) {
+    return `${pad2(p.month)}-${pad2(p.day)}`;
+  }
+  if (tickMarkType === TickMarkType.DayOfMonth) {
+    return `${pad2(p.month)}-${pad2(p.day)} ${pad2(p.hour)}:${pad2(p.minute)}`;
+  }
+  if (tickMarkType === TickMarkType.TimeWithSeconds) {
+    return `${pad2(p.hour)}:${pad2(p.minute)}:${pad2(p.second)}`;
+  }
+  return `${pad2(p.hour)}:${pad2(p.minute)}`;
+}
+
+/** Format chart crosshair time label strictly in Asia/Shanghai (UTC+8). */
+export function fmtChartCrosshairUtc8(time: Time): string {
+  const p = toUtc8Parts(time);
+  if (!p) return '';
+  const base = `${p.year}-${pad2(p.month)}-${pad2(p.day)} ${pad2(p.hour)}:${pad2(p.minute)}`;
+  return p.second !== 0 ? `${base}:${pad2(p.second)}` : base;
 }
 
 /** Format duration in seconds into concise Chinese text. */

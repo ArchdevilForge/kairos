@@ -7,11 +7,19 @@ import {
   type IChartApi,
   type ISeriesApi,
   type MouseEventParams,
+  type TickMarkType,
   type Time,
 } from 'lightweight-charts';
 import type { EquityPoint } from '../types/kairos';
 import { type AnthropicChartTheme, readChartTheme, withAlpha } from '../utils/chartTheme';
-import { fmtDateTimeSec, fmtPctPoints, fmtR, fmtUsd } from '../utils/format';
+import {
+  fmtChartCrosshairUtc8,
+  fmtChartTickUtc8,
+  fmtDateTimeSec,
+  fmtPctPoints,
+  fmtR,
+  fmtUsd,
+} from '../utils/format';
 
 export interface EquityCurveProps {
   points: EquityPoint[];
@@ -87,6 +95,12 @@ export default function EquityCurve({
         borderColor: theme.borderHairline,
         timeVisible: true,
         secondsVisible: false,
+        tickMarkFormatter: (time: Time, tickMarkType: TickMarkType) =>
+          fmtChartTickUtc8(time, tickMarkType),
+      },
+      localization: {
+        locale: 'zh-CN',
+        timeFormatter: (time: Time) => fmtChartCrosshairUtc8(time),
       },
     });
 
