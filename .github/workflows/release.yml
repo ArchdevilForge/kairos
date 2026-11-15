@@ -3,11 +3,11 @@ name: Release
 on:
   push:
     tags:
-      - "v*"
+      - "v[0-9]*.[0-9]*.[0-9]*"
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag (e.g. v0.1.0)"
+        description: "Release tag (e.g. v0.4.0)"
         required: true
         type: string
 
@@ -27,6 +27,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Verify release tag format
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid release tag '$TAG' (expected vMAJOR.MINOR.PATCH)" >&2
+            exit 1
+          fi
+
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -38,6 +50,24 @@ jobs:
       - run: make check
 
       - run: make cover-check
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: desktop/pnpm-lock.yaml
+
+      - run: pnpm --dir desktop install --frozen-lockfile
+
+      - run: pnpm --dir desktop run typecheck
+
+      - run: pnpm --dir desktop run build
+
+      - run: pnpm --dir desktop run verify:tokens
 
   build:
     name: build ${{ matrix.goos }}-${{ matrix.goarch }}
@@ -78,6 +108,7 @@ jobs:
 
       - name: Build and pack
         env:
+          CGO_ENABLED: "0"
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           VERSION: ${{ steps.ver.outputs.tag }}
@@ -142,8 +173,110 @@ jobs:
             dist/*.zip
           if-no-files-found: error
 
+  desktop:
+    name: desktop ${{ matrix.goos }}-${{ matrix.goarch }}
+    needs: check
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            bin_name: kairosd
+            eb_args: "--linux AppImage tar.gz --x64"
+            artifact_name: kairos-desk-linux-x64
+          - os: windows-latest
+            goos: windows
+            goarch: amd64
+            bin_name: kairosd.exe
+            eb_args: "--win nsis zip --x64"
+            artifact_name: kairos-desk-win-x64
+          - os: macos-latest
+            goos: darwin
+            goarch: arm64
+            bin_name: kairosd
+            eb_args: "--mac dmg zip --arm64"
+            artifact_name: kairos-desk-mac-arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: desktop/pnpm-lock.yaml
+
+      - name: Resolve version
+        id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          SEMVER="${TAG#v}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "semver=${SEMVER}" >> "$GITHUB_OUTPUT"
+
+      - name: Build kairosd sidecar
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          set -euo pipefail
+          mkdir -p desktop/resources-bin
+          go build -trimpath -ldflags="-s -w" \
+            -o "desktop/resources-bin/${{ matrix.bin_name }}" ./cmd/kairosd
+          chmod +x "desktop/resources-bin/${{ matrix.bin_name }}"
+          ls -lh "desktop/resources-bin/${{ matrix.bin_name }}"
+
+      - name: Install and build desktop UI
+        run: |
+          set -euo pipefail
+          pnpm --dir desktop install --frozen-lockfile
+          pnpm --dir desktop run build
+
+      - name: Package desktop app
+        run: |
+          set -euo pipefail
+          pnpm --dir desktop exec electron-builder \
+            ${{ matrix.eb_args }} \
+            --config electron-builder.json \
+            -c.extraMetadata.version="${{ steps.ver.outputs.semver }}" \
+            --publish never
+          ls -lh desktop/release/
+
+      - name: Upload desktop artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: |
+            desktop/release/*.AppImage
+            desktop/release/*.tar.gz
+            desktop/release/*.exe
+            desktop/release/*.dmg
+            desktop/release/*.zip
+          if-no-files-found: error
+
   release:
-    needs: build
+    needs: [build, desktop]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -162,6 +295,12 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+
+      - name: Compute SHA256SUMS
+        run: |
+          set -euo pipefail
+          (cd dist && sha256sum * > SHA256SUMS.txt)
+          cat dist/SHA256SUMS.txt
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2

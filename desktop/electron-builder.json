@@ -1,0 +1,49 @@
+{
+  "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
+  "appId": "io.archdevilforge.kairos.desk",
+  "productName": "Kairos Desk",
+  "npmRebuild": false,
+  "directories": {
+    "output": "release",
+    "buildResources": "build"
+  },
+  "files": [
+    "dist/**/*",
+    "electron/**/*",
+    "package.json"
+  ],
+  "extraResources": [
+    {
+      "from": "resources-bin",
+      "to": ".",
+      "filter": ["kairosd*"]
+    },
+    {
+      "from": "../config/config.yaml.example",
+      "to": "config/config.yaml.example"
+    }
+  ],
+  "linux": {
+    "target": ["AppImage", "tar.gz"],
+    "icon": "build/icon.png",
+    "category": "Finance",
+    "executableName": "kairos-desk",
+    "artifactName": "Kairos-Desk-${version}-linux-${arch}.${ext}"
+  },
+  "win": {
+    "target": ["nsis", "zip"],
+    "icon": "build/icon.ico",
+    "artifactName": "Kairos-Desk-${version}-win-${arch}.${ext}"
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true
+  },
+  "mac": {
+    "target": ["dmg", "zip"],
+    "icon": "build/icon.png",
+    "category": "public.app-category.finance",
+    "identity": null,
+    "artifactName": "Kairos-Desk-${version}-mac-${arch}.${ext}"
+  }
+}

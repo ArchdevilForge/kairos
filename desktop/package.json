@@ -1,8 +1,11 @@
 {
   "name": "kairos-desk-desktop",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.4.0",
   "description": "Kairos human-controlled crypto futures watch and trade review desktop client",
+  "author": "Xeron <xeronsh@gmail.com>",
+  "license": "MIT",
+  "homepage": "https://github.com/ArchdevilForge/kairos",
   "type": "module",
   "main": "electron/main.mjs",
   "scripts": {
@@ -11,7 +14,11 @@
     "build": "pnpm run build:ui",
     "typecheck": "tsc --noEmit --pretty false",
     "verify:tokens": "node scripts/verify-tokens.mjs",
-    "desktop": "node scripts/run-electron.mjs"
+    "desktop": "node scripts/run-electron.mjs",
+    "pack:dir": "electron-builder --dir --config electron-builder.json --publish never",
+    "pack:linux": "electron-builder --linux AppImage tar.gz --config electron-builder.json --publish never",
+    "pack:win": "electron-builder --win nsis zip --config electron-builder.json --publish never",
+    "pack:mac": "electron-builder --mac dmg zip --config electron-builder.json --publish never"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.1.18",
@@ -27,6 +34,7 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.1.1",
     "electron": "^35.1.5",
+    "electron-builder": "^26.18.0",
     "typescript": "~5.9.3",
     "vite": "^7.2.4"
   }

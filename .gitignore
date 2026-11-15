@@ -66,6 +66,8 @@ watch-hints.jsonl
 desktop/node_modules/
 desktop/dist/
 desktop/out/
+desktop/release/
+desktop/resources-bin/
 desktop/*.tsbuildinfo
 
 # Python

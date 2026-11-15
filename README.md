@@ -165,7 +165,7 @@ cd desktop && pnpm run desktop
 
 ### 2. 预编译发布版 (GitHub Releases)
 
-每次推送版本标签（`v*`）或手动触发 Release 工作流后，[GitHub Releases](https://github.com/ArchdevilForge/kairos/releases) 会自动发布全平台压缩包（含 6 个二进制文件与 `config/config.yaml.example`）：
+每次在 `main` 推送版本标签（`vMAJOR.MINOR.PATCH`）或手动触发 Release 工作流后，[GitHub Releases](https://github.com/ArchdevilForge/kairos/releases) 会自动发布 3-OS Kairos Desk 桌面安装包与全平台 CLI 压缩包（含 6 个二进制文件与 `config/config.yaml.example`）：
 
 ```bash
 # 以 Linux amd64 为例
@@ -223,6 +223,20 @@ make check-all    # Go check + tools/research Python (uv + pytest)
 - [权威裁决图](docs/00-system/AUTHORITY.md) — `NORTH_STAR` → `KAIROS_DOCTRINE` → 模型 → Playbook → 运行时契约 → 研究证据
 - [核心教义 (Canonical Freeze)](docs/10-doctrine/KAIROS_DOCTRINE.md) — 完整工作流、时间尺度角色与 §9b 行为硬规则唯一权威
 - [领域术语表](CONTEXT.md) — Realtime Anomaly / Decision Ticket / Alert Gate / Behavior Gate 标准定义
+
+---
+
+## 分支与发版策略 (Branching & Release Policy)
+
+| 分支 / 标签 | 角色 | 自动 CI / 发布行为 |
+|---|---|---|
+| `dev`（默认分支） | 日常开发主干 | 推送或 PR 仅跑轻量 CI（`desktop-light`：`typecheck`/`build`/`verify:tokens` + `go-light`：`build`/`vet`/`fmt-check`/`lint`/`go test`），不做桌面打包 |
+| `main`（稳定主分支） | 经过验证的可发布基线 | 由 `dev` 经 PR 或快进合入；运行全量 CI（`desktop-light` + `check` 含 `-race` / 覆盖率 / 6 平台交叉编译 / `govulncheck` + `python-check`），不自动发版 |
+| `vMAJOR.MINOR.PATCH`（打在 `main` 上的标签） | 正式版本发布 | 触发 `Release` 工作流：先校验 Go + Desktop 全套门禁，再并行发布 **3-OS 桌面安装包**（Linux `AppImage`/`tar.gz`、Windows `nsis`/`zip`、macOS `dmg`/`zip`，内嵌对应 `kairosd`）与 **6-OS CLI 压缩包** 及 `SHA256SUMS.txt` 至 [GitHub Releases](https://github.com/ArchdevilForge/kairos/releases) |
+
+```text
+feature/* ──(PR)──▶ dev (轻量 CI) ──(PR / --ff-only)──▶ main (全量 CI) ──(git tag vX.Y.Z)──▶ GitHub Release
+```
 
 ---
 
