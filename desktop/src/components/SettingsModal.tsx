@@ -176,7 +176,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4"
       style={{ backgroundColor: 'var(--bg-overlay)' }}
       onClick={onClose}
     >
@@ -184,7 +184,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         role="dialog"
         aria-modal="true"
         aria-label={t('settings.title')}
-        className="w-full max-w-[460px] overflow-hidden rounded-[8px] border shadow-2xl"
+        className="kairos-contain-panel max-h-[88dvh] w-full max-w-[460px] overflow-y-auto rounded-[8px] border shadow-2xl"
         style={{
           backgroundColor: 'var(--bg-surface)',
           borderColor: 'var(--border-strong)',
@@ -218,7 +218,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         </div>
 
         <div className="space-y-4 p-4">
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <label className="block">
               <span
                 className="mb-1 block text-[11px] font-medium"
@@ -264,7 +264,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </label>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <label className="block">
               <span
                 className="mb-1 block text-[11px] font-medium"
@@ -427,7 +427,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </p>
             )}
 
-            <div className="mt-2.5 flex items-center justify-between gap-2">
+            <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2">
               <p className="text-[10px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
                 {t('settings.secretsPrefix')}
                 <code>~/.config/kairos/secrets.env</code>
@@ -500,7 +500,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         </div>
 
         <div
-          className="flex items-center justify-end gap-2 border-t px-4 py-3"
+          className="flex flex-wrap items-center justify-end gap-2 border-t px-4 py-3"
           style={{ borderColor: 'var(--border-hairline)' }}
         >
           <button

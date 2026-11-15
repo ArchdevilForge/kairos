@@ -93,9 +93,9 @@ export function StatsWorkspace({ client }: StatsWorkspaceProps) {
       className="h-full w-full overflow-y-auto"
       style={{ backgroundColor: 'var(--bg-canvas)' }}
     >
-      <div className="mx-auto max-w-5xl space-y-5 p-6">
+      <div className="mx-auto max-w-5xl space-y-4 p-3 sm:space-y-5 sm:p-6">
         {/* Header */}
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <h1 className="font-editorial text-xl font-medium" style={{ color: 'var(--text-primary)' }}>
               {t('stats.title')}
@@ -120,7 +120,7 @@ export function StatsWorkspace({ client }: StatsWorkspaceProps) {
         </div>
 
         {/* 4 Clean Metric Cards */}
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <div className="grid grid-cols-1 gap-2.5 min-[420px]:grid-cols-2 sm:gap-3 lg:grid-cols-4">
           <MetricCard
             label={t('stats.metric.netPnl')}
             value={fmtUsd(recon.net_pnl_usd, true)}
@@ -171,7 +171,7 @@ export function StatsWorkspace({ client }: StatsWorkspaceProps) {
 
         {/* R Distribution */}
         <div
-          className="rounded border p-4"
+          className="kairos-contain-panel rounded border p-3 sm:p-4"
           style={{
             backgroundColor: 'var(--bg-surface)',
             borderColor: 'var(--border-hairline)',
@@ -193,7 +193,7 @@ export function StatsWorkspace({ client }: StatsWorkspaceProps) {
                 return (
                   <div
                     key={b.label}
-                    className="grid grid-cols-[100px_1fr_76px_80px] items-center gap-2 font-mono text-[11px] tabular-nums"
+                    className="grid grid-cols-[72px_1fr_54px_68px] items-center gap-1.5 font-mono text-[11px] tabular-nums sm:grid-cols-[100px_1fr_76px_80px] sm:gap-2"
                   >
                     <span className="truncate" style={{ color: 'var(--text-secondary)' }}>
                       {b.label}

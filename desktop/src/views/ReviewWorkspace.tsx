@@ -362,6 +362,7 @@ export function ReviewWorkspace({
   // Load market bars (keyed by sliceKey + historical trade window backfill)
   useEffect(() => {
     let cancelled = false;
+    const ac = new AbortController();
     reviewHistoryRef.current = { key: sliceKey, inFlight: false, exhausted: false };
     setLoadingMoreBars(false);
     setBarsErrorState(null);
@@ -380,7 +381,7 @@ export function ReviewWorkspace({
         let baseBars = reviewBarCacheRef.current.get(baseKey);
         let latestMetrics: MetricsPoint[] = [];
         if (!baseBars || baseBars.length === 0) {
-          const barsRes = await client.getMarketBars({ symbol, tf: activeTf, limit: 800 });
+          const barsRes = await client.getMarketBars({ symbol, tf: activeTf, limit: 800, signal: ac.signal });
           if (cancelled) return;
           baseBars = barsRes.bars ?? [];
           latestMetrics = barsRes.metrics ?? [];
@@ -401,6 +402,7 @@ export function ReviewWorkspace({
             tf: activeTf,
             limit: 800,
             beforeTs: targetEnd + 200 * tfStepSec,
+            signal: ac.signal,
           });
           if (cancelled) return;
           if ((histRes.bars?.length ?? 0) > 0) {
@@ -437,6 +439,7 @@ export function ReviewWorkspace({
 
     return () => {
       cancelled = true;
+      ac.abort();
     };
   }, [
     client,
@@ -451,8 +454,9 @@ export function ReviewWorkspace({
   // Load drawings only when symbol changes (never on timeframe switch)
   useEffect(() => {
     let cancelled = false;
+    const ac = new AbortController();
     client
-      .getDrawings(symbol)
+      .getDrawings(symbol, ac.signal)
       .then((drawList) => {
         if (!cancelled) setFullDrawings(drawList);
       })
@@ -461,6 +465,7 @@ export function ReviewWorkspace({
       });
     return () => {
       cancelled = true;
+      ac.abort();
     };
   }, [client, symbol]);
 
@@ -1015,13 +1020,20 @@ export function ReviewWorkspace({
     >
       {/* Left Slide-Over Record Selector (Hidden by default) */}
       {selectorOpen ? (
-        <aside
-          className="absolute top-0 bottom-0 left-0 z-20 flex w-[272px] flex-col border-r shadow-xl"
-          style={{
-            backgroundColor: 'var(--bg-surface)',
-            borderColor: 'var(--border-strong)',
-          }}
-        >
+        <>
+          <div
+            className="absolute inset-0 z-10 sm:hidden"
+            style={{ backgroundColor: 'var(--bg-overlay)' }}
+            onClick={() => setSelectorOpen(false)}
+            aria-hidden
+          />
+          <aside
+            className="kairos-contain-panel absolute top-0 bottom-0 left-0 z-20 flex w-[min(86vw,280px)] flex-col border-r shadow-xl sm:w-[272px]"
+            style={{
+              backgroundColor: 'var(--bg-surface)',
+              borderColor: 'var(--border-strong)',
+            }}
+          >
           <div
             className="flex items-center justify-between border-b px-3 py-2"
             style={{ borderColor: 'var(--border-hairline)' }}
@@ -1093,7 +1105,7 @@ export function ReviewWorkspace({
                       key={subjKey}
                       type="button"
                       onClick={() => handleSelectSubject(subj)}
-                      className="w-full rounded border px-2.5 py-2 text-left transition-colors"
+                      className="kairos-list-item w-full rounded border px-2.5 py-2 text-left transition-colors"
                       style={{
                         backgroundColor: active
                           ? 'var(--bg-elevated)'
@@ -1193,7 +1205,7 @@ export function ReviewWorkspace({
                     key={subjKey}
                     type="button"
                     onClick={() => handleSelectSubject(subj)}
-                    className="w-full rounded border px-2.5 py-2 text-left"
+                    className="kairos-list-item w-full rounded border px-2.5 py-2 text-left"
                     style={{
                       backgroundColor: active
                         ? 'var(--bg-elevated)'
@@ -1222,14 +1234,15 @@ export function ReviewWorkspace({
               })
             )}
           </div>
-        </aside>
+          </aside>
+        </>
       ) : null}
 
       {/* Main Full-Bleed Replay Chart */}
       <section className="flex min-w-0 flex-1 flex-col">
         {hideFuture ? (
           <div
-            className="flex shrink-0 items-center gap-2 border-b px-3 py-1 text-[11px]"
+            className="flex shrink-0 flex-wrap items-center gap-2 border-b px-3 py-1 text-[11px]"
             style={{
               backgroundColor: 'var(--bg-surface)',
               borderColor: 'var(--border-hairline)',

@@ -366,6 +366,7 @@ export function WatchWorkspace({
   // Load primary chart bars whenever activeSymbol or activeTf changes (0ms instant from cache)
   useEffect(() => {
     let cancelled = false;
+    const ac = new AbortController();
     const key = `${activeSymbol}|${activeTf}`;
     primaryHistoryRef.current = { key, inFlight: false, exhausted: false };
 
@@ -386,7 +387,7 @@ export function WatchWorkspace({
     }
 
     client
-      .getMarketBars({ symbol: activeSymbol, tf: activeTf, limit: 800 })
+      .getMarketBars({ symbol: activeSymbol, tf: activeTf, limit: 800, signal: ac.signal })
       .then((res) => {
         if (cancelled) return;
         const loaded = res.bars ?? [];
@@ -428,14 +429,16 @@ export function WatchWorkspace({
 
     return () => {
       cancelled = true;
+      ac.abort();
     };
   }, [client, activeSymbol, activeTf, writeBarCache]);
 
   // Load primary symbol drawings only when activeSymbol changes (never on timeframe switch)
   useEffect(() => {
     let cancelled = false;
+    const ac = new AbortController();
     client
-      .getDrawings(activeSymbol)
+      .getDrawings(activeSymbol, ac.signal)
       .then((list) => {
         if (!cancelled) setDrawings(list);
       })
@@ -444,6 +447,7 @@ export function WatchWorkspace({
       });
     return () => {
       cancelled = true;
+      ac.abort();
     };
   }, [client, activeSymbol]);
 
@@ -451,6 +455,7 @@ export function WatchWorkspace({
   useEffect(() => {
     if (!splitMode) return;
     let cancelled = false;
+    const ac = new AbortController();
     const key = `${compareSymbol}|${compareTf}`;
     compareHistoryRef.current = { key, inFlight: false, exhausted: false };
 
@@ -471,7 +476,7 @@ export function WatchWorkspace({
     }
 
     client
-      .getMarketBars({ symbol: compareSymbol, tf: compareTf, limit: 800 })
+      .getMarketBars({ symbol: compareSymbol, tf: compareTf, limit: 800, signal: ac.signal })
       .then((res) => {
         if (cancelled) return;
         const loaded = res.bars ?? [];
@@ -513,6 +518,7 @@ export function WatchWorkspace({
 
     return () => {
       cancelled = true;
+      ac.abort();
     };
   }, [client, splitMode, compareSymbol, compareTf, writeBarCache]);
 
@@ -520,8 +526,9 @@ export function WatchWorkspace({
   useEffect(() => {
     if (!splitMode) return;
     let cancelled = false;
+    const ac = new AbortController();
     client
-      .getDrawings(compareSymbol)
+      .getDrawings(compareSymbol, ac.signal)
       .then((list) => {
         if (!cancelled) setCompareDrawings(list);
       })
@@ -530,6 +537,7 @@ export function WatchWorkspace({
       });
     return () => {
       cancelled = true;
+      ac.abort();
     };
   }, [client, splitMode, compareSymbol]);
 
@@ -973,13 +981,20 @@ export function WatchWorkspace({
     >
       {/* Left Slide-Over Queue Drawer (Hidden by default) */}
       {drawerOpen ? (
-        <aside
-          className="absolute top-0 bottom-0 left-0 z-20 flex w-[260px] flex-col border-r shadow-xl"
-          style={{
-            backgroundColor: 'var(--bg-surface)',
-            borderColor: 'var(--border-strong)',
-          }}
-        >
+        <>
+          <div
+            className="absolute inset-0 z-10 sm:hidden"
+            style={{ backgroundColor: 'var(--bg-overlay)' }}
+            onClick={() => setDrawerOpen(false)}
+            aria-hidden
+          />
+          <aside
+            className="kairos-contain-panel absolute top-0 bottom-0 left-0 z-20 flex w-[min(86vw,272px)] flex-col border-r shadow-xl sm:w-[260px]"
+            style={{
+              backgroundColor: 'var(--bg-surface)',
+              borderColor: 'var(--border-strong)',
+            }}
+          >
           <div
             className="flex items-center justify-between border-b px-3 py-2"
             style={{ borderColor: 'var(--border-hairline)' }}
@@ -1034,7 +1049,7 @@ export function WatchWorkspace({
                   <div
                     key={item.id}
                     onClick={() => selectQueueItem(item)}
-                    className="w-full cursor-pointer rounded border px-2.5 py-2 text-left transition-colors"
+                    className="kairos-list-item w-full cursor-pointer rounded border px-2.5 py-2 text-left transition-colors"
                     style={{
                       backgroundColor: isSelected
                         ? 'var(--bg-elevated)'
@@ -1220,7 +1235,8 @@ export function WatchWorkspace({
               })
             )}
           </div>
-        </aside>
+          </aside>
+        </>
       ) : null}
 
       {/* Main 100% Full-Bleed Chart Stage */}

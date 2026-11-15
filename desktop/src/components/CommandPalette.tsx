@@ -301,7 +301,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center pt-[12vh]"
+      className="fixed inset-0 z-50 flex items-start justify-center px-3 pt-[10dvh] sm:pt-[12dvh]"
       style={{ backgroundColor: 'var(--bg-overlay)' }}
       onClick={onClose}
     >
@@ -309,7 +309,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
         role="dialog"
         aria-modal="true"
         aria-label={t('palette.ariaLabel')}
-        className="w-full max-w-[540px] overflow-hidden rounded-[8px] border shadow-2xl"
+        className="kairos-contain-panel w-full max-w-[540px] overflow-hidden rounded-[8px] border shadow-2xl"
         style={{
           backgroundColor: 'var(--bg-surface)',
           borderColor: 'var(--border-strong)',
