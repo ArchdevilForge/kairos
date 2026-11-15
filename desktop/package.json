@@ -1,7 +1,7 @@
 {
   "name": "kairos-desk-desktop",
   "private": true,
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Kairos human-controlled crypto futures watch and trade review desktop client",
   "author": "Xeron <xeronsh@gmail.com>",
   "license": "MIT",
