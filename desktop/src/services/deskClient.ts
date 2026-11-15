@@ -1,3 +1,4 @@
+import { t } from '../i18n';
 import type {
   AccountSyncResponse,
   BootstrapPayload,
@@ -194,7 +195,7 @@ export class DeskClient {
       return JSON.parse(text) as T;
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') {
-        throw new DeskApiError('请求超时，请稍后重试', 408, 'REQUEST_TIMEOUT');
+        throw new DeskApiError(t('app.err.timeout'), 408, 'REQUEST_TIMEOUT');
       }
       throw err;
     } finally {

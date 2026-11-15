@@ -19,8 +19,11 @@
           var saved = localStorage.getItem('kairos.desk.theme');
           var theme = saved === 'light' || saved === 'dark' ? saved : 'dark';
           document.documentElement.dataset.theme = theme;
+          var savedLocale = localStorage.getItem('kairos.desk.locale');
+          document.documentElement.lang = savedLocale === 'en' ? 'en' : 'zh-CN';
         } catch (_) {
           document.documentElement.dataset.theme = 'dark';
+          document.documentElement.lang = 'zh-CN';
         }
       })();
     </script>

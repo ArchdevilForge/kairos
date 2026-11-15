@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AreaSeries,
   ColorType,
@@ -10,6 +10,7 @@ import {
   type TickMarkType,
   type Time,
 } from 'lightweight-charts';
+import { useI18n, type Locale, type TranslateFn } from '../i18n';
 import type { EquityPoint } from '../types/kairos';
 import { type AnthropicChartTheme, readChartTheme, withAlpha } from '../utils/chartTheme';
 import {
@@ -31,9 +32,12 @@ export interface EquityCurveProps {
 export default function EquityCurve({
   points,
   height = 240,
-  emptyHint = '暂无足够已结算样本以绘制权益与钱包对账曲线。',
+  emptyHint,
   walletSummary,
 }: EquityCurveProps) {
+  const { t, locale } = useI18n();
+  const resolvedEmptyHint = emptyHint ?? t('equity.emptyHint');
+
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const bankrollRef = useRef<ISeriesApi<'Area'> | null>(null);
@@ -48,6 +52,13 @@ export default function EquityCurve({
 
   const [mode, setMode] = useState<'equity' | 'drawdown'>('equity');
   const [theme, setTheme] = useState<AnthropicChartTheme>(() => readChartTheme());
+  const themeRef = useRef<AnthropicChartTheme>(theme);
+  themeRef.current = theme;
+  const localeRef = useRef<Locale>(locale);
+  localeRef.current = locale;
+  const tRef = useRef<TranslateFn>(t);
+  tRef.current = t;
+  const hoveredTimeRef = useRef<number | null>(null);
 
   const sortedPoints = useMemo(() => {
     const byTime = new Map<number, EquityPoint>();
@@ -58,98 +69,12 @@ export default function EquityCurve({
     return [...byTime.values()];
   }, [points]);
 
+  const hasEnoughPoints = sortedPoints.length >= 2;
   const pointsRef = useRef<EquityPoint[]>(sortedPoints);
   pointsRef.current = sortedPoints;
 
-  useEffect(() => {
-    const observer = new MutationObserver(() => setTheme(readChartTheme()));
-    observer.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ['data-theme'],
-    });
-    return () => observer.disconnect();
-  }, []);
-
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el || sortedPoints.length < 2) return;
-
-    const chart = createChart(el, {
-      width: Math.max(1, el.clientWidth),
-      height,
-      layout: {
-        background: { type: ColorType.Solid, color: theme.bgSurface },
-        textColor: theme.textSecondary,
-        fontFamily: theme.fontMono,
-        fontSize: 11,
-      },
-      grid: {
-        vertLines: { color: theme.gridLine },
-        horzLines: { color: theme.gridLine },
-      },
-      rightPriceScale: {
-        borderColor: theme.borderHairline,
-        minimumWidth: 84,
-      },
-      timeScale: {
-        borderColor: theme.borderHairline,
-        timeVisible: true,
-        secondsVisible: false,
-        tickMarkFormatter: (time: Time, tickMarkType: TickMarkType) =>
-          fmtChartTickUtc8(time, tickMarkType),
-      },
-      localization: {
-        locale: 'zh-CN',
-        timeFormatter: (time: Time) => fmtChartCrosshairUtc8(time),
-      },
-    });
-
-    const bankrollSeries = chart.addSeries(
-      AreaSeries,
-      {
-        lineColor: theme.candleBull,
-        topColor: withAlpha(theme.candleBull, 0.28),
-        bottomColor: withAlpha(theme.candleBull, 0.02),
-        lineWidth: 2,
-        priceLineVisible: false,
-        lastValueVisible: true,
-        title: 'Bankroll',
-      },
-      0,
-    );
-
-    const walletSeries = chart.addSeries(
-      LineSeries,
-      {
-        color: theme.accentInfo,
-        lineWidth: 2,
-        priceLineVisible: false,
-        lastValueVisible: true,
-        title: 'Wallet',
-      },
-      0,
-    );
-
-    const ddSeries = chart.addSeries(
-      AreaSeries,
-      {
-        lineColor: theme.candleBear,
-        topColor: withAlpha(theme.candleBear, 0.04),
-        bottomColor: withAlpha(theme.candleBear, 0.28),
-        lineWidth: 2,
-        priceLineVisible: false,
-        lastValueVisible: true,
-        title: 'DD%',
-      },
-      0,
-    );
-
-    chartRef.current = chart;
-    bankrollRef.current = bankrollSeries;
-    walletRef.current = walletSeries;
-    ddRef.current = ddSeries;
-
-    const updateReadout = (pt?: EquityPoint) => {
+  const updateReadout = useCallback(
+    (pt?: EquityPoint) => {
       const tEl = timeSlotRef.current;
       const bEl = bankrollSlotRef.current;
       const wEl = walletSlotRef.current;
@@ -167,26 +92,128 @@ export default function EquityCurve({
         return;
       }
       tEl.textContent = fmtDateTimeSec(pt.time);
-      bEl.textContent = `账面 ${fmtUsd(pt.bankroll_usd)}`;
+      bEl.textContent = t('equity.readoutBankroll', { value: fmtUsd(pt.bankroll_usd) });
       const hasWallet = pt.wallet_usd != null && Number.isFinite(pt.wallet_usd);
-      wEl.textContent = hasWallet ? `钱包 ${fmtUsd(pt.wallet_usd)}` : '钱包 —';
+      wEl.textContent = t('equity.readoutWallet', {
+        value: hasWallet ? fmtUsd(pt.wallet_usd) : '—',
+      });
       wEl.style.color = hasWallet ? 'var(--accent-info)' : 'var(--text-muted)';
-      pEl.textContent = `单笔 ${fmtUsd(pt.trade_pnl_usd, true)}`;
+      pEl.textContent = t('equity.readoutTrade', { value: fmtUsd(pt.trade_pnl_usd, true) });
       pEl.style.color = pt.trade_pnl_usd >= 0 ? 'var(--pnl-pos)' : 'var(--pnl-neg)';
-      rEl.textContent = `累计 ${fmtR(pt.cumulative_r)}`;
+      rEl.textContent = t('equity.readoutCumR', { value: fmtR(pt.cumulative_r) });
       rEl.style.color = pt.cumulative_r >= 0 ? 'var(--pnl-pos)' : 'var(--pnl-neg)';
-      dEl.textContent = `回撤 ${fmtPctPoints(-Math.abs(pt.drawdown_pct), 2, false)}`;
-    };
+      dEl.textContent = t('equity.readoutDrawdown', {
+        value: fmtPctPoints(-Math.abs(pt.drawdown_pct), 2, false),
+      });
+    },
+    [t],
+  );
+  const updateReadoutRef = useRef(updateReadout);
+  updateReadoutRef.current = updateReadout;
+
+  useEffect(() => {
+    const observer = new MutationObserver(() => setTheme(readChartTheme()));
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-theme'],
+    });
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el || !hasEnoughPoints) return;
+
+    const currentTheme = themeRef.current;
+    const currentLocale = localeRef.current;
+    const tr = tRef.current;
+
+    const chart = createChart(el, {
+      width: Math.max(1, el.clientWidth),
+      height,
+      layout: {
+        background: { type: ColorType.Solid, color: currentTheme.bgSurface },
+        textColor: currentTheme.textSecondary,
+        fontFamily: currentTheme.fontMono,
+        fontSize: 11,
+      },
+      grid: {
+        vertLines: { color: currentTheme.gridLine },
+        horzLines: { color: currentTheme.gridLine },
+      },
+      rightPriceScale: {
+        borderColor: currentTheme.borderHairline,
+        minimumWidth: 84,
+      },
+      timeScale: {
+        borderColor: currentTheme.borderHairline,
+        timeVisible: true,
+        secondsVisible: false,
+        tickMarkFormatter: (time: Time, tickMarkType: TickMarkType) =>
+          fmtChartTickUtc8(time, tickMarkType),
+      },
+      localization: {
+        locale: currentLocale === 'en' ? 'en-US' : 'zh-CN',
+        timeFormatter: (time: Time) => fmtChartCrosshairUtc8(time),
+      },
+    });
+
+    const bankrollSeries = chart.addSeries(
+      AreaSeries,
+      {
+        lineColor: currentTheme.candleBull,
+        topColor: withAlpha(currentTheme.candleBull, 0.28),
+        bottomColor: withAlpha(currentTheme.candleBull, 0.02),
+        lineWidth: 2,
+        priceLineVisible: false,
+        lastValueVisible: true,
+        title: tr('equity.seriesBankroll'),
+      },
+      0,
+    );
+
+    const walletSeries = chart.addSeries(
+      LineSeries,
+      {
+        color: currentTheme.accentInfo,
+        lineWidth: 2,
+        priceLineVisible: false,
+        lastValueVisible: true,
+        title: tr('equity.seriesWallet'),
+      },
+      0,
+    );
+
+    const ddSeries = chart.addSeries(
+      AreaSeries,
+      {
+        lineColor: currentTheme.candleBear,
+        topColor: withAlpha(currentTheme.candleBear, 0.04),
+        bottomColor: withAlpha(currentTheme.candleBear, 0.28),
+        lineWidth: 2,
+        priceLineVisible: false,
+        lastValueVisible: true,
+        title: tr('equity.seriesDrawdown'),
+      },
+      0,
+    );
+
+    chartRef.current = chart;
+    bankrollRef.current = bankrollSeries;
+    walletRef.current = walletSeries;
+    ddRef.current = ddSeries;
 
     const onCrosshair = (param: MouseEventParams<Time>) => {
       const list = pointsRef.current;
       if (param.time == null) {
-        updateReadout(list[list.length - 1]);
+        hoveredTimeRef.current = null;
+        updateReadoutRef.current(list[list.length - 1]);
         return;
       }
-      const t = Number(param.time);
-      const match = list.find((p) => p.time === t) ?? list[list.length - 1];
-      updateReadout(match);
+      const ts = Number(param.time);
+      hoveredTimeRef.current = ts;
+      const match = list.find((p) => p.time === ts) ?? list[list.length - 1];
+      updateReadoutRef.current(match);
     };
 
     chart.subscribeCrosshairMove(onCrosshair);
@@ -209,9 +236,9 @@ export default function EquityCurve({
       walletRef.current = null;
       ddRef.current = null;
     };
-  }, [height, sortedPoints.length >= 2]);
+  }, [height, hasEnoughPoints]);
 
-  // Apply theme
+  // Apply theme and locale updates live without recreating chart
   useEffect(() => {
     const chart = chartRef.current;
     if (!chart) return;
@@ -227,19 +254,28 @@ export default function EquityCurve({
       },
       rightPriceScale: { borderColor: theme.borderHairline },
       timeScale: { borderColor: theme.borderHairline },
+      localization: {
+        locale: locale === 'en' ? 'en-US' : 'zh-CN',
+        timeFormatter: (time: Time) => fmtChartCrosshairUtc8(time),
+      },
     });
     bankrollRef.current?.applyOptions({
       lineColor: theme.candleBull,
       topColor: withAlpha(theme.candleBull, 0.28),
       bottomColor: withAlpha(theme.candleBull, 0.02),
+      title: t('equity.seriesBankroll'),
     });
-    walletRef.current?.applyOptions({ color: theme.accentInfo });
+    walletRef.current?.applyOptions({
+      color: theme.accentInfo,
+      title: t('equity.seriesWallet'),
+    });
     ddRef.current?.applyOptions({
       lineColor: theme.candleBear,
       topColor: withAlpha(theme.candleBear, 0.04),
       bottomColor: withAlpha(theme.candleBear, 0.28),
+      title: t('equity.seriesDrawdown'),
     });
-  }, [theme]);
+  }, [theme, locale, t, hasEnoughPoints]);
 
   // Populate series data
   useEffect(() => {
@@ -267,23 +303,22 @@ export default function EquityCurve({
       );
     }
 
-    const last = sortedPoints[sortedPoints.length - 1];
-    if (last && timeSlotRef.current && bankrollSlotRef.current && walletSlotRef.current && pnlSlotRef.current && cumRSlotRef.current && ddSlotRef.current) {
-      timeSlotRef.current.textContent = fmtDateTimeSec(last.time);
-      bankrollSlotRef.current.textContent = `账面 ${fmtUsd(last.bankroll_usd)}`;
-      const hasWallet = last.wallet_usd != null && Number.isFinite(last.wallet_usd);
-      walletSlotRef.current.textContent = hasWallet ? `钱包 ${fmtUsd(last.wallet_usd)}` : '钱包 —';
-      walletSlotRef.current.style.color = hasWallet ? 'var(--accent-info)' : 'var(--text-muted)';
-      pnlSlotRef.current.textContent = `单笔 ${fmtUsd(last.trade_pnl_usd, true)}`;
-      pnlSlotRef.current.style.color = last.trade_pnl_usd >= 0 ? 'var(--pnl-pos)' : 'var(--pnl-neg)';
-      cumRSlotRef.current.textContent = `累计 ${fmtR(last.cumulative_r)}`;
-      cumRSlotRef.current.style.color = last.cumulative_r >= 0 ? 'var(--pnl-pos)' : 'var(--pnl-neg)';
-      ddSlotRef.current.textContent = `回撤 ${fmtPctPoints(-Math.abs(last.drawdown_pct), 2, false)}`;
-    }
+    updateReadoutRef.current(sortedPoints[sortedPoints.length - 1]);
     chartRef.current?.timeScale().fitContent();
   }, [sortedPoints, mode]);
 
-  if (sortedPoints.length < 2) {
+  // Refresh readout immediately when locale changes
+  useEffect(() => {
+    if (sortedPoints.length < 2) return;
+    const hoverTs = hoveredTimeRef.current;
+    const pt =
+      hoverTs != null
+        ? (sortedPoints.find((p) => p.time === hoverTs) ?? sortedPoints[sortedPoints.length - 1])
+        : sortedPoints[sortedPoints.length - 1];
+    updateReadout(pt);
+  }, [sortedPoints, updateReadout]);
+
+  if (!hasEnoughPoints) {
     return (
       <div
         className="rounded border p-4"
@@ -294,7 +329,7 @@ export default function EquityCurve({
       >
         <div className="mb-2 flex h-[28px] shrink-0 items-center justify-between gap-3 overflow-hidden whitespace-nowrap">
           <h2 className="shrink-0 font-editorial text-base font-medium" style={{ color: 'var(--text-primary)' }}>
-            资金净值曲线
+            {t('equity.title')}
           </h2>
           {walletSummary ? (
             <span className="truncate font-mono text-[11px] tabular-nums" style={{ color: 'var(--text-secondary)' }}>
@@ -311,7 +346,7 @@ export default function EquityCurve({
             color: 'var(--text-muted)',
           }}
         >
-          {emptyHint}
+          {resolvedEmptyHint}
         </div>
       </div>
     );
@@ -328,15 +363,15 @@ export default function EquityCurve({
       <div className="mb-1.5 flex h-[28px] shrink-0 items-center justify-between gap-3 overflow-hidden whitespace-nowrap">
         <div className="flex min-w-0 items-center gap-3">
           <h2 className="shrink-0 font-editorial text-base font-medium" style={{ color: 'var(--text-primary)' }}>
-            资金净值曲线
+            {t('equity.title')}
           </h2>
           <span className="flex shrink-0 items-center gap-1.5 text-[11px]" style={{ color: 'var(--candle-bull)' }}>
             <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: 'var(--candle-bull)' }} />
-            Trading Bankroll
+            {t('equity.legendBankroll')}
           </span>
           <span className="flex shrink-0 items-center gap-1.5 text-[11px]" style={{ color: 'var(--accent-info)' }}>
             <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: 'var(--accent-info)' }} />
-            Read-Only Wallet
+            {t('equity.legendWallet')}
           </span>
           {walletSummary ? (
             <span className="truncate font-mono text-[11px] tabular-nums" style={{ color: 'var(--text-secondary)' }}>
@@ -361,7 +396,7 @@ export default function EquityCurve({
               color: mode === 'equity' ? 'var(--accent-brand)' : 'var(--text-secondary)',
             }}
           >
-            资金曲线
+            {t('equity.modeEquity')}
           </button>
           <button
             type="button"
@@ -372,18 +407,18 @@ export default function EquityCurve({
               color: mode === 'drawdown' ? 'var(--candle-bear)' : 'var(--text-secondary)',
             }}
           >
-            回撤 %
+            {t('equity.modeDrawdown')}
           </button>
         </div>
       </div>
 
       <div className="mb-2 flex h-[20px] shrink-0 items-center gap-3 overflow-hidden whitespace-nowrap font-mono text-[11px] tabular-nums">
         <span ref={timeSlotRef} className="w-[116px] shrink-0" style={{ color: 'var(--text-muted)' }} />
-        <span ref={bankrollSlotRef} className="w-[112px] shrink-0" style={{ color: 'var(--text-primary)' }} />
-        <span ref={walletSlotRef} className="w-[118px] shrink-0" style={{ color: 'var(--text-muted)' }} />
-        <span ref={pnlSlotRef} className="w-[116px] shrink-0" style={{ color: 'var(--text-secondary)' }} />
-        <span ref={cumRSlotRef} className="w-[100px] shrink-0" style={{ color: 'var(--text-secondary)' }} />
-        <span ref={ddSlotRef} className="w-[104px] shrink-0" style={{ color: 'var(--pnl-neg)' }} />
+        <span ref={bankrollSlotRef} className="min-w-[126px] shrink-0" style={{ color: 'var(--text-primary)' }} />
+        <span ref={walletSlotRef} className="min-w-[124px] shrink-0" style={{ color: 'var(--text-muted)' }} />
+        <span ref={pnlSlotRef} className="min-w-[118px] shrink-0" style={{ color: 'var(--text-secondary)' }} />
+        <span ref={cumRSlotRef} className="min-w-[104px] shrink-0" style={{ color: 'var(--text-secondary)' }} />
+        <span ref={ddSlotRef} className="min-w-[104px] shrink-0" style={{ color: 'var(--pnl-neg)' }} />
       </div>
 
       <div ref={containerRef} style={{ height }} className="w-full" />

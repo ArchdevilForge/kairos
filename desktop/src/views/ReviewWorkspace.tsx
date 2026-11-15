@@ -28,6 +28,7 @@ import {
   type Timeframe,
   type TradeFillItem,
 } from '../types/kairos';
+import { useI18n } from '../i18n';
 import { sameSymbol } from '../utils/doctrine';
 import {
   TIMEFRAME_SECONDS,
@@ -166,6 +167,7 @@ export function ReviewWorkspace({
   initialTicketId,
   onSelectSymbol,
 }: ReviewWorkspaceProps) {
+  const { t } = useI18n();
   const [selectorOpen, setSelectorOpen] = useState(false);
   const [selectorTab, setSelectorTab] = useState<SelectorTab>('all');
 
@@ -188,7 +190,7 @@ export function ReviewWorkspace({
   const [fullDrawings, setFullDrawings] = useState<ChartDrawingItem[]>([]);
   const [barsLoading, setBarsLoading] = useState(false);
   const [loadingMoreBars, setLoadingMoreBars] = useState(false);
-  const [barsError, setBarsError] = useState<string | null>(null);
+  const [barsErrorState, setBarsErrorState] = useState<{ raw: string | null } | null>(null);
   const reviewHistoryRef = useRef<{ key: string; inFlight: boolean; exhausted: boolean }>({
     key: '',
     inFlight: false,
@@ -207,7 +209,18 @@ export function ReviewWorkspace({
   const [playSpeed, setPlaySpeed] = useState(5);
   const [stepBars, setStepBars] = useState(1);
   const [replayState, setReplayState] = useState<ReplayStateResponse | null>(null);
-  const [replayError, setReplayError] = useState<string | null>(null);
+  const [replayErrorState, setReplayErrorState] = useState<{ raw: string | null } | null>(null);
+
+  const barsError = barsErrorState
+    ? barsErrorState.raw !== null
+      ? barsErrorState.raw
+      : t('review.loadBarsFailed')
+    : null;
+  const replayError = replayErrorState
+    ? replayErrorState.raw !== null
+      ? replayErrorState.raw
+      : t('review.replayLoadFailed')
+    : null;
 
   // Build unified list of reviewable subjects sorted by time descending
   const allSubjects = useMemo<SelectedSubject[]>(
@@ -351,7 +364,7 @@ export function ReviewWorkspace({
     let cancelled = false;
     reviewHistoryRef.current = { key: sliceKey, inFlight: false, exhausted: false };
     setLoadingMoreBars(false);
-    setBarsError(null);
+    setBarsErrorState(null);
 
     const cachedSlice = reviewBarCacheRef.current.get(sliceKey);
     if (cachedSlice && cachedSlice.length > 0) {
@@ -418,7 +431,7 @@ export function ReviewWorkspace({
       } catch (err) {
         if (cancelled) return;
         setBarsLoading(false);
-        setBarsError(err instanceof Error ? err.message : '加载复盘 K 线失败');
+        setBarsErrorState({ raw: err instanceof Error ? err.message : null });
       }
     })();
 
@@ -500,7 +513,7 @@ export function ReviewWorkspace({
   useEffect(() => {
     if (!hideFuture || cursorTs <= 0) return;
     let cancelled = false;
-    setReplayError(null);
+    setReplayErrorState(null);
     client
       .getReplayState({
         symbol,
@@ -514,7 +527,7 @@ export function ReviewWorkspace({
       })
       .catch((err) => {
         if (cancelled) return;
-        setReplayError(err instanceof Error ? err.message : '回放截断接口失败');
+        setReplayErrorState({ raw: err instanceof Error ? err.message : null });
       });
     return () => {
       cancelled = true;
@@ -682,25 +695,25 @@ export function ReviewWorkspace({
     if (!selectedSubject || !subjectMatchesSymbol || chartBars.length === 0) return [];
     const lines: ChartPriceLineSpec[] = [];
     if (selectedSubject.kind === 'ticket') {
-      const t = selectedSubject.bundle.ticket;
+      const ticket = selectedSubject.bundle.ticket;
       const entry =
-        selectedSubject.bundle.decision?.planned_entry ?? t.risk_plan.entry_price;
+        selectedSubject.bundle.decision?.planned_entry ?? ticket.risk_plan.entry_price;
       if (entry > 0) {
         lines.push({
           id: 'entry',
           price: entry,
-          title: '入场',
+          title: t('review.priceLine.entry'),
           color: '#D97757',
           draggable: false,
         });
       }
       const stopVal =
-        selectedSubject.bundle.decision?.planned_stop ?? t.risk_plan.stop_price;
+        selectedSubject.bundle.decision?.planned_stop ?? ticket.risk_plan.stop_price;
       if (stopVal != null && stopVal > 0) {
         lines.push({
           id: 'stop',
           price: stopVal,
-          title: '止损',
+          title: t('review.priceLine.stop'),
           color: '#B85450',
           dashed: true,
           draggable: false,
@@ -709,13 +722,18 @@ export function ReviewWorkspace({
     } else if (selectedSubject.kind === 'trade') {
       const tr = selectedSubject.trade;
       if (tr.entry_price > 0) {
-        lines.push({ id: 'entry', price: tr.entry_price, title: '入场', color: '#D97757' });
+        lines.push({
+          id: 'entry',
+          price: tr.entry_price,
+          title: t('review.priceLine.entry'),
+          color: '#D97757',
+        });
       }
       if (tr.exit_price > 0 && (!hideFuture || tr.exit_time_ms / 1000 <= cursorTs)) {
         lines.push({
           id: 'exit',
           price: tr.exit_price,
-          title: '出场',
+          title: t('review.priceLine.exit'),
           color: '#6A9BCC',
           dashed: true,
         });
@@ -723,11 +741,16 @@ export function ReviewWorkspace({
     } else if (selectedSubject.kind === 'position') {
       const pos = selectedSubject.position;
       if (pos.entry_price > 0) {
-        lines.push({ id: 'entry', price: pos.entry_price, title: '均价', color: '#D97757' });
+        lines.push({
+          id: 'entry',
+          price: pos.entry_price,
+          title: t('review.priceLine.avg'),
+          color: '#D97757',
+        });
       }
     }
     return lines;
-  }, [selectedSubject, subjectMatchesSymbol, chartBars.length, hideFuture, cursorTs]);
+  }, [selectedSubject, subjectMatchesSymbol, chartBars.length, hideFuture, cursorTs, t]);
 
   const reviewTradeSegment = useMemo<ChartTradeSegmentInput | null>(() => {
     if (!selectedSubject || !subjectMatchesSymbol || chartBars.length === 0) return null;
@@ -894,15 +917,18 @@ export function ReviewWorkspace({
     if (activeTrade) {
       const dir =
         activeTrade.direction === 'short' || activeTrade.direction === 'down'
-          ? '做空'
-          : '做多';
+          ? t('review.dir.short')
+          : t('review.dir.long');
       return {
         text: `${dir} ${fmtUsd(activeTrade.net_pnl, true)}`,
         positive: activeTrade.net_pnl >= 0,
       };
     }
     if (activeTicket) {
-      const dir = activeTicket.ticket.direction === 'down' ? '做空' : '做多';
+      const dir =
+        activeTicket.ticket.direction === 'down'
+          ? t('review.dir.short')
+          : t('review.dir.long');
       const r = activeTicket.outcome ? ` ${fmtR(activeTicket.outcome.net_r)}` : '';
       return {
         text: `${dir}${r}`,
@@ -911,12 +937,14 @@ export function ReviewWorkspace({
     }
     if (activePosition) {
       return {
-        text: `持仓 ${fmtUsd(activePosition.unrealized_pnl, true)}`,
+        text: t('review.badge.positionPnl', {
+          pnl: fmtUsd(activePosition.unrealized_pnl, true),
+        }),
         positive: activePosition.unrealized_pnl >= 0,
       };
     }
     return null;
-  }, [selectedSubject, activeTrade, activeTicket, activePosition]);
+  }, [selectedSubject, activeTrade, activeTicket, activePosition, t]);
 
   // Inline KISS controls inside KairosChart toolbar
   const reviewToolbarSlot = (
@@ -932,14 +960,16 @@ export function ReviewWorkspace({
         }}
       >
         <List className="h-3 w-3" />
-        <span className="tabular-nums">记录列表 ({allSubjects.length})</span>
+        <span className="tabular-nums">
+          {t('review.toolbar.recordList', { count: allSubjects.length })}
+        </span>
       </button>
 
       {filteredSubjects.length > 0 ? (
         <div className="flex items-center gap-0.5">
           <button
             type="button"
-            title="上一条记录"
+            title={t('review.toolbar.prevRecord')}
             onClick={() => stepSubject(-1)}
             className="rounded p-0.5 hover:opacity-80"
             style={{ color: 'var(--text-secondary)' }}
@@ -948,7 +978,7 @@ export function ReviewWorkspace({
           </button>
           <button
             type="button"
-            title="下一条记录"
+            title={t('review.toolbar.nextRecord')}
             onClick={() => stepSubject(1)}
             className="rounded p-0.5 hover:opacity-80"
             style={{ color: 'var(--text-secondary)' }}
@@ -972,7 +1002,7 @@ export function ReviewWorkspace({
         </span>
       ) : allSubjects.length === 0 ? (
         <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-          暂无复盘记录
+          {t('review.toolbar.empty')}
         </span>
       ) : null}
     </div>
@@ -997,14 +1027,14 @@ export function ReviewWorkspace({
             style={{ borderColor: 'var(--border-hairline)' }}
           >
             <span className="text-xs font-medium" style={{ color: 'var(--text-primary)' }}>
-              复盘记录
+              {t('review.selector.title')}
             </span>
             <button
               type="button"
               onClick={() => setSelectorOpen(false)}
               className="rounded p-1 hover:opacity-80"
               style={{ color: 'var(--text-muted)' }}
-              aria-label="关闭记录列表"
+              aria-label={t('review.selector.close')}
             >
               <X className="h-3.5 w-3.5" />
             </button>
@@ -1016,14 +1046,15 @@ export function ReviewWorkspace({
           >
             {(
               [
-                ['all', '全部'],
-                ['executed', '已执行'],
-                ['skipped', '跳过与无票'],
+                ['all', t('review.selector.tabAll'), undefined],
+                ['executed', t('review.selector.tabExecuted'), undefined],
+                ['skipped', t('review.selector.tabSkipped'), t('review.selector.tabSkippedHint')],
               ] as const
-            ).map(([id, label]) => (
+            ).map(([id, label, hint]) => (
               <button
                 key={id}
                 type="button"
+                title={hint}
                 onClick={() => setSelectorTab(id)}
                 className="rounded py-1 font-medium"
                 style={{
@@ -1044,7 +1075,7 @@ export function ReviewWorkspace({
                 className="px-3 py-10 text-center text-xs"
                 style={{ color: 'var(--text-muted)' }}
               >
-                暂无匹配记录
+                {t('review.selector.emptyFiltered')}
               </div>
             ) : (
               filteredSubjects.map((subj) => {
@@ -1053,7 +1084,10 @@ export function ReviewWorkspace({
                 const subjKey = `${subj.kind}:${subj.id}`;
                 if (subj.kind === 'ticket') {
                   const b = subj.bundle;
-                  const dir = b.ticket.direction === 'down' ? '做空' : '做多';
+                  const dir =
+                    b.ticket.direction === 'down'
+                      ? t('review.dir.short')
+                      : t('review.dir.long');
                   return (
                     <button
                       key={subjKey}
@@ -1110,7 +1144,9 @@ export function ReviewWorkspace({
                 if (subj.kind === 'trade') {
                   const tr = subj.trade;
                   const dir =
-                    tr.direction === 'short' || tr.direction === 'down' ? '做空' : '做多';
+                    tr.direction === 'short' || tr.direction === 'down'
+                      ? t('review.dir.short')
+                      : t('review.dir.long');
                   return (
                     <button
                       key={subjKey}
@@ -1137,7 +1173,7 @@ export function ReviewWorkspace({
                             color: 'var(--state-warn)',
                           }}
                         >
-                          无票开单
+                          {t('review.card.unplanned')}
                         </span>
                       </div>
                       <div className="mt-1 flex items-center justify-between font-mono text-[10px] tabular-nums" style={{ color: 'var(--text-secondary)' }}>
@@ -1172,11 +1208,11 @@ export function ReviewWorkspace({
                         {cleanSymbol(pos.symbol)}
                       </span>
                       <span className="font-mono text-[10px] tabular-nums" style={{ color: 'var(--accent-info)' }}>
-                        持仓 {pos.leverage}x
+                        {t('review.card.positionLev', { leverage: pos.leverage })}
                       </span>
                     </div>
                     <div className="mt-1 flex items-center justify-between font-mono text-[10px] tabular-nums" style={{ color: 'var(--text-secondary)' }}>
-                      <span>均价 {fmtPrice(pos.entry_price)}</span>
+                      <span>{t('review.card.avgEntry', { price: fmtPrice(pos.entry_price) })}</span>
                       <span style={{ color: pos.unrealized_pnl >= 0 ? 'var(--pnl-pos)' : 'var(--pnl-neg)' }}>
                         {fmtUsd(pos.unrealized_pnl, true)}
                       </span>
@@ -1204,7 +1240,7 @@ export function ReviewWorkspace({
             </span>
             <input
               type="range"
-              aria-label="回放时间游标"
+              aria-label={t('review.replay.cursorAria')}
               min={minCursorTs}
               max={Math.max(minCursorTs + 60, maxCursorTs)}
               step={Math.min(60, tfStepSec)}
@@ -1217,7 +1253,7 @@ export function ReviewWorkspace({
             />
             <button
               type="button"
-              title="上一条异动 (a)"
+              title={t('review.replay.prevAnomaly')}
               onClick={() => jumpAnomaly(-1)}
               className="rounded p-0.5 hover:opacity-80"
               style={{ color: 'var(--text-secondary)' }}
@@ -1226,7 +1262,7 @@ export function ReviewWorkspace({
             </button>
             <button
               type="button"
-              title="下一条异动 (n)"
+              title={t('review.replay.nextAnomaly')}
               onClick={() => jumpAnomaly(1)}
               className="rounded p-0.5 hover:opacity-80"
               style={{ color: 'var(--text-secondary)' }}
@@ -1236,7 +1272,7 @@ export function ReviewWorkspace({
             {selectedSubject ? (
               <button
                 type="button"
-                title="回到交易锚点时间"
+                title={t('review.replay.jumpAnchorTitle')}
                 onClick={() => {
                   setPlaying(false);
                   setCursorTs(anchorTimestampFor(selectedSubject));
@@ -1245,7 +1281,7 @@ export function ReviewWorkspace({
                 style={{ color: 'var(--text-secondary)' }}
               >
                 <Anchor className="h-3 w-3" />
-                <span>回锚点</span>
+                <span>{t('review.replay.jumpAnchor')}</span>
               </button>
             ) : null}
           </div>

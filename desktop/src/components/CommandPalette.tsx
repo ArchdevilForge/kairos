@@ -5,11 +5,13 @@ import {
   Columns2,
   Eye,
   History,
+  Languages,
   RefreshCw,
   Search,
   Settings,
   SunMoon,
 } from 'lucide-react';
+import { useI18n } from '../i18n';
 import type { BootstrapPayload } from '../types/kairos';
 import type { WorkspaceTab } from './TopStatusBar';
 
@@ -65,6 +67,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
   onSyncAccount,
   onOpenSettings,
 }) => {
+  const { locale, toggleLocale, t } = useI18n();
   const [query, setQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -79,12 +82,14 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
 
   const items = useMemo<PaletteItem[]>(() => {
     const q = query.trim().toLowerCase();
+    const viewsGroup = t('palette.group.views');
+    const actionsGroup = t('palette.group.actions');
     const list: PaletteItem[] = [
       {
         id: 'action:watch',
-        group: '视图',
-        label: '看盘视图',
-        hint: '实时 K 线与双图看盘',
+        group: viewsGroup,
+        label: t('palette.action.watchLabel'),
+        hint: t('palette.action.watchHint'),
         icon: <Eye className="h-3.5 w-3.5" />,
         run: () => {
           onChangeView('watch');
@@ -93,9 +98,9 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       },
       {
         id: 'action:review',
-        group: '视图',
-        label: '复盘视图',
-        hint: '零前视回放与历史复盘',
+        group: viewsGroup,
+        label: t('palette.action.reviewLabel'),
+        hint: t('palette.action.reviewHint'),
         icon: <History className="h-3.5 w-3.5" />,
         run: () => {
           onChangeView('review');
@@ -104,9 +109,9 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       },
       {
         id: 'action:stats',
-        group: '视图',
-        label: '统计视图',
-        hint: '资金净值、R 分布与风控合规',
+        group: viewsGroup,
+        label: t('palette.action.statsLabel'),
+        hint: t('palette.action.statsHint'),
         icon: <BarChart3 className="h-3.5 w-3.5" />,
         run: () => {
           onChangeView('stats');
@@ -115,9 +120,9 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       },
       {
         id: 'action:split',
-        group: '操作',
-        label: '切换单图 / 双图 (s)',
-        hint: '结构与触发同步联排',
+        group: actionsGroup,
+        label: t('palette.action.splitLabel'),
+        hint: t('palette.action.splitHint'),
         icon: <Columns2 className="h-3.5 w-3.5" />,
         run: () => {
           onToggleSplit();
@@ -126,8 +131,8 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       },
       {
         id: 'action:theme',
-        group: '操作',
-        label: '切换暗色 / 亮色主题',
+        group: actionsGroup,
+        label: t('palette.action.themeLabel'),
         icon: <SunMoon className="h-3.5 w-3.5" />,
         run: () => {
           onToggleTheme();
@@ -135,9 +140,23 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
         },
       },
       {
+        id: 'action:language',
+        group: actionsGroup,
+        label: t('palette.action.langLabel'),
+        hint:
+          locale === 'zh'
+            ? t('palette.action.langHintToEn')
+            : t('palette.action.langHintToZh'),
+        icon: <Languages className="h-3.5 w-3.5" />,
+        run: () => {
+          toggleLocale();
+          onClose();
+        },
+      },
+      {
         id: 'action:sync',
-        group: '操作',
-        label: '立即同步只读账户',
+        group: actionsGroup,
+        label: t('palette.action.syncLabel'),
         icon: <RefreshCw className="h-3.5 w-3.5" />,
         run: () => {
           onSyncAccount();
@@ -146,8 +165,8 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       },
       {
         id: 'action:settings',
-        group: '操作',
-        label: '打开风险与账户设置',
+        group: actionsGroup,
+        label: t('palette.action.settingsLabel'),
         icon: <Settings className="h-3.5 w-3.5" />,
         run: () => {
           onOpenSettings();
@@ -168,12 +187,13 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       ),
     );
     const allowedSet = new Set(rawSymbols.map((s) => s.toUpperCase()));
+    const symbolsGroup = t('palette.group.symbols');
     for (const sym of symbols) {
       list.push({
         id: `sym:${sym}`,
-        group: 'Crypto 永续',
+        group: symbolsGroup,
         label: sym.replace(/:USDT$/, ''),
-        hint: sym === activeSymbol ? '当前' : '切换看盘',
+        hint: sym === activeSymbol ? t('palette.symbol.current') : t('palette.symbol.switchWatch'),
         icon: <ArrowRight className="h-3.5 w-3.5" />,
         run: () => {
           onSelectSymbol(sym);
@@ -183,16 +203,19 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       });
     }
 
+    const ticketsGroup = t('palette.group.tickets');
     for (const bundle of bootstrap.tickets.slice(0, 20)) {
-      const t = bundle.ticket;
+      const ticket = bundle.ticket;
+      const dirLabel =
+        ticket.direction === 'down' ? t('palette.dir.short') : t('palette.dir.long');
       list.push({
-        id: `ticket:${t.id}`,
-        group: '候选票',
-        label: `${t.symbol.replace(/:USDT$/, '')} · ${t.direction === 'down' ? '做空' : '做多'} · ${t.grade}`,
-        hint: `${t.status} · ${t.id}`,
+        id: `ticket:${ticket.id}`,
+        group: ticketsGroup,
+        label: `${ticket.symbol.replace(/:USDT$/, '')} · ${dirLabel} · ${ticket.grade}`,
+        hint: `${ticket.status} · ${ticket.id}`,
         icon: <History className="h-3.5 w-3.5" />,
         run: () => {
-          onOpenTicketInReview(t.symbol, t.signal_at || t.created_at, t.id);
+          onOpenTicketInReview(ticket.symbol, ticket.signal_at || ticket.created_at, ticket.id);
           onClose();
         },
       });
@@ -215,9 +238,9 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
     ) {
       filtered.unshift({
         id: `custom:${customSym}`,
-        group: '跳转标的',
+        group: t('palette.group.jump'),
         label: customSym.replace(/:USDT$/, ''),
-        hint: '看盘打开',
+        hint: t('palette.symbol.openWatch'),
         icon: <ArrowRight className="h-3.5 w-3.5" />,
         run: () => {
           onSelectSymbol(customSym);
@@ -233,6 +256,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
     bootstrap.status.available_symbols,
     bootstrap.status.symbols,
     bootstrap.tickets,
+    locale,
     onChangeView,
     onClose,
     onOpenSettings,
@@ -242,6 +266,8 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
     onToggleSplit,
     onToggleTheme,
     query,
+    t,
+    toggleLocale,
   ]);
 
   useEffect(() => {
@@ -282,7 +308,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       <div
         role="dialog"
         aria-modal="true"
-        aria-label="Command Palette"
+        aria-label={t('palette.ariaLabel')}
         className="w-full max-w-[540px] overflow-hidden rounded-[8px] border shadow-2xl"
         style={{
           backgroundColor: 'var(--bg-surface)',
@@ -307,7 +333,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
               setQuery(e.target.value);
               setSelectedIndex(0);
             }}
-            placeholder="Search symbol (e.g. BTC, SOL), ticket, or command..."
+            placeholder={t('palette.searchPlaceholder')}
             className="w-full bg-transparent text-[13px] outline-none"
             style={{ color: 'var(--text-primary)' }}
           />
@@ -328,7 +354,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
               className="px-3 py-6 text-center text-[12px]"
               style={{ color: 'var(--text-muted)' }}
             >
-              No matching symbols, tickets, or commands.
+              {t('palette.empty')}
             </div>
           ) : (
             items.map((item, idx) => {

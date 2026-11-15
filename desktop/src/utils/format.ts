@@ -1,4 +1,5 @@
 import { TickMarkType, type Time } from 'lightweight-charts';
+import { t } from '../i18n';
 import type { Timeframe } from '../types/kairos';
 
 const UTC8_OFFSET_SEC = 8 * 3600;
@@ -257,18 +258,20 @@ export function fmtChartCrosshairUtc8(time: Time): string {
   return p.second !== 0 ? `${base}:${pad2(p.second)}` : base;
 }
 
-/** Format duration in seconds into concise Chinese text. */
+/** Format duration in seconds into concise localized text. */
 export function fmtDurationSec(sec: number | null | undefined): string {
   if (sec == null || !Number.isFinite(sec) || sec < 0) return '—';
-  if (sec < 60) return `${Math.round(sec)} 秒`;
+  if (sec < 60) return t('fmt.duration.sec', { s: Math.round(sec) });
   const totalMin = Math.round(sec / 60);
-  if (totalMin < 60) return `${totalMin} 分`;
+  if (totalMin < 60) return t('fmt.duration.min', { m: totalMin });
   const h = Math.floor(totalMin / 60);
   const m = totalMin % 60;
-  if (h < 24) return m > 0 ? `${h} 时 ${m} 分` : `${h} 时`;
+  if (h < 24) {
+    return m > 0 ? t('fmt.duration.hourMin', { h, m }) : t('fmt.duration.hour', { h });
+  }
   const d = Math.floor(h / 24);
   const rh = h % 24;
-  return rh > 0 ? `${d} 天 ${rh} 时` : `${d} 天`;
+  return rh > 0 ? t('fmt.duration.dayHour', { d, h: rh }) : t('fmt.duration.day', { d });
 }
 
 /** Format duration in milliseconds. */

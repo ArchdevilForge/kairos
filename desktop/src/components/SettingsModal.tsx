@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Bell, BellOff, Lock, RefreshCw, Save, X } from 'lucide-react';
+import { useI18n } from '../i18n';
 import type {
   AccountSyncResponse,
   DeskStatus,
@@ -30,6 +31,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onSyncAccount,
   onSaveSettings,
 }) => {
+  const { locale, setLocale, t } = useI18n();
   const [bankroll, setBankroll] = useState(
     String(status.risk_config.trading_bankroll_usd || 40),
   );
@@ -79,17 +81,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     const parsedBankroll = Number(bankroll);
     const parsedMaxLoss = Number(maxLoss);
     if (!Number.isFinite(parsedBankroll) || parsedBankroll <= 0) {
-      setErrorMsg('交易本金池必须为正数。');
+      setErrorMsg(t('settings.err.bankrollPositive'));
       return null;
     }
     if (!Number.isFinite(parsedMaxLoss) || parsedMaxLoss <= 0) {
-      setErrorMsg('单笔最大止损必须为正数。');
+      setErrorMsg(t('settings.err.maxLossPositive'));
       return null;
     }
     const hasKey = Boolean(apiKey.trim());
     const hasSecret = Boolean(apiSecret.trim());
     if (!status.account.configured && hasKey !== hasSecret) {
-      setErrorMsg('首次配置请同时填写 API Key 和 API Secret');
+      setErrorMsg(t('settings.err.keySecretRequired'));
       return null;
     }
 
@@ -120,13 +122,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         setApiSecret('');
         if (res?.account) {
           setSuccessMsg(
-            `同步成功：余额 $${res.account.wallet_balance_usd.toFixed(2)} · 归集 ${res.synced_trades} 笔交易 / ${res.synced_fills} 笔成交`,
+            t('settings.syncSuccessDetail', {
+              balance: res.account.wallet_balance_usd.toFixed(2),
+              trades: res.synced_trades,
+              fills: res.synced_fills,
+            }),
           );
         } else {
-          setSuccessMsg('同步成功');
+          setSuccessMsg(t('settings.syncSuccess'));
         }
       } catch (err) {
-        setErrorMsg(err instanceof Error ? err.message : '账户同步失败');
+        setErrorMsg(err instanceof Error ? err.message : t('settings.err.syncFailed'));
       } finally {
         setSaving(false);
       }
@@ -137,13 +143,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       const res = await onSyncAccount({ rethrow: true });
       if (res?.account) {
         setSuccessMsg(
-          `同步成功：余额 $${res.account.wallet_balance_usd.toFixed(2)} · 归集 ${res.synced_trades} 笔交易 / ${res.synced_fills} 笔成交`,
+          t('settings.syncSuccessDetail', {
+            balance: res.account.wallet_balance_usd.toFixed(2),
+            trades: res.synced_trades,
+            fills: res.synced_fills,
+          }),
         );
       } else {
-        setSuccessMsg('同步成功');
+        setSuccessMsg(t('settings.syncSuccess'));
       }
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : '账户同步失败');
+      setErrorMsg(err instanceof Error ? err.message : t('settings.err.syncFailed'));
     }
   };
 
@@ -158,7 +168,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       await onSaveSettings(req, syncAfter);
       onClose();
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : '保存设置失败');
+      setErrorMsg(err instanceof Error ? err.message : t('settings.err.saveFailed'));
     } finally {
       setSaving(false);
     }
@@ -173,7 +183,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       <div
         role="dialog"
         aria-modal="true"
-        aria-label="风险预算与只读账户设置"
+        aria-label={t('settings.title')}
         className="w-full max-w-[460px] overflow-hidden rounded-[8px] border shadow-2xl"
         style={{
           backgroundColor: 'var(--bg-surface)',
@@ -190,10 +200,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               className="font-editorial text-[17px] font-medium"
               style={{ color: 'var(--text-primary)' }}
             >
-              风险预算与只读账户设置
+              {t('settings.title')}
             </h2>
             <p className="text-[11px]" style={{ color: 'var(--text-secondary)' }}>
-              交易本金边界 · 币安只读对账 · 提示音
+              {t('settings.subtitle')}
             </p>
           </div>
           <button
@@ -201,7 +211,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             onClick={onClose}
             className="rounded p-1 transition-colors"
             style={{ color: 'var(--text-muted)' }}
-            aria-label="关闭设置"
+            aria-label={t('settings.closeAria')}
           >
             <X className="h-4 w-4" />
           </button>
@@ -214,7 +224,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 className="mb-1 block text-[11px] font-medium"
                 style={{ color: 'var(--text-secondary)' }}
               >
-                交易本金池 ($)
+                {t('settings.bankrollLabel')}
               </span>
               <input
                 type="number"
@@ -236,7 +246,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 className="mb-1 block text-[11px] font-medium"
                 style={{ color: 'var(--text-secondary)' }}
               >
-                单笔最大止损 ($)
+                {t('settings.maxLossLabel')}
               </span>
               <input
                 type="number"
@@ -260,7 +270,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 className="mb-1 block text-[11px] font-medium"
                 style={{ color: 'var(--text-secondary)' }}
               >
-                风控时区
+                {t('settings.timezoneLabel')}
               </span>
               <input
                 type="text"
@@ -287,12 +297,54 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   color: chimeEnabled ? 'var(--text-primary)' : 'var(--text-secondary)',
                 }}
               >
-                <span>异动提示音</span>
+                <span>{t('settings.chimeLabel')}</span>
                 {chimeEnabled ? (
                   <Bell className="h-3.5 w-3.5" style={{ color: 'var(--accent-brand)' }} />
                 ) : (
                   <BellOff className="h-3.5 w-3.5" style={{ color: 'var(--text-muted)' }} />
                 )}
+              </button>
+            </div>
+          </div>
+
+          <div
+            className="flex items-center justify-between rounded-[6px] border px-3 py-2 text-[12px]"
+            style={{
+              backgroundColor: 'var(--bg-canvas)',
+              borderColor: 'var(--border-hairline)',
+            }}
+          >
+            <span className="font-medium" style={{ color: 'var(--text-secondary)' }}>
+              {t('settings.languageLabel')}
+            </span>
+            <div
+              className="flex items-center rounded-[5px] border p-0.5 text-[11px] font-medium"
+              style={{
+                backgroundColor: 'var(--bg-surface)',
+                borderColor: 'var(--border-hairline)',
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => setLocale('zh')}
+                className="rounded-[4px] px-2 py-0.5 transition-colors"
+                style={{
+                  backgroundColor: locale === 'zh' ? 'var(--bg-elevated)' : 'transparent',
+                  color: locale === 'zh' ? 'var(--text-primary)' : 'var(--text-secondary)',
+                }}
+              >
+                中
+              </button>
+              <button
+                type="button"
+                onClick={() => setLocale('en')}
+                className="rounded-[4px] px-2 py-0.5 transition-colors"
+                style={{
+                  backgroundColor: locale === 'en' ? 'var(--bg-elevated)' : 'transparent',
+                  color: locale === 'en' ? 'var(--text-primary)' : 'var(--text-secondary)',
+                }}
+              >
+                EN
               </button>
             </div>
           </div>
@@ -310,7 +362,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 style={{ color: 'var(--text-primary)' }}
               >
                 <Lock className="h-3.5 w-3.5" style={{ color: 'var(--accent-info)' }} />
-                币安只读 API Key / Secret
+                {t('settings.apiSectionTitle')}
               </span>
               <span
                 className="tabular-nums"
@@ -321,8 +373,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 }}
               >
                 {status.account.configured
-                  ? `已配置 (${status.account.api_key_masked}) · $${status.account.wallet_balance_usd.toFixed(2)}`
-                  : '未配置'}
+                  ? t('settings.apiConfigured', {
+                      masked: status.account.api_key_masked,
+                      balance: status.account.wallet_balance_usd.toFixed(2),
+                    })
+                  : t('settings.apiNotConfigured')}
               </span>
             </div>
 
@@ -333,8 +388,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 onChange={(e) => handleApiKeyChange(e.target.value)}
                 placeholder={
                   status.account.configured
-                    ? `保持原 Key (${status.account.api_key_masked}) 或粘贴新 Key`
-                    : 'BINANCE_READONLY_API_KEY'
+                    ? t('settings.apiKeyKeepPlaceholder', {
+                        masked: status.account.api_key_masked,
+                      })
+                    : t('settings.apiKeyPlaceholder')
                 }
                 autoComplete="off"
                 className="tabular-nums w-full rounded-[6px] border px-2.5 py-1.5 text-[12px] outline-none"
@@ -353,7 +410,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   setSuccessMsg(null);
                   setApiSecret(e.target.value);
                 }}
-                placeholder="BINANCE_READONLY_API_SECRET（留空保持不变）"
+                placeholder={t('settings.apiSecretPlaceholder')}
                 autoComplete="new-password"
                 className="tabular-nums w-full rounded-[6px] border px-2.5 py-1.5 text-[12px] outline-none"
                 style={{
@@ -366,13 +423,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
             {status.account.sync_error && !errorMsg && (
               <p className="mt-2 text-[11px]" style={{ color: 'var(--pnl-neg)' }}>
-                上次同步异常：{status.account.sync_error}
+                {t('settings.lastSyncError', { error: status.account.sync_error })}
               </p>
             )}
 
             <div className="mt-2.5 flex items-center justify-between gap-2">
               <p className="text-[10px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
-                仅存本地 <code>~/.config/kairos/secrets.env</code> (0600)，禁交易、禁提现。
+                {t('settings.secretsPrefix')}
+                <code>~/.config/kairos/secrets.env</code>
+                {t('settings.secretsSuffix')}
               </p>
               <button
                 type="button"
@@ -390,7 +449,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <RefreshCw
                   className={`h-3 w-3 ${syncingAccount || saving ? 'animate-spin' : ''}`}
                 />
-                <span>立即同步只读账户</span>
+                <span>{t('settings.syncNow')}</span>
               </button>
             </div>
           </div>
@@ -403,11 +462,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               color: 'var(--text-secondary)',
             }}
           >
-            <span>杠杆上限与亏损冷却</span>
+            <span>{t('settings.riskSummaryLabel')}</span>
             <span className="tabular-nums">
-              BTC/ETH ≤ {status.risk_config.max_major_leverage}x · 山寨 ≤{' '}
-              {status.risk_config.max_alt_leverage}x · 冷却{' '}
-              {status.risk_config.cooldown_minutes}m
+              {t('settings.riskSummaryValue', {
+                major: status.risk_config.max_major_leverage,
+                alt: status.risk_config.max_alt_leverage,
+                cooldown: status.risk_config.cooldown_minutes,
+              })}
             </span>
           </div>
 
@@ -452,7 +513,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               color: 'var(--text-secondary)',
             }}
           >
-            取消
+            {t('settings.cancel')}
           </button>
 
           <button
@@ -467,7 +528,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             }}
           >
             <Save className="h-3.5 w-3.5" />
-            保存
+            {t('settings.save')}
           </button>
 
           <button
@@ -481,7 +542,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             }}
           >
             <RefreshCw className={`h-3.5 w-3.5 ${saving ? 'animate-spin' : ''}`} />
-            保存并同步
+            {t('settings.saveAndSync')}
           </button>
         </div>
       </div>

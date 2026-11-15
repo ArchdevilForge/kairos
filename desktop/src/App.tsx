@@ -3,6 +3,7 @@ import { AlertTriangle, RefreshCw } from 'lucide-react';
 import { CommandPalette } from './components/CommandPalette';
 import { SettingsModal } from './components/SettingsModal';
 import { TopStatusBar, type WorkspaceTab } from './components/TopStatusBar';
+import { t as i18nT, useI18n } from './i18n';
 import { DeskClient } from './services/deskClient';
 import type {
   AccountSyncResponse,
@@ -114,6 +115,7 @@ function playSoftChime(audioCtxRef: React.MutableRefObject<AudioContext | null>)
 }
 
 export function App() {
+  const { t } = useI18n();
   const [client, setClient] = useState<DeskClient | null>(null);
   const [bootstrap, setBootstrap] = useState<BootstrapPayload | null>(null);
   const [loading, setLoading] = useState(true);
@@ -213,10 +215,10 @@ export function App() {
       });
     } catch (err) {
       setConnError(
-        err instanceof Error ? err.message : 'Unable to reach kairosd API',
+        err instanceof Error ? err.message : t('app.err.unreachable'),
       );
     }
-  }, [client]);
+  }, [client, t]);
 
   useEffect(() => {
     let cancelled = false;
@@ -363,7 +365,7 @@ export function App() {
       } catch (err) {
         if (!cancelled) {
           setConnError(
-            err instanceof Error ? err.message : 'Initialization failed',
+            err instanceof Error ? err.message : i18nT('app.err.initFailed'),
           );
         }
       } finally {
@@ -394,14 +396,14 @@ export function App() {
           throw err;
         }
         setConnError(
-          err instanceof Error ? err.message : 'Account sync failed',
+          err instanceof Error ? err.message : t('app.err.syncFailed'),
         );
         return undefined;
       } finally {
         setSyncingAccount(false);
       }
     },
-    [client, refreshBootstrap, syncingAccount],
+    [client, refreshBootstrap, syncingAccount, t],
   );
 
   useEffect(() => {
@@ -530,7 +532,7 @@ export function App() {
       >
         <div className="flex items-center gap-2.5 text-[13px]">
           <RefreshCw className="h-4 w-4 animate-spin" style={{ color: 'var(--accent-brand)' }} />
-          <span>Connecting to Kairos daemon...</span>
+          <span>{t('app.loading')}</span>
         </div>
       </div>
     );
@@ -552,18 +554,18 @@ export function App() {
           <div className="mb-3 flex items-center gap-2">
             <AlertTriangle className="h-4 w-4" style={{ color: 'var(--state-warn)' }} />
             <h1 className="font-editorial text-[18px] font-medium">
-              Kairos Daemon Unavailable
+              {t('app.daemonUnavailable')}
             </h1>
           </div>
           <p className="mb-4 text-[12px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
-            {connError || 'Unable to fetch initial state from kairosd.'}
+            {connError || t('app.daemonUnavailableDesc')}
           </p>
           <form onSubmit={(e) => void handleManualConnect(e)} className="space-y-2.5">
             <input
               type="text"
               value={manualApiUrl}
               onChange={(e) => setManualApiUrl(e.target.value)}
-              placeholder="Daemon URL (optional in Vite proxy, e.g. http://127.0.0.1:9530)"
+              placeholder={t('app.daemonUrlPlaceholder')}
               className="tabular-nums w-full rounded-[6px] border px-2.5 py-1.5 text-[12px] outline-none"
               style={{
                 backgroundColor: 'var(--bg-canvas)',
@@ -575,7 +577,7 @@ export function App() {
               type="password"
               value={manualToken}
               onChange={(e) => setManualToken(e.target.value)}
-              placeholder="Bearer token from KAIROSD_DESK_READY"
+              placeholder={t('app.tokenPlaceholder')}
               className="tabular-nums w-full rounded-[6px] border px-2.5 py-1.5 text-[12px] outline-none"
               style={{
                 backgroundColor: 'var(--bg-canvas)',
@@ -589,7 +591,7 @@ export function App() {
                 className="rounded-[6px] px-3 py-1.5 text-[12px] font-medium"
                 style={{ backgroundColor: 'var(--accent-brand)', color: '#FAF9F5' }}
               >
-                Connect & Retry
+                {t('app.connectRetry')}
               </button>
             </div>
           </form>
@@ -625,13 +627,13 @@ export function App() {
             color: 'var(--state-warn)',
           }}
         >
-          <span>Daemon warning: {connError}</span>
+          <span>{t('app.daemonWarning', { message: connError })}</span>
           <button
             type="button"
             onClick={() => void refreshBootstrap()}
             className="underline"
           >
-            Retry
+            {t('app.retry')}
           </button>
         </div>
       )}

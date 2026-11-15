@@ -8,6 +8,7 @@ import {
   Sun,
 } from 'lucide-react';
 import type { DeskStatus, SymbolMove } from '../types/kairos';
+import { useI18n } from '../i18n';
 import { sameSymbol } from '../utils/doctrine';
 
 export type WorkspaceTab = 'watch' | 'review' | 'stats';
@@ -44,6 +45,7 @@ export const TopStatusBar: React.FC<TopStatusBarProps> = ({
   onOpenSettings,
   onSelectSymbol,
 }) => {
+  const { locale, toggleLocale, t } = useI18n();
   const pulse = status.pulse;
   const lockedList = status.gate_health?.locked_24h_symbols ?? [];
   const cooldownList = status.gate_health?.active_cooldowns ?? [];
@@ -66,9 +68,9 @@ export const TopStatusBar: React.FC<TopStatusBarProps> = ({
       : [];
 
   const tabs: Array<{ id: WorkspaceTab; label: string }> = [
-    { id: 'watch', label: '看盘' },
-    { id: 'review', label: '复盘' },
-    { id: 'stats', label: '统计' },
+    { id: 'watch', label: t('top.tab.watch') },
+    { id: 'review', label: t('top.tab.review') },
+    { id: 'stats', label: t('top.tab.stats') },
   ];
 
   let alertPill: {
@@ -80,17 +82,17 @@ export const TopStatusBar: React.FC<TopStatusBarProps> = ({
   };
   if (lockedCount > 0) {
     alertPill = {
-      text: '24h 锁仓冷却',
+      text: t('top.pulse.lockedText'),
       color: 'var(--pnl-neg)',
       bg: 'var(--candle-bear-soft)',
-      title: `24h 刚性锁仓: ${lockedList.join(', ')}`,
+      title: t('top.pulse.lockedTitle', { symbols: lockedList.join(', ') }),
     };
   } else if (cooldownCount > 0) {
     alertPill = {
-      text: '冷却中',
+      text: t('top.pulse.cooldownText'),
       color: 'var(--state-warn)',
       bg: 'var(--state-warn-soft)',
-      title: `${cooldownCount} 个标的处于同币亏损冷却期`,
+      title: t('top.pulse.cooldownTitle', { count: cooldownCount }),
     };
   } else if (hasActivePulse) {
     const med60 =
@@ -100,25 +102,27 @@ export const TopStatusBar: React.FC<TopStatusBarProps> = ({
       : (pulse.up_breadth_60s ?? pulse.snapshot?.up_breadth_60s ?? 0);
     const breadthPct = Math.round(rawBreadth * 100);
     const regimePrefix = isStressPulse
-      ? '极端共振'
+      ? t('top.pulse.regimeStress')
       : isDownPulse
-        ? '大盘下杀'
-        : '大盘上攻';
+        ? t('top.pulse.regimeDown')
+        : t('top.pulse.regimeUp');
+    const med = `${med60 >= 0 ? '+' : ''}${med60.toFixed(2)}`;
+    const side = isDownPulse ? t('top.pulse.sideBear') : t('top.pulse.sideBull');
     alertPill = {
-      text: `${regimePrefix} · 广度 ${breadthPct}%`,
+      text: t('top.pulse.activeText', { regime: regimePrefix, breadth: breadthPct }),
       color: isDownPulse ? 'var(--pnl-neg)' : 'var(--pnl-pos)',
       bg: isDownPulse ? 'var(--candle-bear-soft)' : 'var(--candle-bull-soft)',
-      title: `60s 中位涨跌 ${med60 >= 0 ? '+' : ''}${med60.toFixed(2)}% · ${isDownPulse ? '空头' : '多头'}广度 ${breadthPct}%`,
+      title: t('top.pulse.activeTitle', { med, side, breadth: breadthPct }),
     };
   } else {
     alertPill = {
-      text: '大盘安静',
+      text: t('top.pulse.quietText'),
       color: 'var(--text-muted)',
       bg: 'transparent',
       title:
         pulse?.state === 'DECAY'
-          ? '大盘脉冲衰减，回归安静观察'
-          : '当前大盘安静，仅保留极值异动提示',
+          ? t('top.pulse.decayTitle')
+          : t('top.pulse.quietTitle'),
       quiet: true,
     };
   }
@@ -142,7 +146,7 @@ export const TopStatusBar: React.FC<TopStatusBarProps> = ({
         </div>
 
         <nav
-          aria-label="Workspace switcher"
+          aria-label={t('top.workspaceSwitcherAria')}
           className="flex items-center rounded-[6px] border p-0.5"
           style={{
             backgroundColor: 'var(--bg-canvas)',
@@ -177,7 +181,7 @@ export const TopStatusBar: React.FC<TopStatusBarProps> = ({
             borderColor: 'var(--border-hairline)',
             color: 'var(--text-primary)',
           }}
-          title="切换标的或快捷指令 (Ctrl/Cmd+K)"
+          title={t('top.commandPaletteTitle')}
         >
           <span className="tabular-nums font-medium">
             {cleanSymbol(activeSymbol)}
@@ -229,7 +233,10 @@ export const TopStatusBar: React.FC<TopStatusBarProps> = ({
                     borderColor: isSelected ? 'var(--accent-brand)' : 'var(--border-hairline)',
                     color: 'var(--text-primary)',
                   }}
-                  title={`切换主图至 ${cleanSymbol(chip.symbol)} (相对超额 ${chip.relative_pct >= 0 ? '+' : ''}${Number(chip.relative_pct ?? 0).toFixed(2)}%)`}
+                  title={t('top.moverChipTitle', {
+                    symbol: cleanSymbol(chip.symbol),
+                    rel: `${chip.relative_pct >= 0 ? '+' : ''}${Number(chip.relative_pct ?? 0).toFixed(2)}`,
+                  })}
                 >
                   <span className="font-medium">{shortTicker(chip.symbol)}</span>
                   <span style={{ color: ret >= 0 ? 'var(--pnl-pos)' : 'var(--pnl-neg)' }}>
@@ -243,15 +250,43 @@ export const TopStatusBar: React.FC<TopStatusBarProps> = ({
         ) : null}
       </div>
 
-      {/* Right: Only Theme & Settings */}
+      {/* Right: Language, Theme & Settings */}
       <div className="flex items-center gap-1">
+        <button
+          type="button"
+          onClick={toggleLocale}
+          className="flex h-7 items-center gap-0.5 rounded-[6px] border px-1.5 text-[11px] font-medium transition-colors hover:opacity-85"
+          style={{
+            backgroundColor: 'var(--bg-canvas)',
+            borderColor: 'var(--border-hairline)',
+          }}
+          title={t('top.langToggleTitle')}
+          aria-label={t('top.langToggleAria')}
+        >
+          <span
+            style={{
+              color: locale === 'zh' ? 'var(--text-primary)' : 'var(--text-secondary)',
+            }}
+          >
+            中
+          </span>
+          <span style={{ color: 'var(--text-muted)' }}>/</span>
+          <span
+            style={{
+              color: locale === 'en' ? 'var(--text-primary)' : 'var(--text-secondary)',
+            }}
+          >
+            EN
+          </span>
+        </button>
+
         <button
           type="button"
           onClick={onToggleTheme}
           className="flex h-7 w-7 items-center justify-center rounded-[6px] transition-colors hover:opacity-80"
           style={{ color: 'var(--text-secondary)' }}
-          title={theme === 'dark' ? '切换 Warm Parchment 亮色' : '切换 Warm Obsidian 暗色'}
-          aria-label="切换主题"
+          title={theme === 'dark' ? t('top.themeToLight') : t('top.themeToDark')}
+          aria-label={t('top.themeAria')}
         >
           {theme === 'dark' ? (
             <Sun className="h-3.5 w-3.5" />
@@ -265,8 +300,8 @@ export const TopStatusBar: React.FC<TopStatusBarProps> = ({
           onClick={onOpenSettings}
           className="flex h-7 w-7 items-center justify-center rounded-[6px] transition-colors hover:opacity-80"
           style={{ color: 'var(--text-secondary)' }}
-          title="风险预算与只读账户设置"
-          aria-label="打开设置"
+          title={t('top.settingsTitle')}
+          aria-label={t('top.settingsAria')}
         >
           <Settings className="h-3.5 w-3.5" />
         </button>

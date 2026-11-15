@@ -15,8 +15,11 @@ import {
   type Timeframe,
   type WatchWorkspaceProps,
 } from '../types/kairos';
+import { useI18n } from '../i18n';
 import { PHASE_LABEL, sameSymbol } from '../utils/doctrine';
 import { fmtDateTimeSec, fmtIsoUtc8, fmtPctPoints } from '../utils/format';
+
+type WatchTranslate = ReturnType<typeof useI18n>['t'];
 
 const HOTKEY_TFS: readonly Timeframe[] = ['1m', '5m', '15m', '1h', '4h'];
 
@@ -31,13 +34,22 @@ interface MoverChip {
   returnPct: number | null;
 }
 
-const ANOMALY_TYPE_LABEL: Record<string, string> = {
-  price_velocity: '价格异动',
-  volume_spike: '放量异动',
-  open_interest_change: '持仓异动',
-  funding_rate_anomaly: '费率异动',
-  resonance: '多维共振',
-};
+function anomalyTypeLabel(eventType: string, t: WatchTranslate): string {
+  switch (eventType) {
+    case 'price_velocity':
+      return t('watch.anomaly.priceVelocity');
+    case 'volume_spike':
+      return t('watch.anomaly.volumeSpike');
+    case 'open_interest_change':
+      return t('watch.anomaly.oiChange');
+    case 'funding_rate_anomaly':
+      return t('watch.anomaly.fundingAnomaly');
+    case 'resonance':
+      return t('watch.anomaly.resonance');
+    default:
+      return eventType;
+  }
+}
 
 interface ChartSliceState {
   bars: Bar[];
@@ -47,6 +59,7 @@ interface ChartSliceState {
   loading: boolean;
   loadingMore?: boolean;
   error: string | null;
+  errorKey?: 'watch.error.loadBars' | 'watch.error.loadCompareBars' | null;
 }
 
 const EMPTY_SLICE: ChartSliceState = {
@@ -57,6 +70,7 @@ const EMPTY_SLICE: ChartSliceState = {
   loading: false,
   loadingMore: false,
   error: null,
+  errorKey: null,
 };
 
 function mergeBarsAscending(older: Bar[], current: Bar[]): Bar[] {
@@ -79,8 +93,8 @@ function isEditableTarget(target: EventTarget | null): boolean {
   return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
 }
 
-function cleanSymbol(sym: string): string {
-  if (sym.trim().toUpperCase() === 'MARKET') return '全市场';
+function cleanSymbol(sym: string, marketLabel: string): string {
+  if (sym.trim().toUpperCase() === 'MARKET') return marketLabel;
   return sym.replace(/:USDT$/, '');
 }
 
@@ -145,7 +159,7 @@ function extractMoverChips(
   return out;
 }
 
-function marketAnomalyMeta(a: AnomalyItem): {
+function marketAnomalyMeta(a: AnomalyItem, t: WatchTranslate): {
   title: string;
   tone: 'bull' | 'bear' | 'warn' | 'muted';
   med60: number | null;
@@ -158,35 +172,39 @@ function marketAnomalyMeta(a: AnomalyItem): {
   const isDown = stateTo.includes('DOWN') || dir === 'down';
   const isUp = stateTo.includes('UP') || dir === 'up';
 
-  let title = '大盘共振异动';
+  let title = t('watch.pulse.defaultResonance');
   let tone: 'bull' | 'bear' | 'warn' | 'muted' = 'muted';
   switch (a.event_type) {
     case 'market_stress':
-      title = isDown ? '大盘极端下跌' : '大盘极端上攻';
+      title = isDown ? t('watch.pulse.stressDown') : t('watch.pulse.stressUp');
       tone = isDown ? 'bear' : 'warn';
       break;
     case 'market_trend':
-      title = isDown ? '大盘延续下跌' : '大盘延续上攻';
+      title = isDown ? t('watch.pulse.trendDown') : t('watch.pulse.trendUp');
       tone = isDown ? 'bear' : 'bull';
       break;
     case 'market_impulse':
-      title = isDown ? '大盘脉冲下杀' : '大盘脉冲上攻';
+      title = isDown ? t('watch.pulse.impulseDown') : t('watch.pulse.impulseUp');
       tone = isDown ? 'bear' : 'bull';
       break;
     case 'market_decay':
-      title = '大盘脉冲衰减';
+      title = t('watch.pulse.decay');
       tone = 'muted';
       break;
     case 'market_data_stale':
-      title = '大盘行情数据异常';
+      title = t('watch.pulse.dataStale');
       tone = 'warn';
       break;
     case 'market_data_recovered':
-      title = '大盘行情恢复';
+      title = t('watch.pulse.dataRecovered');
       tone = 'muted';
       break;
     default:
-      title = isUp ? '大盘上攻异动' : isDown ? '大盘下杀异动' : '大盘共振异动';
+      title = isUp
+        ? t('watch.pulse.defaultUp')
+        : isDown
+          ? t('watch.pulse.defaultDown')
+          : t('watch.pulse.defaultResonance');
       tone = isDown ? 'bear' : isUp ? 'bull' : 'muted';
       break;
   }
@@ -237,11 +255,21 @@ function pickNode(cycle: CycleMap | null | undefined, tfs: string[]): CycleNode 
   return null;
 }
 
-function shortNodeHint(label: string, node: CycleNode | null): string | null {
+function shortNodeHint(
+  label: string,
+  node: CycleNode | null,
+  t: WatchTranslate,
+): string | null {
   if (!node) return null;
-  const dir = node.direction === 'up' ? '多' : node.direction === 'down' ? '空' : '震荡';
-  if (dir === '震荡') return `${label} 震荡`;
-  return `${label} ${dir}·${PHASE_LABEL[node.phase]}`;
+  if (node.direction !== 'up' && node.direction !== 'down') {
+    return t('watch.cycle.nodeNeutral', { tf: label });
+  }
+  const dir = node.direction === 'up' ? t('watch.dir.long') : t('watch.dir.short');
+  return t('watch.cycle.nodeDirectional', {
+    tf: label,
+    dir,
+    phase: PHASE_LABEL[node.phase],
+  });
 }
 
 export function WatchWorkspace({
@@ -254,6 +282,8 @@ export function WatchWorkspace({
   activeTf,
   onSelectTf,
 }: WatchWorkspaceProps) {
+  const { t, locale } = useI18n();
+
   // Queue drawer closed by default for 100% chart breathing room
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [queueTab, setQueueTab] = useState<QueueTab>('all');
@@ -349,6 +379,7 @@ export function WatchWorkspace({
         loading: false,
         loadingMore: false,
         error: null,
+        errorKey: null,
       });
     } else {
       setPrimarySlice({ ...EMPTY_SLICE, loading: true });
@@ -382,6 +413,7 @@ export function WatchWorkspace({
           loading: false,
           loadingMore: false,
           error: null,
+          errorKey: null,
         });
       })
       .catch((err) => {
@@ -389,7 +421,8 @@ export function WatchWorkspace({
         setPrimarySlice((prev) => ({
           ...prev,
           loading: false,
-          error: err instanceof Error ? err.message : '加载 K 线失败',
+          error: err instanceof Error ? err.message : null,
+          errorKey: err instanceof Error ? null : 'watch.error.loadBars',
         }));
       });
 
@@ -431,6 +464,7 @@ export function WatchWorkspace({
         loading: false,
         loadingMore: false,
         error: null,
+        errorKey: null,
       });
     } else {
       setCompareSlice({ ...EMPTY_SLICE, loading: true });
@@ -464,6 +498,7 @@ export function WatchWorkspace({
           loading: false,
           loadingMore: false,
           error: null,
+          errorKey: null,
         });
       })
       .catch((err) => {
@@ -471,7 +506,8 @@ export function WatchWorkspace({
         setCompareSlice((prev) => ({
           ...prev,
           loading: false,
-          error: err instanceof Error ? err.message : '加载对比 K 线失败',
+          error: err instanceof Error ? err.message : null,
+          errorKey: err instanceof Error ? null : 'watch.error.loadCompareBars',
         }));
       });
 
@@ -858,9 +894,17 @@ export function WatchWorkspace({
     primarySlice.symbolCycle ??
     bootstrap.status.market_cycle ??
     null;
-  const contextHint = shortNodeHint('4h', pickNode(symbolCycle, ['4h', '1d']));
-  const setupHint = shortNodeHint('15m', pickNode(symbolCycle, ['15m', '1h']));
-  const cycleHintText = [contextHint, setupHint].filter(Boolean).join(' · ');
+  const cycleHintText = useMemo(() => {
+    const contextHint = shortNodeHint('4h', pickNode(symbolCycle, ['4h', '1d']), t);
+    const setupHint = shortNodeHint('15m', pickNode(symbolCycle, ['15m', '1h']), t);
+    return [contextHint, setupHint].filter(Boolean).join(' · ');
+  }, [symbolCycle, t, locale]);
+
+  const marketAllLabel = t('watch.marketAll');
+  const primaryError =
+    primarySlice.error ?? (primarySlice.errorKey ? t(primarySlice.errorKey) : null);
+  const compareError =
+    compareSlice.error ?? (compareSlice.errorKey ? t(compareSlice.errorKey) : null);
 
   const cryptoSymbols = useMemo(() => {
     const raw =
@@ -879,7 +923,7 @@ export function WatchWorkspace({
         <span
           className="hidden px-1 text-[11px] md:inline"
           style={{ color: 'var(--text-muted)' }}
-          title="多周期结构参考"
+          title={t('watch.cycle.hintTitle')}
         >
           {cycleHintText}
         </span>
@@ -888,7 +932,7 @@ export function WatchWorkspace({
       <button
         type="button"
         onClick={onToggleSplit}
-        title="双图同步联排 (快捷键 s)"
+        title={t('watch.split.tooltip')}
         className="flex items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] transition-colors"
         style={{
           backgroundColor: splitMode ? 'var(--bg-elevated)' : 'transparent',
@@ -897,13 +941,13 @@ export function WatchWorkspace({
         }}
       >
         <Columns2 className="h-3 w-3" />
-        <span>双图</span>
+        <span>{t('watch.split.label')}</span>
       </button>
 
       <button
         type="button"
         onClick={() => setDrawerOpen((v) => !v)}
-        title="展开/收起异动队列"
+        title={t('watch.queue.toggleTooltip')}
         className="flex items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] transition-colors"
         style={{
           backgroundColor: drawerOpen ? 'var(--bg-elevated)' : 'transparent',
@@ -911,7 +955,7 @@ export function WatchWorkspace({
           color: drawerOpen ? 'var(--accent-brand)' : 'var(--text-secondary)',
         }}
       >
-        <span>异动</span>
+        <span>{t('watch.queue.toggleLabel')}</span>
         {queueItems.length > 0 ? (
           <span
             className="inline-block h-1.5 w-1.5 rounded-full"
@@ -943,9 +987,9 @@ export function WatchWorkspace({
             <div className="flex gap-1 text-[11px]">
               {(
                 [
-                  ['all', '全部'],
-                  ['pulse', '大盘共振'],
-                  ['major', '龙头异动'],
+                  ['all', t('watch.queue.tabAll')],
+                  ['pulse', t('watch.queue.tabPulse')],
+                  ['major', t('watch.queue.tabMajor')],
                 ] as const
               ).map(([id, label]) => (
                 <button
@@ -969,7 +1013,7 @@ export function WatchWorkspace({
               onClick={() => setDrawerOpen(false)}
               className="rounded p-1 hover:opacity-80"
               style={{ color: 'var(--text-muted)' }}
-              aria-label="关闭队列"
+              aria-label={t('watch.queue.closeAria')}
             >
               <X className="h-3.5 w-3.5" />
             </button>
@@ -981,7 +1025,7 @@ export function WatchWorkspace({
                 className="px-3 py-10 text-center text-xs"
                 style={{ color: 'var(--text-muted)' }}
               >
-                暂无大盘共振与异动事件
+                {t('watch.queue.empty')}
               </div>
             ) : (
               queueItems.map((item) => {
@@ -1004,16 +1048,15 @@ export function WatchWorkspace({
                       <>
                         <div className="flex items-center justify-between gap-1">
                           <span className="font-mono text-xs font-medium tabular-nums" style={{ color: 'var(--text-primary)' }}>
-                            {cleanSymbol(item.notice.symbol)}
+                            {cleanSymbol(item.notice.symbol, marketAllLabel)}
                           </span>
                           <span className="text-[10px]" style={{ color: 'var(--accent-brand)' }}>
-                            提示
+                            {t('watch.queue.noticeBadge')}
                           </span>
                         </div>
                         <div className="mt-1 line-clamp-2 text-[11px]" style={{ color: 'var(--text-secondary)' }}>
                           {item.notice.trigger_facts.fact_summary ||
-                            ANOMALY_TYPE_LABEL[item.notice.trigger_facts.event_type] ||
-                            item.notice.trigger_facts.event_type}
+                            anomalyTypeLabel(item.notice.trigger_facts.event_type, t)}
                         </div>
                         <div className="mt-0.5 font-mono text-[10px] tabular-nums" style={{ color: 'var(--text-muted)' }}>
                           {fmtIsoUtc8(item.notice.ts)}
@@ -1021,7 +1064,7 @@ export function WatchWorkspace({
                       </>
                     ) : isMarketAnomaly(item.anomaly) ? (
                       (() => {
-                        const meta = marketAnomalyMeta(item.anomaly);
+                        const meta = marketAnomalyMeta(item.anomaly, t);
                         const titleColor =
                           meta.tone === 'bear'
                             ? 'var(--pnl-neg)'
@@ -1050,14 +1093,15 @@ export function WatchWorkspace({
                                 style={{ color: 'var(--text-secondary)' }}
                               >
                                 <span>
-                                  覆盖率{' '}
+                                  {t('watch.queue.coverage')}{' '}
                                   {(() => {
                                     const cov = asFiniteNumber(item.anomaly.data?.coverage);
                                     return cov != null ? `${Math.round(cov * 100)}%` : '—';
                                   })()}
                                 </span>
                                 <span>
-                                  有效 {asFiniteNumber(item.anomaly.data?.valid_symbols) ?? '—'}
+                                  {t('watch.queue.validSymbols')}{' '}
+                                  {asFiniteNumber(item.anomaly.data?.valid_symbols) ?? '—'}
                                 </span>
                               </div>
                             ) : (
@@ -1066,7 +1110,7 @@ export function WatchWorkspace({
                                 style={{ color: 'var(--text-secondary)' }}
                               >
                                 <span>
-                                  60s 中位涨跌{' '}
+                                  {t('watch.queue.median60s')}{' '}
                                   <span
                                     style={{
                                       color:
@@ -1081,7 +1125,7 @@ export function WatchWorkspace({
                                   </span>
                                 </span>
                                 <span>
-                                  广度{' '}
+                                  {t('watch.queue.breadth')}{' '}
                                   {meta.breadthRatio != null
                                     ? `${Math.round(meta.breadthRatio * 100)}%`
                                     : '—'}
@@ -1105,7 +1149,9 @@ export function WatchWorkspace({
                                       borderColor: 'var(--border-hairline)',
                                       color: 'var(--text-primary)',
                                     }}
-                                    title={`切换主图至 ${cleanSymbol(chip.symbol)}`}
+                                    title={t('watch.queue.switchSymbolTitle', {
+                                      symbol: cleanSymbol(chip.symbol, marketAllLabel),
+                                    })}
                                   >
                                     <span className="font-medium">{shortTicker(chip.symbol)}</span>
                                     {chip.returnPct != null ? (
@@ -1131,13 +1177,12 @@ export function WatchWorkspace({
                       (() => {
                         const changePct = asFiniteNumber(item.anomaly.data?.change_pct);
                         const winSec = asFiniteNumber(item.anomaly.data?.window_seconds);
-                        const label =
-                          ANOMALY_TYPE_LABEL[item.anomaly.event_type] ?? item.anomaly.event_type;
+                        const label = anomalyTypeLabel(item.anomaly.event_type, t);
                         return (
                           <>
                             <div className="flex items-center justify-between gap-1">
                               <span className="font-mono text-xs font-medium tabular-nums" style={{ color: 'var(--text-primary)' }}>
-                                {cleanSymbol(item.anomaly.symbol)}
+                                {cleanSymbol(item.anomaly.symbol, marketAllLabel)}
                               </span>
                               {changePct != null ? (
                                 <span
@@ -1191,7 +1236,7 @@ export function WatchWorkspace({
               timeframe={activeTf}
               availableTimeframes={['1m', '5m', '15m', '1h', '4h']}
               onTimeframeChange={onSelectTf}
-              headerBadge="主图"
+              headerBadge={t('watch.split.primaryBadge')}
               statusSlot={chartControls}
               bars={primarySlice.bars}
               metrics={primarySlice.metrics}
@@ -1200,7 +1245,7 @@ export function WatchWorkspace({
               drawings={drawings}
               loading={primarySlice.loading}
               loadingMore={Boolean(primarySlice.loadingMore)}
-              error={primarySlice.error}
+              error={primaryError}
               followLatest
               onLoadMoreHistory={loadMorePrimary}
               onUserDrawing={handleUserDrawing}
@@ -1225,14 +1270,14 @@ export function WatchWorkspace({
                   }}
                 />
               }
-              headerBadge="对照"
+              headerBadge={t('watch.split.compareBadge')}
               onClosePane={onToggleSplit}
               bars={compareSlice.bars}
               metrics={compareSlice.metrics}
               drawings={compareDrawings}
               loading={compareSlice.loading}
               loadingMore={Boolean(compareSlice.loadingMore)}
-              error={compareSlice.error}
+              error={compareError}
               followLatest
               onLoadMoreHistory={loadMoreCompare}
               onUserDrawing={handleCompareDrawing}
@@ -1257,7 +1302,7 @@ export function WatchWorkspace({
             drawings={drawings}
             loading={primarySlice.loading}
             loadingMore={Boolean(primarySlice.loadingMore)}
-            error={primarySlice.error}
+            error={primaryError}
             followLatest
             onLoadMoreHistory={loadMorePrimary}
             onUserDrawing={handleUserDrawing}
@@ -1280,6 +1325,8 @@ function CompareSymbolPicker({
   symbols: string[];
   onSelect: (sym: string) => void;
 }) {
+  const { t } = useI18n();
+  const marketAllLabel = t('watch.marketAll');
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const wrapRef = useRef<HTMLDivElement | null>(null);
@@ -1288,7 +1335,7 @@ function CompareSymbolPicker({
   useEffect(() => {
     if (!open) return;
     setQuery('');
-    const t = window.setTimeout(() => inputRef.current?.focus(), 10);
+    const timer = window.setTimeout(() => inputRef.current?.focus(), 10);
     const onPointer = (e: MouseEvent) => {
       if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) {
         setOpen(false);
@@ -1300,7 +1347,7 @@ function CompareSymbolPicker({
     window.addEventListener('mousedown', onPointer);
     window.addEventListener('keydown', onKey);
     return () => {
-      window.clearTimeout(t);
+      window.clearTimeout(timer);
       window.removeEventListener('mousedown', onPointer);
       window.removeEventListener('keydown', onKey);
     };
@@ -1309,10 +1356,10 @@ function CompareSymbolPicker({
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     const list = q
-      ? symbols.filter((s) => cleanSymbol(s).toLowerCase().includes(q))
+      ? symbols.filter((s) => cleanSymbol(s, marketAllLabel).toLowerCase().includes(q))
       : symbols;
     return list.slice(0, 60);
-  }, [symbols, query]);
+  }, [symbols, query, marketAllLabel]);
 
   return (
     <div ref={wrapRef} className="relative shrink-0">
@@ -1325,9 +1372,9 @@ function CompareSymbolPicker({
           borderColor: open ? 'var(--accent-brand)' : 'var(--border-hairline)',
           color: 'var(--text-primary)',
         }}
-        title="切换对照 Crypto 永续合约"
+        title={t('watch.comparePicker.tooltip')}
       >
-        <span>{cleanSymbol(symbol)}</span>
+        <span>{cleanSymbol(symbol, marketAllLabel)}</span>
         <ChevronDown className="h-3 w-3" style={{ color: 'var(--text-muted)' }} />
       </button>
 
@@ -1356,7 +1403,7 @@ function CompareSymbolPicker({
                   setOpen(false);
                 }
               }}
-              placeholder="搜索 Crypto 永续…"
+              placeholder={t('watch.comparePicker.searchPlaceholder')}
               className="w-full bg-transparent font-mono text-xs outline-none"
               style={{ color: 'var(--text-primary)' }}
             />
@@ -1364,7 +1411,7 @@ function CompareSymbolPicker({
           <div className="max-h-60 overflow-y-auto p-1">
             {filtered.length === 0 ? (
               <div className="px-2 py-3 text-center text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                无匹配 Crypto 永续合约
+                {t('watch.comparePicker.empty')}
               </div>
             ) : (
               filtered.map((s) => {
@@ -1383,8 +1430,8 @@ function CompareSymbolPicker({
                       color: active ? 'var(--accent-brand)' : 'var(--text-primary)',
                     }}
                   >
-                    <span>{cleanSymbol(s)}</span>
-                    {active ? <span className="text-[10px]">当前</span> : null}
+                    <span>{cleanSymbol(s, marketAllLabel)}</span>
+                    {active ? <span className="text-[10px]">{t('watch.comparePicker.current')}</span> : null}
                   </button>
                 );
               })

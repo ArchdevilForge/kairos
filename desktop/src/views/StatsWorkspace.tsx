@@ -1,26 +1,34 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
 import EquityCurve from '../chart/EquityCurve';
+import { useI18n } from '../i18n';
 import type { StatsPayload, StatsWorkspaceProps } from '../types/kairos';
 import { fmtR, fmtRatioPct, fmtUsd } from '../utils/format';
 
 export function StatsWorkspace({ client }: StatsWorkspaceProps) {
+  const { t } = useI18n();
   const [stats, setStats] = useState<StatsPayload | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [errorState, setErrorState] = useState<{ raw: string | null } | null>(null);
 
   const fetchStats = useCallback(async () => {
     setLoading(true);
-    setError(null);
+    setErrorState(null);
     try {
       const res = await client.getStats();
       setStats(res);
     } catch (err) {
-      setError(err instanceof Error ? err.message : '加载统计失败');
+      setErrorState({ raw: err instanceof Error ? err.message : null });
     } finally {
       setLoading(false);
     }
   }, [client]);
+
+  const error = errorState
+    ? errorState.raw !== null
+      ? errorState.raw
+      : t('stats.loadFailed')
+    : null;
 
   useEffect(() => {
     void fetchStats();
@@ -38,7 +46,7 @@ export function StatsWorkspace({ client }: StatsWorkspaceProps) {
         style={{ backgroundColor: 'var(--bg-canvas)', color: 'var(--text-secondary)' }}
       >
         <RefreshCw className="mr-2 h-4 w-4 animate-spin" style={{ color: 'var(--accent-brand)' }} />
-        <span>计算统计数据…</span>
+        <span>{t('stats.loading')}</span>
       </div>
     );
   }
@@ -61,7 +69,7 @@ export function StatsWorkspace({ client }: StatsWorkspaceProps) {
             color: 'var(--text-primary)',
           }}
         >
-          重试
+          {t('stats.retry')}
         </button>
       </div>
     );
@@ -90,10 +98,10 @@ export function StatsWorkspace({ client }: StatsWorkspaceProps) {
         <div className="flex items-center justify-between">
           <div>
             <h1 className="font-editorial text-xl font-medium" style={{ color: 'var(--text-primary)' }}>
-              交易统计与复盘归因
+              {t('stats.title')}
             </h1>
             <p className="mt-0.5 text-xs" style={{ color: 'var(--text-secondary)' }}>
-              实盘净值对账 · 实际 R 倍数分布 · 风控合规度
+              {t('stats.subtitle')}
             </p>
           </div>
           <button
@@ -107,34 +115,46 @@ export function StatsWorkspace({ client }: StatsWorkspaceProps) {
             }}
           >
             <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
-            <span>刷新</span>
+            <span>{t('stats.refresh')}</span>
           </button>
         </div>
 
         {/* 4 Clean Metric Cards */}
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           <MetricCard
-            label="累计净盈亏"
+            label={t('stats.metric.netPnl')}
             value={fmtUsd(recon.net_pnl_usd, true)}
-            sub={`本金 ${fmtUsd(recon.trading_bankroll_usd)} · 费 ${fmtUsd(-Math.abs(recon.fee_usd), true)}`}
+            sub={t('stats.metric.netPnlSub', {
+              bankroll: fmtUsd(recon.trading_bankroll_usd),
+              fee: fmtUsd(-Math.abs(recon.fee_usd), true),
+            })}
             tone={recon.net_pnl_usd >= 0 ? 'pos' : 'neg'}
           />
           <MetricCard
-            label="已执行 / 跳过"
+            label={t('stats.metric.executedSkipped')}
             value={`${executedCount} / ${skippedCount}`}
-            sub={`等待观察 ${summary.waiting.n} · 无票 ${compliance.unplanned_trade_count}`}
+            sub={t('stats.metric.executedSkippedSub', {
+              waiting: summary.waiting.n,
+              unplanned: compliance.unplanned_trade_count,
+            })}
             tone="neutral"
           />
           <MetricCard
-            label="平均 R 倍数"
+            label={t('stats.metric.meanR')}
             value={fmtR(rDist.mean_r)}
-            sub={`胜率 ${fmtRatioPct(rDist.win_rate)} · PF ${rDist.profit_factor.toFixed(2)}`}
+            sub={t('stats.metric.meanRSub', {
+              winRate: fmtRatioPct(rDist.win_rate),
+              pf: rDist.profit_factor.toFixed(2),
+            })}
             tone={rDist.mean_r >= 0 ? 'pos' : 'neg'}
           />
           <MetricCard
-            label="风控合规率"
+            label={t('stats.metric.compliance')}
             value={`${compliance.compliance_score.toFixed(0)}%`}
-            sub={`特批 ${compliance.overrides} · 无止损 ${rDist.without_stop}`}
+            sub={t('stats.metric.complianceSub', {
+              overrides: compliance.overrides,
+              noStop: rDist.without_stop,
+            })}
             tone={compliance.compliance_score >= 80 ? 'pos' : 'warn'}
           />
         </div>
@@ -143,7 +163,10 @@ export function StatsWorkspace({ client }: StatsWorkspaceProps) {
         <EquityCurve
           points={stats.equity_curve ?? []}
           height={240}
-          walletSummary={`只读钱包 ${fmtUsd(recon.wallet_balance_usd)} · 浮盈亏 ${fmtUsd(recon.unrealized_pnl_usd, true)}`}
+          walletSummary={t('stats.walletSummary', {
+            balance: fmtUsd(recon.wallet_balance_usd),
+            unrealized: fmtUsd(recon.unrealized_pnl_usd, true),
+          })}
         />
 
         {/* R Distribution */}
@@ -155,12 +178,12 @@ export function StatsWorkspace({ client }: StatsWorkspaceProps) {
           }}
         >
           <h2 className="mb-3 font-editorial text-base font-medium" style={{ color: 'var(--text-primary)' }}>
-            R 倍数分布
+            {t('stats.rDist.title')}
           </h2>
 
           {rBuckets.length === 0 ? (
             <div className="py-10 text-center text-xs" style={{ color: 'var(--text-muted)' }}>
-              暂无已完成交易样本
+              {t('stats.rDist.empty')}
             </div>
           ) : (
             <div className="space-y-2">
@@ -170,7 +193,7 @@ export function StatsWorkspace({ client }: StatsWorkspaceProps) {
                 return (
                   <div
                     key={b.label}
-                    className="grid grid-cols-[100px_1fr_52px_80px] items-center gap-2 font-mono text-[11px] tabular-nums"
+                    className="grid grid-cols-[100px_1fr_76px_80px] items-center gap-2 font-mono text-[11px] tabular-nums"
                   >
                     <span className="truncate" style={{ color: 'var(--text-secondary)' }}>
                       {b.label}
@@ -189,8 +212,8 @@ export function StatsWorkspace({ client }: StatsWorkspaceProps) {
                         }}
                       />
                     </div>
-                    <span className="text-right" style={{ color: 'var(--text-primary)' }}>
-                      {b.count} 笔
+                    <span className="whitespace-nowrap text-right" style={{ color: 'var(--text-primary)' }}>
+                      {t('stats.rDist.tradeCount', { count: b.count })}
                     </span>
                     <span
                       className="text-right"

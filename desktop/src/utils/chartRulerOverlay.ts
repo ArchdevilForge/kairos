@@ -1,4 +1,5 @@
 import type { Time } from 'lightweight-charts';
+import { t } from '../i18n';
 import type { ChartDrawingItem, ChartDrawingPoint } from '../types/kairos';
 import type { AnthropicChartTheme } from './chartTheme';
 import { withAlpha } from './chartTheme';
@@ -187,7 +188,7 @@ export function drawRulerOnCanvas(
   const sign = isUp ? '+' : '-';
   const deltaText = `${sign}${fmtPrice(Math.abs(measure.priceDelta))}`;
   const pctText = `${isUp ? '+' : ''}${measure.pricePct.toFixed(2)}%`;
-  const label = `${deltaText} (${pctText}) · ${measure.bars} 根 · ${fmtDurationSec(measure.durationSec)}`;
+  const label = `${deltaText} (${pctText}) · ${t('chart.rulerBars', { count: measure.bars })} · ${fmtDurationSec(measure.durationSec)}`;
 
   ctx.font = `11px ${theme.fontMono}`;
   const padX = 8;

@@ -36,6 +36,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
+import { useI18n, type Locale, type TranslateFn, type TranslationKey } from '../i18n';
 import {
   TIMEFRAMES,
   type AnomalyItem,
@@ -95,11 +96,11 @@ export interface ChartPriceLineSpec {
 
 type DrawMode = 'none' | 'ruler' | 'hline' | 'trend' | 'ray' | 'region' | 'fib';
 
-const TWO_POINT_HINTS: Partial<Record<DrawMode, string>> = {
-  trend: '趋势线：拖拽或点两点 · Shift 锁角度',
-  ray: '射线：拖拽或点两点向右延伸',
-  region: '区间框：拖拽或点对角两点',
-  fib: '斐波那契：拖拽或点高低两点',
+const TWO_POINT_HINT_KEYS: Partial<Record<DrawMode, TranslationKey>> = {
+  trend: 'chart.hintTrend',
+  ray: 'chart.hintRay',
+  region: 'chart.hintRegion',
+  fib: 'chart.hintFib',
 };
 
 export interface ChartTradeSegmentInput {
@@ -190,6 +191,7 @@ function buildChartMarkers(
   fills: readonly TradeFillItem[],
   ticketSignalAt: number | null | undefined,
   theme: AnthropicChartTheme,
+  translate: TranslateFn,
 ): { markers: SeriesMarker<Time>[]; notesByTime: Map<number, string[]> } {
   const markers: SeriesMarker<Time>[] = [];
   const notesByTime = new Map<number, string[]>();
@@ -211,7 +213,14 @@ function buildChartMarkers(
     if (snapped == null) continue;
     const rank = a.severity === 'HIGH' ? 3 : a.severity === 'MEDIUM' ? 2 : 1;
     bumpEventRank(snapped, rank);
-    pushNote(snapped, `[异动 ${a.severity}] ${a.event_type} @ ${fmtDateTimeSec(a.timestamp)}`);
+    pushNote(
+      snapped,
+      translate('chart.noteAnomaly', {
+        severity: a.severity,
+        eventType: a.event_type,
+        time: fmtDateTimeSec(a.timestamp),
+      }),
+    );
   }
 
   for (const n of notices) {
@@ -222,7 +231,10 @@ function buildChartMarkers(
     bumpEventRank(snapped, 0);
     pushNote(
       snapped,
-      `[Notice] ${n.trigger_facts?.fact_summary || n.trigger_facts?.event_type} · ${fmtIsoUtc8(n.ts)}`,
+      translate('chart.noteNotice', {
+        summary: n.trigger_facts?.fact_summary || n.trigger_facts?.event_type || '',
+        time: fmtIsoUtc8(n.ts),
+      }),
     );
   }
 
@@ -253,7 +265,10 @@ function buildChartMarkers(
         shape: 'arrowDown',
         text: 'T',
       });
-      pushNote(snapped, `[Ticket 信号] ${fmtDateTimeSec(ticketSignalAt)}`);
+      pushNote(
+        snapped,
+        translate('chart.noteTicketSignal', { time: fmtDateTimeSec(ticketSignalAt) }),
+      );
     }
   }
 
@@ -300,7 +315,7 @@ function buildChartMarkers(
   return { markers, notesByTime };
 }
 
-function toChartOptions(theme: AnthropicChartTheme) {
+function toChartOptions(theme: AnthropicChartTheme, locale: Locale) {
   return {
     layout: {
       background: { type: ColorType.Solid, color: theme.bgCanvas },
@@ -344,7 +359,7 @@ function toChartOptions(theme: AnthropicChartTheme) {
         fmtChartTickUtc8(time, tickMarkType),
     },
     localization: {
-      locale: 'zh-CN',
+      locale: locale === 'en' ? 'en-US' : 'zh-CN',
       priceFormatter: (price: number) => fmtPrice(price),
       timeFormatter: (time: Time) => fmtChartCrosshairUtc8(time),
     },
@@ -396,6 +411,10 @@ export default function KairosChart({
   onEraseDrawings,
   onChartReady,
 }: KairosChartProps) {
+  const { t, locale } = useI18n();
+  const localeRef = useRef<Locale>(locale);
+  localeRef.current = locale;
+
   const shellRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -427,7 +446,9 @@ export default function KairosChart({
   const drawModeRef = useRef(drawMode);
   drawModeRef.current = drawMode;
 
-  const [rulerHint, setRulerHint] = useState('');
+  const [rulerHintKey, setRulerHintKey] = useState<
+    'chart.hintRulerStep2' | 'chart.hintShapeStep2' | null
+  >(null);
   const [smcOpen, setSmcOpen] = useState<boolean>(false);
   const [pinTooltip, setPinTooltip] = useState<PinTooltipInfo | null>(null);
   const [chartEpoch, setChartEpoch] = useState(0);
@@ -476,8 +497,35 @@ export default function KairosChart({
   const didInitViewRef = useRef(false);
   const followEndRef = useRef(true);
   const isHoveringCrosshairRef = useRef(false);
+  const hoveredBarTimeRef = useRef<number | null>(null);
   const isRestoringPrependRef = useRef(false);
-  const renderLegendRef = useRef<(bar?: Bar) => void>(() => {});
+  const updateLegend = useCallback(
+    (bar?: Bar) => {
+      const target = legendRef.current;
+      if (!target) return;
+      if (!bar) {
+        target.textContent = t('chart.noBars');
+        target.style.color = 'var(--text-muted)';
+        return;
+      }
+      const chg = bar.open !== 0 ? ((bar.close - bar.open) / bar.open) * 100 : 0;
+      const amp = bar.open !== 0 ? ((bar.high - bar.low) / bar.open) * 100 : 0;
+      const sign = chg >= 0 ? '+' : '';
+      target.textContent = t('chart.ohlcLegend', {
+        open: fmtPrice(bar.open),
+        high: fmtPrice(bar.high),
+        low: fmtPrice(bar.low),
+        close: fmtPrice(bar.close),
+        sign,
+        chg: chg.toFixed(2),
+        amp: amp.toFixed(2),
+      });
+      target.style.color = chg >= 0 ? 'var(--candle-bull)' : 'var(--candle-bear)';
+    },
+    [t],
+  );
+  const renderLegendRef = useRef<(bar?: Bar) => void>(updateLegend);
+  renderLegendRef.current = updateLegend;
   const paintOverlayRef = useRef<() => void>(() => {});
   const rafPaintRef = useRef<number | null>(null);
   const schedulePaintOverlay = useCallback(() => {
@@ -806,7 +854,7 @@ export default function KairosChart({
     rulerCornerRef.current = null;
     rulerPreviewRef.current = null;
     rulerResultRef.current = null;
-    setRulerHint('');
+    setRulerHintKey(null);
     paintOverlayRef.current();
   }, []);
 
@@ -817,7 +865,7 @@ export default function KairosChart({
 
     const currentTheme = themeRef.current;
     const chart = createChart(el, {
-      ...toChartOptions(currentTheme),
+      ...toChartOptions(currentTheme, localeRef.current),
       width: Math.max(1, el.clientWidth),
       height: Math.max(1, el.clientHeight),
     });
@@ -871,36 +919,20 @@ export default function KairosChart({
     prevLenRef.current = 0;
     setChartEpoch((e) => e + 1);
 
-    const updateLegend = (bar?: Bar) => {
-      const target = legendRef.current;
-      if (!target) return;
-      if (!bar) {
-        target.textContent = '暂无 K 线数据';
-        target.style.color = 'var(--text-muted)';
-        return;
-      }
-      const chg = bar.open !== 0 ? ((bar.close - bar.open) / bar.open) * 100 : 0;
-      const amp = bar.open !== 0 ? ((bar.high - bar.low) / bar.open) * 100 : 0;
-      const sign = chg >= 0 ? '+' : '';
-      target.textContent =
-        `开 ${fmtPrice(bar.open)}  高 ${fmtPrice(bar.high)}  低 ${fmtPrice(bar.low)}  收 ${fmtPrice(bar.close)}` +
-        `  ${sign}${chg.toFixed(2)}%  振幅 ${amp.toFixed(2)}%`;
-      target.style.color = chg >= 0 ? 'var(--candle-bull)' : 'var(--candle-bear)';
-    };
-    renderLegendRef.current = updateLegend;
-
     const onCrosshairMove = (param: MouseEventParams<Time>) => {
       const list = barsRef.current;
       if (param.time == null) {
         isHoveringCrosshairRef.current = false;
-        updateLegend(list[list.length - 1]);
+        hoveredBarTimeRef.current = null;
+        renderLegendRef.current(list[list.length - 1]);
         setPinTooltip((prev) => (prev === null ? prev : null));
         return;
       }
       isHoveringCrosshairRef.current = true;
       const tSec = Number(param.time);
+      hoveredBarTimeRef.current = tSec;
       const bar = findBarByTime(list, tSec, true) ?? list[list.length - 1];
-      updateLegend(bar);
+      renderLegendRef.current(bar);
 
       const notes = notesByTimeRef.current.get(tSec);
       if (notes && notes.length > 0) {
@@ -982,11 +1014,11 @@ export default function KairosChart({
     };
   }, [chartId, followLatest, onChartReady, schedulePaintOverlay]);
 
-  // Apply theme updates live without recreating chart
+  // Apply theme & locale updates live without recreating chart
   useEffect(() => {
     const bundle = bundleRef.current;
     if (!bundle) return;
-    bundle.chart.applyOptions(toChartOptions(theme));
+    bundle.chart.applyOptions(toChartOptions(theme, locale));
     bundle.candleSeries.applyOptions({
       upColor: theme.candleBull,
       downColor: theme.candleBear,
@@ -997,7 +1029,18 @@ export default function KairosChart({
     });
     bundle.primitive.refreshTheme(theme);
     paintOverlayRef.current();
-  }, [theme]);
+  }, [theme, locale]);
+
+  // Refresh OHLC legend immediately when locale changes
+  useEffect(() => {
+    const list = barsRef.current;
+    const hoverTs = hoveredBarTimeRef.current;
+    const bar =
+      isHoveringCrosshairRef.current && hoverTs != null
+        ? (findBarByTime(list, hoverTs, true) ?? list[list.length - 1])
+        : list[list.length - 1];
+    updateLegend(bar);
+  }, [updateLegend, chartEpoch]);
 
   // Update candle, volume, and metrics data
   useEffect(() => {
@@ -1184,10 +1227,18 @@ export default function KairosChart({
       fills,
       ticketSignalAt,
       theme,
+      t,
     );
     notesByTimeRef.current = notesByTime;
     bundle.markerApi.setMarkers(markers);
-  }, [markerBarKey, anomalies, notices, fills, ticketSignalAt, theme, chartEpoch]);
+    setPinTooltip((prev) => {
+      if (!prev) return null;
+      const nextItems = notesByTime.get(prev.timeSec);
+      return nextItems && nextItems.length > 0
+        ? { timeSec: prev.timeSec, items: nextItems }
+        : null;
+    });
+  }, [markerBarKey, anomalies, notices, fills, ticketSignalAt, theme, t, chartEpoch]);
 
   const smcOverlay = useMemo(
     () => (smcOpen && smcBarKey ? computeSmcOverlay(bars) : null),
@@ -1265,10 +1316,10 @@ export default function KairosChart({
     }
   }, [priceLines, chartEpoch]);
 
-  // Repaint overlay canvas when drawings or cursorTs change
+  // Repaint overlay canvas when drawings, cursorTs, theme, or locale change
   useEffect(() => {
     paintOverlay();
-  }, [drawings, cursorTs, theme, paintOverlay]);
+  }, [drawings, cursorTs, theme, locale, t, paintOverlay]);
 
   // Clear local transient drawing/selection state when switching symbol
   useEffect(() => {
@@ -1334,7 +1385,7 @@ export default function KairosChart({
       rulerResultRef.current = null;
       drawPressStartRef.current = null;
       magnetRingRef.current = null;
-      setRulerHint('');
+      setRulerHintKey(null);
       setDrawMode('none');
       paintOverlayRef.current();
     };
@@ -1404,7 +1455,7 @@ export default function KairosChart({
           rulerCornerRef.current = pt;
           rulerPreviewRef.current = pt;
           drawPressStartRef.current = { x, y };
-          setRulerHint(mode === 'ruler' ? '拖拽或移动再点完成' : '移动预览，再点或松开完成');
+          setRulerHintKey(mode === 'ruler' ? 'chart.hintRulerStep2' : 'chart.hintShapeStep2');
           paintOverlayRef.current();
         } else {
           commitTwoPointShape(mode, pending, pt);
@@ -1831,20 +1882,24 @@ export default function KairosChart({
     hoverPreviewRef.current = null;
     magnetRingRef.current = null;
     rulerResultRef.current = null;
-    setRulerHint('');
+    setRulerHintKey(null);
     setDrawMode((prev) => (prev === next ? 'none' : next));
   };
 
   const displaySymbol = symbol ? symbol.replace(/:USDT$/, '') : '—';
+  const twoPointHintKey = TWO_POINT_HINT_KEYS[drawMode];
   const activeToolHint =
     drawMode === 'none'
       ? ''
-      : rulerHint ||
-        (drawMode === 'hline'
-          ? '点击放置水平线 · Esc 取消'
+      : rulerHintKey
+        ? t(rulerHintKey)
+        : drawMode === 'hline'
+          ? t('chart.hintHline')
           : drawMode === 'ruler'
-            ? '尺子：拖拽或点两点测距 · Esc 取消'
-            : TWO_POINT_HINTS[drawMode] || '');
+            ? t('chart.hintRuler')
+            : twoPointHintKey
+              ? t(twoPointHintKey)
+              : '';
 
   return (
     <div
@@ -1923,11 +1978,11 @@ export default function KairosChart({
 
           {loading ? (
             <span className="shrink-0 whitespace-nowrap text-[11px]" style={{ color: 'var(--text-muted)' }}>
-              加载中…
+              {t('chart.loading')}
             </span>
           ) : loadingMore ? (
             <span className="shrink-0 whitespace-nowrap text-[11px]" style={{ color: 'var(--text-muted)' }}>
-              加载历史…
+              {t('chart.loadingMore')}
             </span>
           ) : null}
           {error && bars.length === 0 ? (
@@ -1949,7 +2004,7 @@ export default function KairosChart({
                 color: 'var(--accent-brand)',
               }}
             >
-              藏未来
+              {t('chart.hideFuture')}
               {futureCount ? ` ${futureCount.shown}/${futureCount.total}` : ''}
             </span>
           ) : null}
@@ -1971,7 +2026,7 @@ export default function KairosChart({
             >
               <button
                 type="button"
-                title="后退步进 (←)"
+                title={t('chart.stepBackTitle')}
                 onClick={() => onStepCursor(-1)}
                 className="rounded p-1 transition-colors hover:opacity-80"
                 style={{ color: 'var(--text-secondary)' }}
@@ -1981,7 +2036,7 @@ export default function KairosChart({
               {onTogglePlay ? (
                 <button
                   type="button"
-                  title={playing ? '暂停回放 (Space)' : '播放回放 (Space)'}
+                  title={playing ? t('chart.pauseTitle') : t('chart.playTitle')}
                   onClick={onTogglePlay}
                   className="rounded p-1 transition-colors"
                   style={{
@@ -1998,7 +2053,7 @@ export default function KairosChart({
               ) : null}
               <button
                 type="button"
-                title="前进步进 (→)"
+                title={t('chart.stepForwardTitle')}
                 onClick={() => onStepCursor(1)}
                 className="rounded p-1 transition-colors hover:opacity-80"
                 style={{ color: 'var(--text-secondary)' }}
@@ -2008,7 +2063,7 @@ export default function KairosChart({
 
               {onStepBarsChange ? (
                 <select
-                  aria-label="单步步进"
+                  aria-label={t('chart.stepSizeAria')}
                   value={stepBars}
                   onChange={(e) => onStepBarsChange(Number(e.target.value))}
                   className="rounded border px-1.5 py-0.5 font-mono text-[11px] tabular-nums"
@@ -2020,7 +2075,7 @@ export default function KairosChart({
                 >
                   {[1, 5, 15, 60].map((n) => (
                     <option key={n} value={n}>
-                      {n}根
+                      {t('chart.stepBarsOption', { count: n })}
                     </option>
                   ))}
                 </select>
@@ -2028,7 +2083,7 @@ export default function KairosChart({
 
               {onPlaySpeedChange ? (
                 <select
-                  aria-label="回放倍速"
+                  aria-label={t('chart.playSpeedAria')}
                   value={playSpeed}
                   onChange={(e) => onPlaySpeedChange(Number(e.target.value))}
                   className="rounded border px-1.5 py-0.5 font-mono text-[11px] tabular-nums"
@@ -2052,7 +2107,7 @@ export default function KairosChart({
             <button
               type="button"
               onClick={onToggleHideFuture}
-              title={hideFuture ? '显示完整 K 线' : 'Hide Future · 零前视隐藏未来'}
+              title={hideFuture ? t('chart.showFullBarsTitle') : t('chart.hideFutureTitle')}
               className="flex items-center gap-1 rounded border px-2 py-0.5 text-[11px] font-medium transition-colors"
               style={{
                 backgroundColor: hideFuture ? 'var(--bg-elevated)' : 'transparent',
@@ -2061,7 +2116,7 @@ export default function KairosChart({
               }}
             >
               {hideFuture ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
-              <span>{hideFuture ? '藏未来 开' : '藏未来'}</span>
+              <span>{hideFuture ? t('chart.hideFutureOn') : t('chart.hideFuture')}</span>
             </button>
           ) : null}
 
@@ -2069,7 +2124,7 @@ export default function KairosChart({
             type="button"
             aria-pressed={smcOpen}
             onClick={() => setSmcOpen((v) => !v)}
-            title="开关 SMC 市场结构 (BOS/CHoCH · 未回补 Order Block · EQH/EQL)"
+            title={t('chart.smcTitle')}
             className="rounded border px-1.5 py-0.5 font-mono text-[10px] font-medium transition-colors"
             style={{
               backgroundColor: smcOpen ? 'var(--bg-elevated)' : 'transparent',
@@ -2082,14 +2137,14 @@ export default function KairosChart({
 
           <ToolButton
             active={drawMode === 'ruler'}
-            title="尺子测距（自动保存，点垃圾桶清空）"
+            title={t('chart.rulerTitle')}
             onClick={() => toggleDrawTool('ruler')}
           >
             <Ruler className="h-3.5 w-3.5" />
           </ToolButton>
           <ToolButton
             active={drawMode === 'hline'}
-            title="水平线（可上下拖动，点垃圾桶清空）"
+            title={t('chart.hlineTitle')}
             onClick={() => toggleDrawTool('hline')}
           >
             <Minus className="h-3.5 w-3.5" />
@@ -2097,7 +2152,7 @@ export default function KairosChart({
           {drawings.length > 0 && onEraseDrawings ? (
             <ToolButton
               active={false}
-              title={`清空全部 ${drawings.length} 条画线与尺子`}
+              title={t('chart.clearDrawingsTitle', { count: drawings.length })}
               onClick={() => {
                 clearTransientRuler();
                 setSelectedDrawingId(null);
@@ -2111,7 +2166,7 @@ export default function KairosChart({
           {onClosePane ? (
             <ToolButton
               active={false}
-              title="关闭对比副图"
+              title={t('chart.closePaneTitle')}
               onClick={onClosePane}
             >
               <X className="h-3.5 w-3.5" />
