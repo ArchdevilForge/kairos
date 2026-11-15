@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { Time } from 'lightweight-charts';
 import {
   Anchor,
   ChevronLeft,
@@ -8,9 +9,13 @@ import {
   SkipForward,
   X,
 } from 'lucide-react';
-import KairosChart, { type ChartPriceLineSpec } from '../chart/KairosChart';
+import KairosChart, {
+  type ChartPriceLineSpec,
+  type ChartTradeSegmentInput,
+} from '../chart/KairosChart';
 import {
   type Bar,
+  type BootstrapPayload,
   type ChartDrawingItem,
   type ChartDrawingPoint,
   type DrawingKind,
@@ -51,6 +56,108 @@ function cleanSymbol(sym: string): string {
   return sym.replace(/:USDT$/, '');
 }
 
+function buildReviewSubjects(bootstrap: BootstrapPayload): SelectedSubject[] {
+  const items: Array<{ ts: number; subj: SelectedSubject }> = [];
+  for (const b of bootstrap.tickets ?? []) {
+    items.push({
+      ts: b.ticket.signal_at || b.ticket.created_at,
+      subj: { kind: 'ticket', id: b.ticket.id, bundle: b },
+    });
+  }
+  for (const tr of bootstrap.unplanned_trades ?? []) {
+    items.push({
+      ts: Math.floor(tr.entry_time_ms / 1000),
+      subj: { kind: 'trade', id: tr.id, trade: tr },
+    });
+  }
+  for (const pos of bootstrap.open_positions ?? []) {
+    items.push({
+      ts: pos.updated_at || Math.floor(Date.now() / 1000),
+      subj: {
+        kind: 'position',
+        id: `${pos.symbol}:${pos.position_side}`,
+        position: pos,
+      },
+    });
+  }
+  items.sort((a, b) => b.ts - a.ts);
+  return items.map((x) => x.subj);
+}
+
+function subjectSymbol(subj: SelectedSubject): string {
+  if (subj.kind === 'ticket') return subj.bundle.ticket.symbol;
+  if (subj.kind === 'trade') return subj.trade.symbol;
+  return subj.position.symbol;
+}
+
+function subjectTimeBounds(subj: SelectedSubject): { entrySec: number; exitSec: number } {
+  if (subj.kind === 'ticket') {
+    const entrySec =
+      subj.bundle.ticket.entry_triggered_at ||
+      subj.bundle.ticket.signal_at ||
+      subj.bundle.ticket.created_at ||
+      0;
+    const exitSec =
+      subj.bundle.ticket.closed_at ||
+      (subj.bundle.linked_trade?.exit_time_ms
+        ? Math.floor(subj.bundle.linked_trade.exit_time_ms / 1000)
+        : entrySec);
+    return { entrySec, exitSec };
+  }
+  if (subj.kind === 'trade') {
+    const entrySec = Math.floor(subj.trade.entry_time_ms / 1000);
+    const exitSec =
+      subj.trade.exit_time_ms > 0 ? Math.floor(subj.trade.exit_time_ms / 1000) : entrySec;
+    return { entrySec, exitSec };
+  }
+  const ts = subj.position.updated_at || 0;
+  return { entrySec: ts, exitSec: ts };
+}
+
+function resolveInitialReviewTarget(
+  bootstrap: BootstrapPayload,
+  initialSymbol?: string,
+  initialTicketId?: string,
+): { symbol: string; selectedKey: string; anchorSec: number | null } {
+  const subjects = buildReviewSubjects(bootstrap);
+  if (initialTicketId) {
+    const match = subjects.find((s) => s.kind === 'ticket' && s.id === initialTicketId);
+    if (match) {
+      const bounds = subjectTimeBounds(match);
+      return {
+        symbol: subjectSymbol(match),
+        selectedKey: `ticket:${match.id}`,
+        anchorSec: bounds.entrySec > 0 ? bounds.entrySec : null,
+      };
+    }
+  }
+  if (initialSymbol) {
+    const sameSymSubj = subjects.find((s) => sameSymbol(subjectSymbol(s), initialSymbol));
+    if (sameSymSubj) {
+      const bounds = subjectTimeBounds(sameSymSubj);
+      return {
+        symbol: subjectSymbol(sameSymSubj),
+        selectedKey: `${sameSymSubj.kind}:${sameSymSubj.id}`,
+        anchorSec: bounds.entrySec > 0 ? bounds.entrySec : null,
+      };
+    }
+  }
+  if (subjects.length > 0) {
+    const first = subjects[0];
+    const bounds = subjectTimeBounds(first);
+    return {
+      symbol: subjectSymbol(first),
+      selectedKey: `${first.kind}:${first.id}`,
+      anchorSec: bounds.entrySec > 0 ? bounds.entrySec : null,
+    };
+  }
+  return {
+    symbol: initialSymbol || bootstrap.status.symbols[0] || 'BTC/USDT:USDT',
+    selectedKey: '',
+    anchorSec: null,
+  };
+}
+
 export function ReviewWorkspace({
   client,
   bootstrap,
@@ -62,17 +169,21 @@ export function ReviewWorkspace({
   const [selectorOpen, setSelectorOpen] = useState(false);
   const [selectorTab, setSelectorTab] = useState<SelectorTab>('all');
 
-  const [symbol, setSymbol] = useState<string>(
-    initialSymbol || bootstrap.status.symbols[0] || 'BTC/USDT:USDT',
+  const initialResolved = useMemo(
+    () => resolveInitialReviewTarget(bootstrap, initialSymbol, initialTicketId),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
   );
+
+  const [symbol, setSymbol] = useState<string>(initialResolved.symbol);
   const [activeTf, setActiveTf] = useState<Timeframe>('15m');
+  const [selectedKey, setSelectedKey] = useState<string>(initialResolved.selectedKey);
 
-  const [selectedKey, setSelectedKey] = useState<string>(() =>
-    initialTicketId ? `ticket:${initialTicketId}` : '',
-  );
-
-  // Full bars & drawings
-  const [fullBars, setFullBars] = useState<Bar[]>([]);
+  // Full bars & drawings (keyed by sliceKey to eliminate cross-symbol stale bar races)
+  const [barsSlice, setBarsSlice] = useState<{ key: string; bars: Bar[] }>({
+    key: '',
+    bars: [],
+  });
   const [fullMetrics, setFullMetrics] = useState<MetricsPoint[]>([]);
   const [fullDrawings, setFullDrawings] = useState<ChartDrawingItem[]>([]);
   const [barsLoading, setBarsLoading] = useState(false);
@@ -90,7 +201,7 @@ export function ReviewWorkspace({
   const [cursorTs, setCursorTs] = useState<number>(() =>
     initialCursorTs && initialCursorTs > 0
       ? initialCursorTs
-      : Math.floor(Date.now() / 1000),
+      : (initialResolved.anchorSec ?? Math.floor(Date.now() / 1000)),
   );
   const [playing, setPlaying] = useState(false);
   const [playSpeed, setPlaySpeed] = useState(5);
@@ -99,33 +210,10 @@ export function ReviewWorkspace({
   const [replayError, setReplayError] = useState<string | null>(null);
 
   // Build unified list of reviewable subjects sorted by time descending
-  const allSubjects = useMemo<SelectedSubject[]>(() => {
-    const items: Array<{ ts: number; subj: SelectedSubject }> = [];
-    for (const b of bootstrap.tickets ?? []) {
-      items.push({
-        ts: b.ticket.signal_at || b.ticket.created_at,
-        subj: { kind: 'ticket', id: b.ticket.id, bundle: b },
-      });
-    }
-    for (const tr of bootstrap.unplanned_trades ?? []) {
-      items.push({
-        ts: Math.floor(tr.entry_time_ms / 1000),
-        subj: { kind: 'trade', id: tr.id, trade: tr },
-      });
-    }
-    for (const pos of bootstrap.open_positions ?? []) {
-      items.push({
-        ts: pos.updated_at || Math.floor(Date.now() / 1000),
-        subj: {
-          kind: 'position',
-          id: `${pos.symbol}:${pos.position_side}`,
-          position: pos,
-        },
-      });
-    }
-    items.sort((a, b) => b.ts - a.ts);
-    return items.map((x) => x.subj);
-  }, [bootstrap.tickets, bootstrap.unplanned_trades, bootstrap.open_positions]);
+  const allSubjects = useMemo<SelectedSubject[]>(
+    () => buildReviewSubjects(bootstrap),
+    [bootstrap],
+  );
 
   const filteredSubjects = useMemo(() => {
     if (selectorTab === 'all') return allSubjects;
@@ -179,10 +267,12 @@ export function ReviewWorkspace({
     allSubjects,
   ]);
 
+  const prevDrilldownRef = useRef<string>('');
   useEffect(() => {
-    if (initialSymbol) {
-      setSymbol(initialSymbol);
-    }
+    const sig = `${initialTicketId ?? ''}|${initialCursorTs ?? ''}`;
+    if (sig === prevDrilldownRef.current) return;
+    prevDrilldownRef.current = sig;
+
     if (initialTicketId) {
       setSelectedKey(`ticket:${initialTicketId}`);
       const match = bootstrap.tickets.find((b) => b.ticket.id === initialTicketId);
@@ -198,34 +288,19 @@ export function ReviewWorkspace({
         setCursorTs(initialCursorTs);
       }
     } else if (initialCursorTs && initialCursorTs > 0) {
+      if (initialSymbol) setSymbol(initialSymbol);
       setCursorTs(initialCursorTs);
     }
   }, [initialSymbol, initialCursorTs, initialTicketId, bootstrap.tickets]);
 
   const anchorTimestampFor = useCallback((subj: SelectedSubject): number => {
-    if (subj.kind === 'ticket') {
-      return (
-        subj.bundle.ticket.entry_triggered_at ||
-        subj.bundle.ticket.signal_at ||
-        subj.bundle.ticket.created_at ||
-        Math.floor(Date.now() / 1000)
-      );
-    }
-    if (subj.kind === 'trade') {
-      return Math.floor(subj.trade.entry_time_ms / 1000);
-    }
-    return subj.position.updated_at || Math.floor(Date.now() / 1000);
+    return subjectTimeBounds(subj).entrySec || Math.floor(Date.now() / 1000);
   }, []);
 
   const handleSelectSubject = useCallback(
     (subj: SelectedSubject) => {
       setPlaying(false);
-      const nextSym =
-        subj.kind === 'ticket'
-          ? subj.bundle.ticket.symbol
-          : subj.kind === 'trade'
-            ? subj.trade.symbol
-            : subj.position.symbol;
+      const nextSym = subjectSymbol(subj);
       setSelectedKey(`${subj.kind}:${subj.id}`);
       setSymbol(nextSym);
       onSelectSymbol(nextSym);
@@ -251,51 +326,114 @@ export function ReviewWorkspace({
     [filteredSubjects, selectedSubject, handleSelectSubject],
   );
 
-  // Load market bars (0ms instant from cache)
+  const tfStepSec = TIMEFRAME_SECONDS[activeTf] ?? 900;
+  const subjectMatchesSymbol =
+    selectedSubject != null && sameSymbol(subjectSymbol(selectedSubject), symbol);
+  const selectedBounds = useMemo(
+    () =>
+      subjectMatchesSymbol && selectedSubject
+        ? subjectTimeBounds(selectedSubject)
+        : { entrySec: 0, exitSec: 0 },
+    [subjectMatchesSymbol, selectedSubject],
+  );
+  const windowTag =
+    subjectMatchesSymbol && selectedSubject && selectedBounds.entrySec > 0
+      ? `subj:${selectedSubject.kind}:${selectedSubject.id}`
+      : 'latest';
+  const sliceKey = `${symbol}|${activeTf}|${windowTag}`;
+  const fullBars = useMemo<Bar[]>(() => {
+    if (barsSlice.key === sliceKey) return barsSlice.bars;
+    return reviewBarCacheRef.current.get(sliceKey) ?? [];
+  }, [barsSlice, sliceKey]);
+
+  // Load market bars (keyed by sliceKey + historical trade window backfill)
   useEffect(() => {
     let cancelled = false;
-    const key = `${symbol}|${activeTf}`;
-    reviewHistoryRef.current = { key, inFlight: false, exhausted: false };
+    reviewHistoryRef.current = { key: sliceKey, inFlight: false, exhausted: false };
     setLoadingMoreBars(false);
     setBarsError(null);
-    const cached = reviewBarCacheRef.current.get(key);
-    if (cached && cached.length > 0) {
-      setFullBars(cached);
+
+    const cachedSlice = reviewBarCacheRef.current.get(sliceKey);
+    if (cachedSlice && cachedSlice.length > 0) {
+      setBarsSlice({ key: sliceKey, bars: cachedSlice });
       setBarsLoading(false);
     } else {
       setBarsLoading(true);
     }
-    client
-      .getMarketBars({ symbol, tf: activeTf, limit: 800 })
-      .then((barsRes) => {
-        if (cancelled) return;
-        const bars = barsRes.bars ?? [];
-        if (bars.length < 2) reviewHistoryRef.current.exhausted = true;
-        reviewBarCacheRef.current.set(key, bars);
-        setFullBars(bars);
-        setFullMetrics(barsRes.metrics ?? []);
+
+    (async () => {
+      try {
+        const baseKey = `${symbol}|${activeTf}|latest`;
+        let baseBars = reviewBarCacheRef.current.get(baseKey);
+        let latestMetrics: MetricsPoint[] = [];
+        if (!baseBars || baseBars.length === 0) {
+          const barsRes = await client.getMarketBars({ symbol, tf: activeTf, limit: 800 });
+          if (cancelled) return;
+          baseBars = barsRes.bars ?? [];
+          latestMetrics = barsRes.metrics ?? [];
+          if (baseBars.length > 0) {
+            reviewBarCacheRef.current.set(baseKey, baseBars);
+          }
+        }
+
+        let finalBars = baseBars;
+        if (
+          selectedBounds.entrySec > 0 &&
+          finalBars.length > 0 &&
+          selectedBounds.entrySec < finalBars[0].time + 10 * tfStepSec
+        ) {
+          const targetEnd = Math.max(selectedBounds.exitSec, selectedBounds.entrySec);
+          const histRes = await client.getMarketBars({
+            symbol,
+            tf: activeTf,
+            limit: 800,
+            beforeTs: targetEnd + 200 * tfStepSec,
+          });
+          if (cancelled) return;
+          if ((histRes.bars?.length ?? 0) > 0) {
+            finalBars = histRes.bars;
+          }
+        }
+
+        if (finalBars.length < 2) {
+          reviewHistoryRef.current.exhausted = true;
+        }
+        reviewBarCacheRef.current.set(sliceKey, finalBars);
+        setBarsSlice({ key: sliceKey, bars: finalBars });
+        setFullMetrics(latestMetrics);
         setBarsLoading(false);
 
-        if (bars.length > 0) {
-          const minT = bars[0].time;
-          const maxT = bars[bars.length - 1].time;
+        if (finalBars.length > 0) {
+          const minT = finalBars[0].time;
+          const maxT = finalBars[finalBars.length - 1].time;
           setCursorTs((prev) => {
             if (prev <= 0 || prev < minT || prev > maxT) {
-              return maxT;
+              return selectedBounds.entrySec >= minT && selectedBounds.entrySec <= maxT
+                ? selectedBounds.entrySec
+                : maxT;
             }
             return prev;
           });
         }
-      })
-      .catch((err) => {
+      } catch (err) {
         if (cancelled) return;
         setBarsLoading(false);
         setBarsError(err instanceof Error ? err.message : '加载复盘 K 线失败');
-      });
+      }
+    })();
+
     return () => {
       cancelled = true;
     };
-  }, [client, symbol, activeTf]);
+  }, [
+    client,
+    symbol,
+    activeTf,
+    sliceKey,
+    selectedBounds.entrySec,
+    selectedBounds.exitSec,
+    tfStepSec,
+  ]);
 
   // Load drawings only when symbol changes (never on timeframe switch)
   useEffect(() => {
@@ -316,9 +454,8 @@ export function ReviewWorkspace({
   const handleLoadMoreHistory = useCallback(
     (oldestTimeSec: number) => {
       if (hideFuture || oldestTimeSec <= 0) return;
-      const key = `${symbol}|${activeTf}`;
-      if (reviewHistoryRef.current.key !== key) {
-        reviewHistoryRef.current = { key, inFlight: false, exhausted: false };
+      if (reviewHistoryRef.current.key !== sliceKey) {
+        reviewHistoryRef.current = { key: sliceKey, inFlight: false, exhausted: false };
       }
       if (reviewHistoryRef.current.inFlight || reviewHistoryRef.current.exhausted) {
         return;
@@ -328,17 +465,21 @@ export function ReviewWorkspace({
       client
         .getMarketBars({ symbol, tf: activeTf, limit: 800, beforeTs: oldestTimeSec })
         .then((res) => {
-          if (reviewHistoryRef.current.key !== key) return;
+          if (reviewHistoryRef.current.key !== sliceKey) return;
           const older = (res.bars ?? []).filter((b) => b.time < oldestTimeSec);
           if (older.length < 2) {
             reviewHistoryRef.current.exhausted = true;
           }
           if (older.length > 0) {
-            setFullBars((prev) => {
+            setBarsSlice((prev) => {
+              const curBars =
+                prev.key === sliceKey ? prev.bars : (reviewBarCacheRef.current.get(sliceKey) ?? []);
               const byTime = new Map<number, Bar>();
               for (const b of older) byTime.set(b.time, b);
-              for (const b of prev) byTime.set(b.time, b);
-              return Array.from(byTime.values()).sort((a, b) => a.time - b.time);
+              for (const b of curBars) byTime.set(b.time, b);
+              const nextBars = Array.from(byTime.values()).sort((a, b) => a.time - b.time);
+              reviewBarCacheRef.current.set(sliceKey, nextBars);
+              return { key: sliceKey, bars: nextBars };
             });
           }
         })
@@ -346,13 +487,13 @@ export function ReviewWorkspace({
           // Ignore transient pagination error.
         })
         .finally(() => {
-          if (reviewHistoryRef.current.key === key) {
+          if (reviewHistoryRef.current.key === sliceKey) {
             reviewHistoryRef.current.inFlight = false;
             setLoadingMoreBars(false);
           }
         });
     },
-    [client, hideFuture, symbol, activeTf],
+    [client, hideFuture, symbol, activeTf, sliceKey],
   );
 
   // Fetch zero-lookahead replay state whenever Hide Future is ON
@@ -383,7 +524,6 @@ export function ReviewWorkspace({
   const minCursorTs = fullBars[0]?.time ?? Math.max(0, cursorTs - 86400);
   const maxCursorTs =
     fullBars[fullBars.length - 1]?.time ?? Math.floor(Date.now() / 1000);
-  const tfStepSec = TIMEFRAME_SECONDS[activeTf] ?? 900;
 
   const stepCursor = useCallback(
     (delta: 1 | -1) => {
@@ -522,6 +662,7 @@ export function ReviewWorkspace({
   }, [hideFuture, replayState, fullDrawings]);
 
   const activeFills = useMemo<TradeFillItem[]>(() => {
+    if (!subjectMatchesSymbol || chartBars.length === 0) return [];
     if (hideFuture) return replayState?.fills ?? [];
     if (selectedSubject?.kind === 'ticket') {
       return selectedSubject.bundle.fills ?? selectedSubject.bundle.linked_trade?.fills ?? [];
@@ -530,7 +671,7 @@ export function ReviewWorkspace({
       return selectedSubject.trade.fills ?? [];
     }
     return [];
-  }, [hideFuture, replayState, selectedSubject]);
+  }, [hideFuture, replayState, selectedSubject, subjectMatchesSymbol, chartBars.length]);
 
   const futureCount = useMemo(() => {
     if (!hideFuture || fullBars.length === 0) return null;
@@ -538,7 +679,7 @@ export function ReviewWorkspace({
   }, [hideFuture, fullBars.length, chartBars.length]);
 
   const reviewPriceLines = useMemo<ChartPriceLineSpec[]>(() => {
-    if (!selectedSubject) return [];
+    if (!selectedSubject || !subjectMatchesSymbol || chartBars.length === 0) return [];
     const lines: ChartPriceLineSpec[] = [];
     if (selectedSubject.kind === 'ticket') {
       const t = selectedSubject.bundle.ticket;
@@ -586,7 +727,74 @@ export function ReviewWorkspace({
       }
     }
     return lines;
-  }, [selectedSubject, hideFuture, cursorTs]);
+  }, [selectedSubject, subjectMatchesSymbol, chartBars.length, hideFuture, cursorTs]);
+
+  const reviewTradeSegment = useMemo<ChartTradeSegmentInput | null>(() => {
+    if (!selectedSubject || !subjectMatchesSymbol || chartBars.length === 0) return null;
+    if (selectedSubject.kind === 'trade') {
+      const tr = selectedSubject.trade;
+      if (tr.entry_price <= 0 || selectedBounds.entrySec <= 0) return null;
+      const showExit =
+        tr.exit_price > 0 &&
+        selectedBounds.exitSec > 0 &&
+        (!hideFuture || selectedBounds.exitSec <= cursorTs);
+      return {
+        entryTime: selectedBounds.entrySec,
+        entryPrice: tr.entry_price,
+        exitTime: showExit ? selectedBounds.exitSec : null,
+        exitPrice: showExit ? tr.exit_price : null,
+        profitable: tr.net_pnl >= 0,
+      };
+    }
+    return null;
+  }, [
+    selectedSubject,
+    subjectMatchesSymbol,
+    chartBars.length,
+    selectedBounds.entrySec,
+    selectedBounds.exitSec,
+    hideFuture,
+    cursorTs,
+  ]);
+
+  const firstFullBarTime = fullBars[0]?.time ?? 0;
+  const lastFullBarTime = fullBars[fullBars.length - 1]?.time ?? 0;
+  const reviewVisibleRange = useMemo<{ from: Time; to: Time } | null>(() => {
+    if (
+      hideFuture ||
+      !subjectMatchesSymbol ||
+      selectedBounds.entrySec <= 0 ||
+      firstFullBarTime <= 0 ||
+      lastFullBarTime <= firstFullBarTime
+    ) {
+      return null;
+    }
+    if (
+      selectedBounds.entrySec < firstFullBarTime - tfStepSec ||
+      selectedBounds.entrySec > lastFullBarTime + tfStepSec
+    ) {
+      return null;
+    }
+    const span = Math.max(selectedBounds.exitSec - selectedBounds.entrySec, 16 * tfStepSec);
+    const pad = Math.max(40 * tfStepSec, Math.round(span * 0.75));
+    const from = Math.max(firstFullBarTime, selectedBounds.entrySec - pad);
+    const to = Math.min(
+      lastFullBarTime,
+      Math.max(selectedBounds.exitSec, selectedBounds.entrySec) + pad,
+    );
+    if (from >= to) {
+      return { from: firstFullBarTime as Time, to: lastFullBarTime as Time };
+    }
+    return { from: from as Time, to: to as Time };
+  }, [
+    hideFuture,
+    subjectMatchesSymbol,
+    selectedBounds.entrySec,
+    selectedBounds.exitSec,
+    tfStepSec,
+    firstFullBarTime,
+    lastFullBarTime,
+  ]);
 
   const handleUserDrawing = useCallback(
     async (kind: DrawingKind, points: ChartDrawingPoint[]) => {
@@ -1062,6 +1270,8 @@ export function ReviewWorkspace({
                 : undefined
           }
           priceLines={reviewPriceLines}
+          tradeSegment={reviewTradeSegment}
+          visibleRange={reviewVisibleRange}
           fills={activeFills}
           ticketSignalAt={activeTicket?.ticket.signal_at ?? null}
           drawings={chartDrawings}

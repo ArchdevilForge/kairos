@@ -21,6 +21,7 @@ import {
   type Logical,
   type MouseEventParams,
   type SeriesMarker,
+  type TickMarkType,
   type Time,
 } from 'lightweight-charts';
 import {
@@ -67,6 +68,8 @@ import {
 import { type AnthropicChartTheme, readChartTheme, withAlpha } from '../utils/chartTheme';
 import {
   TIMEFRAME_SECONDS,
+  fmtChartCrosshairUtc8,
+  fmtChartTickUtc8,
   fmtDateTimeSec,
   fmtIsoUtc8,
   fmtPrice,
@@ -99,6 +102,14 @@ const TWO_POINT_HINTS: Partial<Record<DrawMode, string>> = {
   fib: '斐波那契：拖拽或点高低两点',
 };
 
+export interface ChartTradeSegmentInput {
+  entryTime: number;
+  entryPrice: number;
+  exitTime?: number | null;
+  exitPrice?: number | null;
+  profitable?: boolean;
+}
+
 export interface KairosChartProps {
   chartId?: string;
   symbol: string;
@@ -109,6 +120,7 @@ export interface KairosChartProps {
   entryZone?: { low: number; high: number; signalAt?: number | null } | null;
   direction?: CycleDirection;
   priceLines?: ChartPriceLineSpec[];
+  tradeSegment?: ChartTradeSegmentInput | null;
   anomalies?: AnomalyItem[];
   notices?: Notice[];
   fills?: TradeFillItem[];
@@ -328,9 +340,13 @@ function toChartOptions(theme: AnthropicChartTheme) {
       barSpacing: 8,
       minBarSpacing: 1.5,
       shiftVisibleRangeOnNewBar: true,
+      tickMarkFormatter: (time: Time, tickMarkType: TickMarkType) =>
+        fmtChartTickUtc8(time, tickMarkType),
     },
     localization: {
+      locale: 'zh-CN',
       priceFormatter: (price: number) => fmtPrice(price),
+      timeFormatter: (time: Time) => fmtChartCrosshairUtc8(time),
     },
   };
 }
@@ -344,6 +360,7 @@ export default function KairosChart({
   entryZone = null,
   direction,
   priceLines = [],
+  tradeSegment = null,
   anomalies = [],
   notices = [],
   fills = [],
@@ -453,6 +470,8 @@ export default function KairosChart({
   // Incremental update tracking
   const prevSeriesKeyRef = useRef('');
   const prevFirstTimeRef = useRef<number | null>(null);
+  const prevFirstOpenRef = useRef<number | null>(null);
+  const prevCheckCloseRef = useRef<number | null>(null);
   const prevLenRef = useRef(0);
   const didInitViewRef = useRef(false);
   const followEndRef = useRef(true);
@@ -846,6 +865,9 @@ export default function KairosChart({
     };
     didInitViewRef.current = false;
     prevSeriesKeyRef.current = '';
+    prevFirstTimeRef.current = null;
+    prevFirstOpenRef.current = null;
+    prevCheckCloseRef.current = null;
     prevLenRef.current = 0;
     setChartEpoch((e) => e + 1);
 
@@ -984,14 +1006,19 @@ export default function KairosChart({
 
     const seriesKey = `${symbol}|${timeframe}`;
     const firstTime = bars[0]?.time ?? null;
+    const firstOpen = bars[0]?.open ?? null;
+    const checkIdx = prevLenRef.current >= 2 ? prevLenRef.current - 2 : 0;
+    const checkClose = bars[checkIdx]?.close ?? null;
     const bullVolColor = withAlpha(theme.candleBull, 0.22);
     const bearVolColor = withAlpha(theme.candleBear, 0.22);
     const canIncrementalUpdate =
       prevSeriesKeyRef.current === seriesKey &&
       prevFirstTimeRef.current === firstTime &&
+      prevFirstOpenRef.current === firstOpen &&
       prevLenRef.current > 0 &&
       bars.length >= prevLenRef.current &&
-      bars.length <= prevLenRef.current + 2;
+      bars.length <= prevLenRef.current + 2 &&
+      (prevLenRef.current < 2 || prevCheckCloseRef.current === checkClose);
 
     const isPrepend =
       !canIncrementalUpdate &&
@@ -1049,6 +1076,13 @@ export default function KairosChart({
             color: b.close >= b.open ? bullVolColor : bearVolColor,
           })),
         );
+        if (!isPrepend) {
+          try {
+            bundle.candleSeries.priceScale().applyOptions({ autoScale: true });
+          } catch {
+            // Ignore scale reset before attach settles.
+          }
+        }
 
         if (isPrepend && savedLogical && oldFirstTime != null) {
           const shift = bars.findIndex((b) => b.time === oldFirstTime);
@@ -1107,10 +1141,14 @@ export default function KairosChart({
       }
       prevSeriesKeyRef.current = seriesKey;
       prevFirstTimeRef.current = firstTime;
+      prevFirstOpenRef.current = firstOpen;
+      prevCheckCloseRef.current = bars.length >= 2 ? bars[bars.length - 2].close : firstOpen;
       prevLenRef.current = bars.length;
     } else {
       prevSeriesKeyRef.current = '';
       prevFirstTimeRef.current = null;
+      prevFirstOpenRef.current = null;
+      prevCheckCloseRef.current = null;
       prevLenRef.current = 0;
     }
 
@@ -1157,13 +1195,21 @@ export default function KairosChart({
     [smcOpen, smcBarKey],
   );
 
-  // Update single reusable ISeriesPrimitive (SMC + EntryZone + 1R/2R/3R)
+  // Update single reusable ISeriesPrimitive (SMC + EntryZone + 1R/2R/3R + TradeSegment)
   useEffect(() => {
     const bundle = bundleRef.current;
     if (!bundle) return;
     const entryLine = priceLines.find((l) => l.id === 'entry');
     const stopLine = priceLines.find((l) => l.id === 'stop');
     const targetLine = priceLines.find((l) => l.id === 'target');
+    const entryBarTime =
+      tradeSegment && bars.length > 0
+        ? snapTimestampToBars(bars, tradeSegment.entryTime)
+        : null;
+    const exitBarTime =
+      tradeSegment && tradeSegment.exitTime && bars.length > 0
+        ? snapTimestampToBars(bars, tradeSegment.exitTime)
+        : null;
     const overlaySpec: TicketOverlaySpec = {
       smc: smcOverlay,
       zoneLow: entryZone?.low ?? null,
@@ -1175,9 +1221,19 @@ export default function KairosChart({
       direction,
       firstBarTime: bars[0]?.time ?? null,
       lastBarTime: bars[bars.length - 1]?.time ?? null,
+      tradeSegment:
+        entryBarTime != null && tradeSegment
+          ? {
+              entryBarTime,
+              entryPrice: tradeSegment.entryPrice,
+              exitBarTime,
+              exitPrice: tradeSegment.exitPrice,
+              profitable: tradeSegment.profitable,
+            }
+          : null,
     };
     bundle.primitive.setData(overlaySpec, theme);
-  }, [smcOverlay, entryZone, ticketSignalAt, priceLines, direction, bars, theme, chartEpoch]);
+  }, [smcOverlay, entryZone, ticketSignalAt, priceLines, tradeSegment, direction, bars, theme, chartEpoch]);
 
   // Sync horizontal price lines (Entry / Stop / Target / Liquidation)
   useEffect(() => {
@@ -1196,9 +1252,9 @@ export default function KairosChart({
       try {
         const created = bundle.candleSeries.createPriceLine({
           price: spec.price,
-          color: spec.color,
-          lineWidth: spec.dashed ? 1 : 2,
-          lineStyle: spec.dashed ? LineStyle.Dashed : LineStyle.Solid,
+          color: withAlpha(spec.color, 0.72),
+          lineWidth: 1,
+          lineStyle: spec.dashed ? LineStyle.Dashed : LineStyle.Dotted,
           axisLabelVisible: true,
           title: spec.title,
         });

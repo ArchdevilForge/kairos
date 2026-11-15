@@ -13,6 +13,14 @@ import type { SmcOverlayData } from '../utils/smc';
 
 type DrawTarget = Parameters<IPrimitivePaneRenderer['draw']>[0];
 
+export interface TradeSegmentSpec {
+  entryBarTime: number;
+  entryPrice: number;
+  exitBarTime?: number | null;
+  exitPrice?: number | null;
+  profitable?: boolean;
+}
+
 export interface TicketOverlaySpec {
   smc?: SmcOverlayData | null;
   zoneLow?: number | null;
@@ -24,6 +32,7 @@ export interface TicketOverlaySpec {
   direction?: CycleDirection;
   lastBarTime?: number | null;
   firstBarTime?: number | null;
+  tradeSegment?: TradeSegmentSpec | null;
 }
 
 function drawSmcOverlay(
@@ -240,6 +249,51 @@ class KairosOverlayRenderer implements IPrimitivePaneRenderer {
           lastBarTime: this.spec.lastBarTime,
           theme: this.theme,
         });
+      }
+
+      if (this.spec.tradeSegment) {
+        const seg = this.spec.tradeSegment;
+        const c1 = timeScale.timeToCoordinate(seg.entryBarTime as Time);
+        const y1 = yForPrice(seg.entryPrice);
+        const c2 =
+          seg.exitBarTime != null ? timeScale.timeToCoordinate(seg.exitBarTime as Time) : null;
+        const y2 = seg.exitPrice != null ? yForPrice(seg.exitPrice) : null;
+
+        if (
+          c1 != null &&
+          c2 != null &&
+          y1 != null &&
+          y2 != null &&
+          Number.isFinite(c1) &&
+          Number.isFinite(c2)
+        ) {
+          ctx.strokeStyle = seg.profitable === false ? this.theme.candleBear : this.theme.candleBull;
+          ctx.lineWidth = Math.max(1.5, 1.6 * vRatio);
+          ctx.setLineDash([5 * hRatio, 4 * hRatio]);
+          ctx.beginPath();
+          ctx.moveTo(c1 * hRatio, y1);
+          ctx.lineTo(c2 * hRatio, y2);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+        if (c1 != null && y1 != null && Number.isFinite(c1)) {
+          ctx.fillStyle = this.theme.bgCanvas;
+          ctx.strokeStyle = '#D97757';
+          ctx.lineWidth = Math.max(1.5, 1.8 * vRatio);
+          ctx.beginPath();
+          ctx.arc(c1 * hRatio, y1, 3.5 * hRatio, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+        }
+        if (c2 != null && y2 != null && Number.isFinite(c2)) {
+          ctx.fillStyle = this.theme.bgCanvas;
+          ctx.strokeStyle = '#6A9BCC';
+          ctx.lineWidth = Math.max(1.5, 1.8 * vRatio);
+          ctx.beginPath();
+          ctx.arc(c2 * hRatio, y2, 3.5 * hRatio, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+        }
       }
 
       // Anchor X for EntryZone & 1R/2R/3R projections
