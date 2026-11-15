@@ -129,14 +129,14 @@ export const TopStatusBar: React.FC<TopStatusBarProps> = ({
 
   return (
     <header
-      className="flex h-[38px] shrink-0 items-center justify-between gap-2 border-b px-3 select-none"
+      className="flex h-[38px] shrink-0 items-center justify-between gap-1.5 border-b px-2 select-none sm:gap-2 sm:px-3"
       style={{
         backgroundColor: 'var(--bg-surface)',
         borderColor: 'var(--border-hairline)',
       }}
     >
-      <div className="flex min-w-0 items-center gap-2.5">
-        <div className="flex items-center pr-1">
+      <div className="flex min-w-0 items-center gap-1.5 sm:gap-2.5">
+        <div className="hidden items-center pr-0.5 min-[420px]:flex sm:pr-1">
           <span
             className="font-editorial text-[15px] font-medium tracking-tight"
             style={{ color: 'var(--text-primary)' }}
@@ -147,7 +147,7 @@ export const TopStatusBar: React.FC<TopStatusBarProps> = ({
 
         <nav
           aria-label={t('top.workspaceSwitcherAria')}
-          className="flex items-center rounded-[6px] border p-0.5"
+          className="flex shrink-0 items-center rounded-[6px] border p-0.5"
           style={{
             backgroundColor: 'var(--bg-canvas)',
             borderColor: 'var(--border-hairline)',
@@ -160,7 +160,7 @@ export const TopStatusBar: React.FC<TopStatusBarProps> = ({
                 key={tab.id}
                 type="button"
                 onClick={() => onChangeView(tab.id)}
-                className="rounded-[4px] px-2.5 py-0.5 text-[12px] font-medium transition-colors"
+                className="shrink-0 whitespace-nowrap rounded-[4px] px-2 py-0.5 text-[12px] font-medium transition-colors sm:px-2.5"
                 style={{
                   backgroundColor: active ? 'var(--bg-elevated)' : 'transparent',
                   color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
@@ -175,7 +175,7 @@ export const TopStatusBar: React.FC<TopStatusBarProps> = ({
         <button
           type="button"
           onClick={onOpenCommandPalette}
-          className="flex items-center gap-1.5 rounded-[6px] border px-2 py-0.5 text-[12px] transition-colors"
+          className="flex min-w-0 items-center gap-1.5 rounded-[6px] border px-2 py-0.5 text-[12px] transition-colors"
           style={{
             backgroundColor: 'var(--bg-canvas)',
             borderColor: 'var(--border-hairline)',
@@ -183,11 +183,11 @@ export const TopStatusBar: React.FC<TopStatusBarProps> = ({
           }}
           title={t('top.commandPaletteTitle')}
         >
-          <span className="tabular-nums font-medium">
+          <span className="tabular-nums truncate font-medium">
             {cleanSymbol(activeSymbol)}
           </span>
           <span
-            className="flex items-center gap-0.5 rounded px-1 text-[10px]"
+            className="hidden shrink-0 items-center gap-0.5 rounded px-1 text-[10px] sm:flex"
             style={{
               backgroundColor: 'var(--bg-elevated)',
               color: 'var(--text-muted)',
@@ -199,7 +199,7 @@ export const TopStatusBar: React.FC<TopStatusBarProps> = ({
       </div>
 
       {/* Center: Quiet breathing space or active MarketPulse + Top-3 Leaders/Laggards */}
-      <div className="flex min-w-0 items-center justify-center gap-1.5">
+      <div className="hidden min-w-0 items-center justify-center gap-1.5 md:flex">
         <div
           className="flex shrink-0 items-center gap-1.5 rounded-[6px] px-2.5 py-0.5 text-[11px] font-medium tabular-nums"
           style={{
@@ -214,11 +214,11 @@ export const TopStatusBar: React.FC<TopStatusBarProps> = ({
           ) : (
             <Activity className="h-3 w-3 shrink-0" />
           )}
-          <span>{alertPill.text}</span>
+          <span className="whitespace-nowrap">{alertPill.text}</span>
         </div>
 
         {moverChips.length > 0 ? (
-          <div className="flex min-w-0 items-center gap-1">
+          <div className="hidden min-w-0 items-center gap-1 lg:flex">
             {moverChips.map((chip) => {
               const ret = Number(chip.return_pct ?? 0);
               const isSelected = sameSymbol(chip.symbol, activeSymbol);
@@ -251,7 +251,7 @@ export const TopStatusBar: React.FC<TopStatusBarProps> = ({
       </div>
 
       {/* Right: Language, Theme & Settings */}
-      <div className="flex items-center gap-1">
+      <div className="flex shrink-0 items-center gap-1">
         <button
           type="button"
           onClick={toggleLocale}

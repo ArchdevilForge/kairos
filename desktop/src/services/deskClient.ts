@@ -162,11 +162,20 @@ export class DeskClient {
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const callerSignal = rest.signal;
+    const onCallerAbort = () => controller.abort(callerSignal?.reason);
+    if (callerSignal) {
+      if (callerSignal.aborted) {
+        controller.abort(callerSignal.reason);
+      } else {
+        callerSignal.addEventListener('abort', onCallerAbort, { once: true });
+      }
+    }
     try {
       const res = await fetch(this.buildHttpUrl(path, params), {
         ...rest,
         headers,
-        signal: rest.signal ?? controller.signal,
+        signal: controller.signal,
       });
       if (!res.ok) {
         let message = `HTTP ${res.status}`;
@@ -195,11 +204,15 @@ export class DeskClient {
       return JSON.parse(text) as T;
     } catch (err) {
       if (err instanceof Error && err.name === 'AbortError') {
+        if (callerSignal?.aborted) {
+          throw err;
+        }
         throw new DeskApiError(t('app.err.timeout'), 408, 'REQUEST_TIMEOUT');
       }
       throw err;
     } finally {
       clearTimeout(timer);
+      callerSignal?.removeEventListener('abort', onCallerAbort);
     }
   }
 
@@ -247,6 +260,7 @@ export class DeskClient {
     tf: Timeframe;
     limit?: number;
     beforeTs?: number;
+    signal?: AbortSignal;
   }): Promise<MarketBarsResponse> {
     const res = await this.request<MarketBarsResponse>('/api/v1/market/bars', {
       params: {
@@ -255,6 +269,7 @@ export class DeskClient {
         limit: params.limit,
         before_ts: params.beforeTs,
       },
+      signal: params.signal,
     });
     return {
       ...res,
@@ -288,11 +303,11 @@ export class DeskClient {
     };
   }
 
-  async getDrawings(symbol: string): Promise<ChartDrawingItem[]> {
+  async getDrawings(symbol: string, signal?: AbortSignal): Promise<ChartDrawingItem[]> {
     const res = await this.request<
       | ChartDrawingItem[]
       | { drawings?: ChartDrawingItem[]; data?: ChartDrawingItem[] }
-    >('/api/v1/drawings', { params: { symbol } });
+    >('/api/v1/drawings', { params: { symbol }, signal });
     if (Array.isArray(res)) return res;
     if (Array.isArray(res.drawings)) return res.drawings;
     if (Array.isArray(res.data)) return res.data;
