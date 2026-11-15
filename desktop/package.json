@@ -2,7 +2,7 @@
   "name": "kairos-desk-desktop",
   "private": true,
   "version": "0.4.1",
-  "description": "Kairos human-controlled crypto futures watch and trade review desktop client",
+  "description": "All-in-one charting terminal focused on short-term crypto perpetuals",
   "author": "Xeron <xeronsh@gmail.com>",
   "license": "MIT",
   "homepage": "https://github.com/ArchdevilForge/kairos",

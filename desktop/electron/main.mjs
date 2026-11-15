@@ -58,7 +58,7 @@ function pulseDirection(state) {
   return '';
 }
 
-app.setName('Kairos Desk');
+app.setName('Kairos');
 
 function crc32(buf) {
   let c = 0xffffffff;
@@ -451,7 +451,7 @@ function createMainWindow() {
     height: 920,
     minWidth: 1120,
     minHeight: 700,
-    title: 'Kairos Desk',
+    title: 'Kairos',
     backgroundColor: '#141413',
     autoHideMenuBar: true,
     show: false,
@@ -486,11 +486,11 @@ function createMainWindow() {
 function createTray() {
   const icon = createTrayIcon();
   tray = new Tray(icon);
-  tray.setToolTip('Kairos Desk');
+  tray.setToolTip('Kairos');
 
   const menu = Menu.buildFromTemplate([
     {
-      label: 'Open Kairos Desk',
+      label: 'Open Kairos',
       click: () => showMainWindow(),
     },
     {
