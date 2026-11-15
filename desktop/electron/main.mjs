@@ -14,7 +14,6 @@ import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
-import zlib from 'node:zlib';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -60,82 +59,12 @@ function pulseDirection(state) {
 
 app.setName('Kairos');
 
-function crc32(buf) {
-  let c = 0xffffffff;
-  for (let i = 0; i < buf.length; i += 1) {
-    c ^= buf[i];
-    for (let k = 0; k < 8; k += 1) {
-      c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
-    }
-  }
-  return (c ^ 0xffffffff) >>> 0;
-}
-
-function pngChunk(type, data) {
-  const len = Buffer.alloc(4);
-  len.writeUInt32BE(data.length, 0);
-  const typeBuf = Buffer.from(type, 'ascii');
-  const crcBuf = Buffer.alloc(4);
-  crcBuf.writeUInt32BE(crc32(Buffer.concat([typeBuf, data])), 0);
-  return Buffer.concat([len, typeBuf, data, crcBuf]);
-}
-
 function createTrayIcon() {
-  const size = 24;
-  const raw = Buffer.alloc((size * 4 + 1) * size);
-  const cx = (size - 1) / 2;
-  const cy = (size - 1) / 2;
-
-  for (let y = 0; y < size; y += 1) {
-    const rowStart = y * (size * 4 + 1);
-    raw[rowStart] = 0;
-    for (let x = 0; x < size; x += 1) {
-      const idx = rowStart + 1 + x * 4;
-      const dx = Math.abs(x - cx);
-      const dy = Math.abs(y - cy);
-      const inCircle = dx * dx + dy * dy <= 10.8 * 10.8;
-      const inDiamond = dx + dy <= 5.6 && dx + dy >= 2.6;
-      const inCenter = dx <= 1.2 && dy <= 1.2;
-
-      if (!inCircle) {
-        raw[idx] = 0;
-        raw[idx + 1] = 0;
-        raw[idx + 2] = 0;
-        raw[idx + 3] = 0;
-      } else if (inDiamond || inCenter) {
-        // Warm terracotta #D97757
-        raw[idx] = 0xd9;
-        raw[idx + 1] = 0x77;
-        raw[idx + 2] = 0x57;
-        raw[idx + 3] = 0xff;
-      } else {
-        // Warm obsidian #141413
-        raw[idx] = 0x14;
-        raw[idx + 1] = 0x14;
-        raw[idx + 2] = 0x13;
-        raw[idx + 3] = 0xff;
-      }
-    }
+  const icon = nativeImage.createFromPath(path.join(__dirname, 'tray-icon.png'));
+  if (process.platform === 'linux') {
+    return icon;
   }
-
-  const ihdr = Buffer.alloc(13);
-  ihdr.writeUInt32BE(size, 0);
-  ihdr.writeUInt32BE(size, 4);
-  ihdr[8] = 8; // bit depth
-  ihdr[9] = 6; // RGBA
-  ihdr[10] = 0;
-  ihdr[11] = 0;
-  ihdr[12] = 0;
-
-  const compressed = zlib.deflateSync(raw);
-  const png = Buffer.concat([
-    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
-    pngChunk('IHDR', ihdr),
-    pngChunk('IDAT', compressed),
-    pngChunk('IEND', Buffer.alloc(0)),
-  ]);
-
-  return nativeImage.createFromBuffer(png);
+  return icon.resize({ width: 20, height: 20 });
 }
 
 function findInPath(exeName) {
@@ -452,6 +381,7 @@ function createMainWindow() {
     minWidth: 1120,
     minHeight: 700,
     title: 'Kairos',
+    icon: path.join(__dirname, 'tray-icon.png'),
     backgroundColor: '#141413',
     autoHideMenuBar: true,
     show: false,
