@@ -975,13 +975,26 @@ export default function KairosChart({
     chart.timeScale().subscribeVisibleTimeRangeChange(onVisibleRangeChange);
     chart.timeScale().subscribeVisibleLogicalRangeChange(onLogicalRangeChange);
 
-    const ro = new ResizeObserver(() => {
-      if (!containerRef.current || containerRef.current.clientWidth === 0) return;
-      chart.applyOptions({
-        width: containerRef.current.clientWidth,
-        height: containerRef.current.clientHeight,
+    let lastW = Math.max(1, el.clientWidth);
+    let lastH = Math.max(1, el.clientHeight);
+    let roRaf: number | null = null;
+    const ro = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      const nextW = entry
+        ? Math.floor(entry.contentRect.width)
+        : containerRef.current?.clientWidth ?? 0;
+      const nextH = entry
+        ? Math.floor(entry.contentRect.height)
+        : containerRef.current?.clientHeight ?? 0;
+      if (nextW <= 0 || nextH <= 0 || (nextW === lastW && nextH === lastH)) return;
+      lastW = nextW;
+      lastH = nextH;
+      chart.applyOptions({ width: nextW, height: nextH });
+      if (roRaf !== null) cancelAnimationFrame(roRaf);
+      roRaf = requestAnimationFrame(() => {
+        roRaf = null;
+        paintOverlayRef.current();
       });
-      paintOverlayRef.current();
     });
     ro.observe(el);
 
@@ -995,6 +1008,10 @@ export default function KairosChart({
     });
 
     return () => {
+      if (roRaf !== null) {
+        cancelAnimationFrame(roRaf);
+        roRaf = null;
+      }
       if (rafPaintRef.current !== null) {
         cancelAnimationFrame(rafPaintRef.current);
         rafPaintRef.current = null;
@@ -1904,18 +1921,18 @@ export default function KairosChart({
   return (
     <div
       ref={shellRef}
-      className="flex min-h-0 flex-1 flex-col overflow-hidden"
+      className="kairos-contain-panel flex min-h-0 flex-1 flex-col overflow-hidden"
       style={{ backgroundColor: 'var(--bg-canvas)' }}
     >
       {/* Toolbar */}
       <div
-        className="flex h-[34px] shrink-0 flex-nowrap items-center justify-between gap-2 overflow-hidden border-b px-3"
+        className="flex min-h-[34px] shrink-0 flex-wrap items-center justify-between gap-x-2 gap-y-1 border-b px-2 py-1 lg:h-[34px] lg:flex-nowrap lg:px-3 lg:py-0"
         style={{
           backgroundColor: 'var(--bg-surface)',
           borderColor: 'var(--border-hairline)',
         }}
       >
-        <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5 sm:gap-2 lg:flex-nowrap lg:overflow-hidden">
           {symbolSlot}
           {headerBadge && !symbolSlot ? (
             <>

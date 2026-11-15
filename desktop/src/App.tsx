@@ -1,7 +1,5 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
-import { CommandPalette } from './components/CommandPalette';
-import { SettingsModal } from './components/SettingsModal';
 import { TopStatusBar, type WorkspaceTab } from './components/TopStatusBar';
 import { t as i18nT, useI18n } from './i18n';
 import { DeskClient } from './services/deskClient';
@@ -14,9 +12,20 @@ import type {
   UpdateSettingsRequest,
   WsEvent,
 } from './types/kairos';
-import { ReviewWorkspace } from './views/ReviewWorkspace';
-import { StatsWorkspace } from './views/StatsWorkspace';
 import { WatchWorkspace } from './views/WatchWorkspace';
+
+const ReviewWorkspace = lazy(() =>
+  import('./views/ReviewWorkspace').then((m) => ({ default: m.ReviewWorkspace })),
+);
+const StatsWorkspace = lazy(() =>
+  import('./views/StatsWorkspace').then((m) => ({ default: m.StatsWorkspace })),
+);
+const CommandPalette = lazy(() =>
+  import('./components/CommandPalette').then((m) => ({ default: m.CommandPalette })),
+);
+const SettingsModal = lazy(() =>
+  import('./components/SettingsModal').then((m) => ({ default: m.SettingsModal })),
+);
 
 const THEME_STORAGE_KEY = 'kairos.desk.theme';
 const CHIME_STORAGE_KEY = 'kairos.desk.chime';
@@ -422,16 +431,19 @@ export function App() {
     };
   }, [handleSyncAccount, selectTradeableSymbol]);
 
+  const modalStateRef = useRef({ paletteOpen: false, settingsOpen: false });
+  modalStateRef.current = { paletteOpen, settingsOpen };
+
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         setPaletteOpen((prev) => !prev);
       } else if (e.key === 'Escape') {
-        if (paletteOpen) {
+        if (modalStateRef.current.paletteOpen) {
           e.preventDefault();
           setPaletteOpen(false);
-        } else if (settingsOpen) {
+        } else if (modalStateRef.current.settingsOpen) {
           e.preventDefault();
           setSettingsOpen(false);
         }
@@ -439,7 +451,7 @@ export function App() {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [paletteOpen, settingsOpen]);
+  }, []);
 
   const handleOpenInReview = useCallback(
     (symbol: string, cursorTs?: number, ticketId?: string) => {
@@ -653,50 +665,74 @@ export function App() {
         )}
 
         {activeView === 'review' && (
-          <ReviewWorkspace
-            client={client}
-            bootstrap={bootstrap}
-            initialSymbol={reviewTarget.symbol || activeSymbol}
-            initialCursorTs={reviewTarget.cursorTs}
-            initialTicketId={reviewTarget.ticketId}
-            onSelectSymbol={selectTradeableSymbol}
-            onRefreshBootstrap={() => refreshBootstrap()}
-          />
+          <Suspense
+            fallback={
+              <div className="flex h-full w-full items-center justify-center text-xs" style={{ color: 'var(--text-secondary)' }}>
+                <RefreshCw className="mr-2 h-4 w-4 animate-spin" style={{ color: 'var(--accent-brand)' }} />
+              </div>
+            }
+          >
+            <ReviewWorkspace
+              client={client}
+              bootstrap={bootstrap}
+              initialSymbol={reviewTarget.symbol || activeSymbol}
+              initialCursorTs={reviewTarget.cursorTs}
+              initialTicketId={reviewTarget.ticketId}
+              onSelectSymbol={selectTradeableSymbol}
+              onRefreshBootstrap={() => refreshBootstrap()}
+            />
+          </Suspense>
         )}
 
         {activeView === 'stats' && (
-          <StatsWorkspace
-            client={client}
-            bootstrap={bootstrap}
-            onDrillDownReview={handleOpenInReview}
-          />
+          <Suspense
+            fallback={
+              <div className="flex h-full w-full items-center justify-center text-xs" style={{ color: 'var(--text-secondary)' }}>
+                <RefreshCw className="mr-2 h-4 w-4 animate-spin" style={{ color: 'var(--accent-brand)' }} />
+              </div>
+            }
+          >
+            <StatsWorkspace
+              client={client}
+              bootstrap={bootstrap}
+              onDrillDownReview={handleOpenInReview}
+            />
+          </Suspense>
         )}
       </main>
 
-      <CommandPalette
-        open={paletteOpen}
-        onClose={handleClosePalette}
-        bootstrap={bootstrap}
-        activeSymbol={activeSymbol}
-        onSelectSymbol={selectTradeableSymbol}
-        onChangeView={setActiveView}
-        onOpenTicketInReview={handleOpenInReview}
-        onToggleSplit={handleToggleSplit}
-        onToggleTheme={handleToggleTheme}
-        onSyncAccount={handleTriggerSync}
-        onOpenSettings={handleOpenSettings}
-      />
+      {paletteOpen ? (
+        <Suspense fallback={null}>
+          <CommandPalette
+            open={paletteOpen}
+            onClose={handleClosePalette}
+            bootstrap={bootstrap}
+            activeSymbol={activeSymbol}
+            onSelectSymbol={selectTradeableSymbol}
+            onChangeView={setActiveView}
+            onOpenTicketInReview={handleOpenInReview}
+            onToggleSplit={handleToggleSplit}
+            onToggleTheme={handleToggleTheme}
+            onSyncAccount={handleTriggerSync}
+            onOpenSettings={handleOpenSettings}
+          />
+        </Suspense>
+      ) : null}
 
-      <SettingsModal
-        open={settingsOpen}
-        onClose={handleCloseSettings}
-        status={bootstrap.status}
-        chimeEnabled={chimeEnabled}
-        onToggleChime={handleToggleChime}
-        syncingAccount={syncingAccount}
-        onSyncAccount={handleSyncAccount}
-        onSaveSettings={handleSaveSettings}
-      />
+      {settingsOpen ? (
+        <Suspense fallback={null}>
+          <SettingsModal
+            open={settingsOpen}
+            onClose={handleCloseSettings}
+            status={bootstrap.status}
+            chimeEnabled={chimeEnabled}
+            onToggleChime={handleToggleChime}
+            syncingAccount={syncingAccount}
+            onSyncAccount={handleSyncAccount}
+            onSaveSettings={handleSaveSettings}
+          />
+        </Suspense>
+      ) : null}
     </div>
   );
 }
