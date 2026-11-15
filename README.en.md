@@ -2,7 +2,7 @@
 
 # Kairos
 
-**Kairos** is a human-controlled desktop terminal for cryptocurrency perpetual futures anomaly monitoring and zero-lookahead trade review; it uses no LLM direction calls and executes no automated orders.
+**Kairos** is an all-in-one charting terminal focused on short-term crypto perpetuals.
 
 ---
 
