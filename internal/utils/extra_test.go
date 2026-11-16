@@ -900,3 +900,99 @@ func TestDeskAPIServer_HTTP_And_WS_Integration(t *testing.T) {
 func strconvInt64(v int64) string {
 	return strconv.FormatInt(v, 10)
 }
+
+func TestDeskAPIServer_HealsKlineGap(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	now := time.Now().Unix()
+	curHour := (now / 3600) * 3600
+	var klineCallCount atomic.Int32
+
+	binanceMock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/fapi/v1/exchangeInfo"):
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"symbols": []map[string]any{
+					{"symbol": "ETHUSDT", "status": "TRADING", "contractType": "PERPETUAL", "quoteAsset": "USDT", "underlyingType": "COIN"},
+				},
+			})
+		case strings.Contains(r.URL.Path, "/fapi/v1/ticker/24hr"):
+			_ = json.NewEncoder(w).Encode([]map[string]string{
+				{"symbol": "ETHUSDT", "quoteVolume": "900000000"},
+			})
+		case strings.Contains(r.URL.Path, "/fapi/v1/klines"):
+			klineCallCount.Add(1)
+			lim, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+			if lim <= 0 {
+				lim = 10
+			}
+			var rows [][]any
+			start := curHour - int64(lim-1)*3600
+			for i := 0; i < lim; i++ {
+				tsMs := (start + int64(i)*3600) * 1000
+				rows = append(rows, []any{tsMs, "1800", "1830", "1790", "1820", "10", tsMs + 3599999, "18200"})
+			}
+			_ = json.NewEncoder(w).Encode(rows)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer binanceMock.Close()
+
+	mockURL, _ := url.Parse(binanceMock.URL)
+	restoreBinance := exchange.SetBinanceTestHooks(&mockRewriteRT{base: mockURL}, "")
+	defer restoreBinance()
+
+	tmp := t.TempDir()
+	cfg := types.Config{}
+	cfg.Exchanges.Primary = "binance"
+	cfg.DataManager.Exchanges = []string{"binance"}
+	cfg.Storage.DatabasePath = filepath.Join(tmp, "kairos.db")
+	cfg.Storage.WatchHintsPath = filepath.Join(tmp, "hints.jsonl")
+
+	p := engine.NewPipeline(&cfg, nil)
+	if err := p.EnsureDeskStorage(); err != nil {
+		t.Fatal(err)
+	}
+	store, err := cache.OpenFromStorageConfig(cfg.Storage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	p.SetCacheStore(store)
+
+	// Seed 10 old 1h bars ending 6h ago + 1 fresh bar at curHour (simulating WS UpsertKline after sleep).
+	var gapped []types.Candle
+	for i := 0; i < 10; i++ {
+		ts := curHour - int64(15-i)*3600
+		gapped = append(gapped, types.Candle{Timestamp: ts, Open: 1710, High: 1720, Low: 1700, Close: 1715, Volume: 10})
+	}
+	gapped = append(gapped, types.Candle{Timestamp: curHour, Open: 1805, High: 1828, Low: 1800, Close: 1825, Volume: 12})
+	if err := store.UpsertKlines(context.Background(), "ETH/USDT:USDT", "1h", "binance", gapped); err != nil {
+		t.Fatal(err)
+	}
+
+	deskSrv := deskapi.NewServer(p, store, "")
+	defer deskSrv.Close()
+	httpSrv := httptest.NewServer(deskSrv.Handler())
+	defer httpSrv.Close()
+
+	resp := doReq(t, http.MethodGet, httpSrv.URL+"/api/v1/market/bars?symbol=ETHUSDT&tf=1h&limit=10", "", nil)
+	var body deskapi.MarketBarsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || klineCallCount.Load() == 0 {
+		t.Fatalf("expected REST backfill for gapped cache, status=%d calls=%d", resp.StatusCode, klineCallCount.Load())
+	}
+	if len(body.Bars) != 10 {
+		t.Fatalf("expected 10 continuous bars, got %d", len(body.Bars))
+	}
+	for i := 1; i < len(body.Bars); i++ {
+		if body.Bars[i].Time-body.Bars[i-1].Time != 3600 {
+			t.Fatalf("gap remained at index %d: prev=%d cur=%d", i, body.Bars[i-1].Time, body.Bars[i].Time)
+		}
+	}
+}

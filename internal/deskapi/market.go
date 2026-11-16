@@ -369,6 +369,19 @@ func (s *Server) warmBarsTailAsync(sym, tf string, fetchLim int) {
 	}()
 }
 
+func earliestGapPrevTS(candles []types.Candle, tfSec int64) (int64, bool) {
+	if tfSec <= 0 || len(candles) < 2 {
+		return 0, false
+	}
+	maxStep := tfSec + tfSec/2
+	for i := 1; i < len(candles); i++ {
+		if candles[i].Timestamp-candles[i-1].Timestamp > maxStep {
+			return candles[i-1].Timestamp, true
+		}
+	}
+	return 0, false
+}
+
 func (s *Server) loadBarsWithFallback(ctx context.Context, sym, tf string, limit int, beforeTS int64) []types.Candle {
 	var cached []types.Candle
 	if s.cache != nil {
@@ -377,24 +390,34 @@ func (s *Server) loadBarsWithFallback(ctx context.Context, sym, tf string, limit
 
 	fetchLim := 0
 	timeout := 8 * time.Second
+	tfSec := maxInt64(60, tfDurationSec(tf))
 	if len(cached) < limit {
 		fetchLim = limit
 	} else if beforeTS > 0 && len(cached) > 0 {
-		if tfSec := tfDurationSec(tf); tfSec > 0 && beforeTS-cached[len(cached)-1].Timestamp > tfSec*2 {
+		if _, hasGap := earliestGapPrevTS(cached, tfSec); hasGap || beforeTS-cached[len(cached)-1].Timestamp > tfSec*2 {
 			fetchLim = limit
 		}
 	} else if beforeTS == 0 && len(cached) >= limit {
-		if s.isBarsCacheFresh(sym, tf, 10*time.Second) {
+		gapPrevTS, hasGap := earliestGapPrevTS(cached, tfSec)
+		if !hasGap && s.isBarsCacheFresh(sym, tf, 10*time.Second) {
 			return cached
 		}
-		tfSec := maxInt64(60, tfDurationSec(tf))
-		barAge := time.Now().Unix() - cached[len(cached)-1].Timestamp
-		if barAge < tfSec {
+		nowUnix := time.Now().Unix()
+		barAge := nowUnix - cached[len(cached)-1].Timestamp
+		if !hasGap && barAge < tfSec {
 			s.warmBarsTailAsync(sym, tf, 2)
 			return cached
 		}
-		fetchLim = minInt(limit, maxInt(2, int(barAge/tfSec)+2))
-		timeout = 2500 * time.Millisecond
+		if hasGap && s.isBarsCacheFresh(sym, tf, 10*time.Second) {
+			return cached
+		}
+		sinceTS := cached[len(cached)-1].Timestamp
+		if hasGap && gapPrevTS < sinceTS {
+			sinceTS = gapPrevTS
+		}
+		needed := int((nowUnix-sinceTS)/tfSec) + 2
+		fetchLim = minInt(limit, maxInt(2, needed))
+		timeout = 6 * time.Second
 	}
 
 	if fetchLim > 0 {

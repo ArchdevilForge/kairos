@@ -17,7 +17,7 @@ import {
 } from '../types/kairos';
 import { useI18n } from '../i18n';
 import { PHASE_LABEL, sameSymbol } from '../utils/doctrine';
-import { fmtDateTimeSec, fmtIsoUtc8, fmtPctPoints } from '../utils/format';
+import { TIMEFRAME_SECONDS, fmtDateTimeSec, fmtIsoUtc8, fmtPctPoints } from '../utils/format';
 
 type WatchTranslate = ReturnType<typeof useI18n>['t'];
 
@@ -78,6 +78,19 @@ function mergeBarsAscending(older: Bar[], current: Bar[]): Bar[] {
   for (const b of older) byTime.set(b.time, b);
   for (const b of current) byTime.set(b.time, b);
   return Array.from(byTime.values()).sort((a, b) => a.time - b.time);
+}
+
+function mergeLatestBars(
+  prev: Bar[] | undefined,
+  loaded: Bar[],
+  tfSec: number,
+): Bar[] {
+  if (!prev || prev.length === 0 || loaded.length === 0) return loaded;
+  const prevLast = prev[prev.length - 1];
+  if (tfSec > 0 && loaded[0].time - prevLast.time > tfSec * 1.5) {
+    return loaded;
+  }
+  return mergeBarsAscending(prev, loaded);
 }
 
 interface HistoryLoadGuard {
@@ -223,7 +236,7 @@ function marketAnomalyMeta(a: AnomalyItem, t: WatchTranslate): {
   return { title, tone, med60, breadthRatio, chips };
 }
 
-function upsertBar(list: Bar[], incoming: Bar): Bar[] {
+function upsertBar(list: Bar[], incoming: Bar, tfSec: number): Bar[] {
   if (list.length === 0) return [incoming];
   const last = list[list.length - 1];
   if (incoming.time === last.time) {
@@ -241,6 +254,11 @@ function upsertBar(list: Bar[], incoming: Bar): Bar[] {
     return next;
   }
   if (incoming.time > last.time) {
+    // Reject cross-gap live bars; caller triggers a REST backfill instead of
+    // stitching bars separated by missing candles.
+    if (tfSec > 0 && incoming.time - last.time > tfSec * 1.5) {
+      return list;
+    }
     const next = [...list, incoming];
     return next.length > 10000 ? next.slice(next.length - 10000) : next;
   }
@@ -304,6 +322,13 @@ export function WatchWorkspace({
   // Per-pane infinite scroll guards & in-memory K-line slice cache
   const primaryHistoryRef = useRef<HistoryLoadGuard>({ key: '', inFlight: false, exhausted: false });
   const compareHistoryRef = useRef<HistoryLoadGuard>({ key: '', inFlight: false, exhausted: false });
+  const primaryLastTimeRef = useRef<number>(0);
+  primaryLastTimeRef.current = primarySlice.bars[primarySlice.bars.length - 1]?.time ?? 0;
+  const compareLastTimeRef = useRef<number>(0);
+  compareLastTimeRef.current = compareSlice.bars[compareSlice.bars.length - 1]?.time ?? 0;
+  const refreshGuardRef = useRef<Map<string, { inFlight: boolean; lastAt: number }>>(new Map());
+  const paneRef = useRef({ activeSymbol, activeTf, splitMode, compareSymbol, compareTf });
+  paneRef.current = { activeSymbol, activeTf, splitMode, compareSymbol, compareTf };
   const barCacheRef = useRef<
     Map<string, { bars: Bar[]; marketCycle: CycleMap | null; symbolCycle: CycleMap | null }>
   >(new Map());
@@ -395,10 +420,11 @@ export function WatchWorkspace({
           primaryHistoryRef.current.exhausted = true;
         }
         const prevCached = barCacheRef.current.get(key);
-        const mergedBars =
-          prevCached && prevCached.bars.length > 0 && loaded.length > 0
-            ? mergeBarsAscending(prevCached.bars, loaded)
-            : loaded;
+        const mergedBars = mergeLatestBars(
+          prevCached?.bars,
+          loaded,
+          TIMEFRAME_SECONDS[activeTf] ?? 300,
+        );
         const marketCycle = res.market_cycle ?? prevCached?.marketCycle ?? null;
         const symbolCycle = res.symbol_cycle ?? prevCached?.symbolCycle ?? null;
         writeBarCache(key, {
@@ -484,10 +510,11 @@ export function WatchWorkspace({
           compareHistoryRef.current.exhausted = true;
         }
         const prevCached = barCacheRef.current.get(key);
-        const mergedBars =
-          prevCached && prevCached.bars.length > 0 && loaded.length > 0
-            ? mergeBarsAscending(prevCached.bars, loaded)
-            : loaded;
+        const mergedBars = mergeLatestBars(
+          prevCached?.bars,
+          loaded,
+          TIMEFRAME_SECONDS[compareTf] ?? 300,
+        );
         const marketCycle = res.market_cycle ?? prevCached?.marketCycle ?? null;
         const symbolCycle = res.symbol_cycle ?? prevCached?.symbolCycle ?? null;
         writeBarCache(key, {
@@ -608,6 +635,61 @@ export function WatchWorkspace({
     [loadOlderFor, splitMode, compareSymbol, compareTf],
   );
 
+  const refreshLatestFor = useCallback(
+    (
+      sym: string,
+      tf: Timeframe,
+      setter: React.Dispatch<React.SetStateAction<ChartSliceState>>,
+      isCurrentPane: () => boolean,
+      force = false,
+    ) => {
+      const key = `${sym}|${tf}`;
+      const guard = refreshGuardRef.current.get(key);
+      const now = Date.now();
+      if (guard?.inFlight) return;
+      if (!force && guard && now - guard.lastAt < 3000) return;
+
+      refreshGuardRef.current.set(key, { inFlight: true, lastAt: now });
+      client
+        .getMarketBars({ symbol: sym, tf, limit: 800 })
+        .then((res) => {
+          const loaded = res.bars ?? [];
+          if (loaded.length === 0) return;
+          const tfSec = TIMEFRAME_SECONDS[tf] ?? 300;
+          const prevCached = barCacheRef.current.get(key);
+          const mergedBars = mergeLatestBars(prevCached?.bars, loaded, tfSec);
+          const marketCycle = res.market_cycle ?? prevCached?.marketCycle ?? null;
+          const symbolCycle = res.symbol_cycle ?? prevCached?.symbolCycle ?? null;
+          writeBarCache(key, {
+            bars: mergedBars,
+            marketCycle,
+            symbolCycle,
+          });
+          if (!isCurrentPane()) return;
+          setter((prev) => ({
+            ...prev,
+            bars: mergedBars,
+            metrics: res.metrics ?? prev.metrics,
+            marketCycle,
+            symbolCycle,
+            loading: false,
+            error: null,
+            errorKey: null,
+          }));
+        })
+        .catch(() => {
+          // Keep existing bars if backfill fails; next gap tick or reconnect retries.
+        })
+        .finally(() => {
+          const cur = refreshGuardRef.current.get(key);
+          if (cur) {
+            cur.inFlight = false;
+          }
+        });
+    },
+    [client, writeBarCache],
+  );
+
   // Subscribe WebSocket to primary (+ optional compare) symbol & timeframe
   useEffect(() => {
     const subs: Array<{ symbol: string; tfs: Timeframe[] }> = [
@@ -624,40 +706,114 @@ export function WatchWorkspace({
     }
     client.subscribeMany(subs);
 
+    const primaryTfSec = TIMEFRAME_SECONDS[activeTf] ?? 300;
+    const compareTfSec = TIMEFRAME_SECONDS[compareTf] ?? 300;
+    const isPrimaryCurrent = () =>
+      sameSymbol(paneRef.current.activeSymbol, activeSymbol) &&
+      paneRef.current.activeTf === activeTf;
+    const isCompareCurrent = () =>
+      paneRef.current.splitMode &&
+      sameSymbol(paneRef.current.compareSymbol, compareSymbol) &&
+      paneRef.current.compareTf === compareTf;
+
+    const applyWsKline = (
+      sym: string,
+      tf: Timeframe,
+      tfSec: number,
+      lastTime: number,
+      bar: Bar,
+      setter: React.Dispatch<React.SetStateAction<ChartSliceState>>,
+      isCurrent: () => boolean,
+    ) => {
+      if (lastTime > 0 && bar.time - lastTime > tfSec * 1.5) {
+        refreshLatestFor(sym, tf, setter, isCurrent);
+        return;
+      }
+      setter((prev) => {
+        if (prev.loading && prev.bars.length === 0) return prev;
+        const nextBars = upsertBar(prev.bars, bar, tfSec);
+        if (nextBars === prev.bars) return prev;
+        writeBarCache(`${sym}|${tf}`, {
+          bars: nextBars,
+          marketCycle: prev.marketCycle,
+          symbolCycle: prev.symbolCycle,
+        });
+        return { ...prev, bars: nextBars };
+      });
+    };
+
     const unsub = client.onWsEvent((evt) => {
       if (evt.type !== 'kline') return;
       if (sameSymbol(evt.symbol, activeSymbol) && evt.tf === activeTf) {
-        setPrimarySlice((prev) => {
-          if (prev.loading && prev.bars.length === 0) return prev;
-          const nextBars = upsertBar(prev.bars, evt.bar);
-          if (nextBars === prev.bars) return prev;
-          writeBarCache(`${activeSymbol}|${activeTf}`, {
-            bars: nextBars,
-            marketCycle: prev.marketCycle,
-            symbolCycle: prev.symbolCycle,
-          });
-          return { ...prev, bars: nextBars };
-        });
+        applyWsKline(
+          activeSymbol,
+          activeTf,
+          primaryTfSec,
+          primaryLastTimeRef.current,
+          evt.bar,
+          setPrimarySlice,
+          isPrimaryCurrent,
+        );
       }
       if (splitMode && sameSymbol(evt.symbol, compareSymbol) && evt.tf === compareTf) {
-        setCompareSlice((prev) => {
-          if (prev.loading && prev.bars.length === 0) return prev;
-          const nextBars = upsertBar(prev.bars, evt.bar);
-          if (nextBars === prev.bars) return prev;
-          writeBarCache(`${compareSymbol}|${compareTf}`, {
-            bars: nextBars,
-            marketCycle: prev.marketCycle,
-            symbolCycle: prev.symbolCycle,
-          });
-          return { ...prev, bars: nextBars };
-        });
+        applyWsKline(
+          compareSymbol,
+          compareTf,
+          compareTfSec,
+          compareLastTimeRef.current,
+          evt.bar,
+          setCompareSlice,
+          isCompareCurrent,
+        );
       }
     });
 
+    let wasDisconnected = !client.isWsConnected();
+    const unsubConn = client.onConnectionChange((connected) => {
+      if (!connected) {
+        wasDisconnected = true;
+        return;
+      }
+      if (!wasDisconnected) return;
+      wasDisconnected = false;
+      refreshLatestFor(activeSymbol, activeTf, setPrimarySlice, isPrimaryCurrent, true);
+      if (splitMode && compareSymbol) {
+        refreshLatestFor(compareSymbol, compareTf, setCompareSlice, isCompareCurrent, true);
+      }
+    });
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState !== 'visible') return;
+      const nowSec = Math.floor(Date.now() / 1000);
+      if (primaryLastTimeRef.current > 0 && nowSec - primaryLastTimeRef.current >= primaryTfSec) {
+        refreshLatestFor(activeSymbol, activeTf, setPrimarySlice, isPrimaryCurrent);
+      }
+      if (
+        splitMode &&
+        compareSymbol &&
+        compareLastTimeRef.current > 0 &&
+        nowSec - compareLastTimeRef.current >= compareTfSec
+      ) {
+        refreshLatestFor(compareSymbol, compareTf, setCompareSlice, isCompareCurrent);
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
     return () => {
       unsub();
+      unsubConn();
+      document.removeEventListener('visibilitychange', onVisibilityChange);
     };
-  }, [client, activeSymbol, activeTf, splitMode, compareSymbol, compareTf, writeBarCache]);
+  }, [
+    client,
+    activeSymbol,
+    activeTf,
+    splitMode,
+    compareSymbol,
+    compareTf,
+    writeBarCache,
+    refreshLatestFor,
+  ]);
 
   // Synchronize Top/Bottom dual charts (re-attaches cleanly once both have bars)
   useEffect(() => {
