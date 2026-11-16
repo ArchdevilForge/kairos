@@ -38,6 +38,9 @@ func doHTTPGet(ctx context.Context, cli *http.Client, url string) ([]byte, error
 	if err != nil {
 		return nil, fmt.Errorf("read: %w", err)
 	}
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("http %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
 	return body, nil
 }
 

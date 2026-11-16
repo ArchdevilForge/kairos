@@ -27,6 +27,7 @@ type Server struct {
 	cache        *cache.Store
 	acctClient   *exchange.BinanceAccountClient
 	restFallback exchange.Exchange
+	okxFallback  exchange.Exchange
 	token        string
 
 	wsHub *wsHub
@@ -57,11 +58,13 @@ func NewServer(pipeline *engine.Pipeline, cacheStore *cache.Store, token string)
 
 	bgCtx, bgCancel := context.WithCancel(context.Background())
 	fb, _ := exchange.New("binance")
+	okxFB, _ := exchange.New("okx")
 	s := &Server{
 		pipeline:     pipeline,
 		cache:        cacheStore,
 		acctClient:   exchange.NewBinanceAccountClient(),
 		restFallback: fb,
+		okxFallback:  okxFB,
 		token:        token,
 		bgCtx:        bgCtx,
 		bgCancel:     bgCancel,
@@ -116,6 +119,9 @@ func (s *Server) Close() {
 	s.bgWG.Wait()
 	if s.restFallback != nil {
 		_ = s.restFallback.Close()
+	}
+	if s.okxFallback != nil {
+		_ = s.okxFallback.Close()
 	}
 }
 

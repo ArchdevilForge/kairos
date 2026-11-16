@@ -236,7 +236,12 @@ function marketAnomalyMeta(a: AnomalyItem, t: WatchTranslate): {
   return { title, tone, med60, breadthRatio, chips };
 }
 
-function upsertBar(list: Bar[], incoming: Bar, tfSec: number): Bar[] {
+function upsertBar(
+  list: Bar[],
+  incoming: Bar,
+  tfSec: number,
+  allowGap = false,
+): Bar[] {
   if (list.length === 0) return [incoming];
   const last = list[list.length - 1];
   if (incoming.time === last.time) {
@@ -254,9 +259,9 @@ function upsertBar(list: Bar[], incoming: Bar, tfSec: number): Bar[] {
     return next;
   }
   if (incoming.time > last.time) {
-    // Reject cross-gap live bars; caller triggers a REST backfill instead of
-    // stitching bars separated by missing candles.
-    if (tfSec > 0 && incoming.time - last.time > tfSec * 1.5) {
+    // Reject cross-gap live bars until REST backfill runs; if REST cannot
+    // heal the gap (e.g. geo-blocked REST), allowGap lets live WS continue.
+    if (!allowGap && tfSec > 0 && incoming.time - last.time > tfSec * 1.5) {
       return list;
     }
     const next = [...list, incoming];
@@ -327,6 +332,17 @@ export function WatchWorkspace({
   const compareLastTimeRef = useRef<number>(0);
   compareLastTimeRef.current = compareSlice.bars[compareSlice.bars.length - 1]?.time ?? 0;
   const refreshGuardRef = useRef<Map<string, { inFlight: boolean; lastAt: number }>>(new Map());
+  const pendingGapBarRef = useRef<
+    Map<
+      string,
+      {
+        bar: Bar;
+        setter: React.Dispatch<React.SetStateAction<ChartSliceState>>;
+        isCurrent: () => boolean;
+      }
+    >
+  >(new Map());
+  const gapFallbackAnchorRef = useRef<Map<string, number>>(new Map());
   const paneRef = useRef({ activeSymbol, activeTf, splitMode, compareSymbol, compareTf });
   paneRef.current = { activeSymbol, activeTf, splitMode, compareSymbol, compareTf };
   const barCacheRef = useRef<
@@ -642,14 +658,15 @@ export function WatchWorkspace({
       setter: React.Dispatch<React.SetStateAction<ChartSliceState>>,
       isCurrentPane: () => boolean,
       force = false,
-    ) => {
+    ): 'started' | 'in_flight' | 'throttled' => {
       const key = `${sym}|${tf}`;
       const guard = refreshGuardRef.current.get(key);
       const now = Date.now();
-      if (guard?.inFlight) return;
-      if (!force && guard && now - guard.lastAt < 3000) return;
+      if (guard?.inFlight) return 'in_flight';
+      if (!force && guard && now - guard.lastAt < 3000) return 'throttled';
 
       refreshGuardRef.current.set(key, { inFlight: true, lastAt: now });
+      let refreshedLastTime = 0;
       client
         .getMarketBars({ symbol: sym, tf, limit: 800 })
         .then((res) => {
@@ -658,6 +675,10 @@ export function WatchWorkspace({
           const tfSec = TIMEFRAME_SECONDS[tf] ?? 300;
           const prevCached = barCacheRef.current.get(key);
           const mergedBars = mergeLatestBars(prevCached?.bars, loaded, tfSec);
+          refreshedLastTime = mergedBars[mergedBars.length - 1]?.time ?? 0;
+          if (refreshedLastTime > 0 && gapFallbackAnchorRef.current.get(key) !== refreshedLastTime) {
+            gapFallbackAnchorRef.current.delete(key);
+          }
           const marketCycle = res.market_cycle ?? prevCached?.marketCycle ?? null;
           const symbolCycle = res.symbol_cycle ?? prevCached?.symbolCycle ?? null;
           writeBarCache(key, {
@@ -678,14 +699,39 @@ export function WatchWorkspace({
           }));
         })
         .catch(() => {
-          // Keep existing bars if backfill fails; next gap tick or reconnect retries.
+          // Keep existing bars if backfill fails; pending gap bar falls through below.
         })
         .finally(() => {
           const cur = refreshGuardRef.current.get(key);
           if (cur) {
             cur.inFlight = false;
           }
+          const pending = pendingGapBarRef.current.get(key);
+          if (!pending) return;
+          pendingGapBarRef.current.delete(key);
+          if (!pending.isCurrent()) return;
+          const tfSec = TIMEFRAME_SECONDS[tf] ?? 300;
+          const anchor =
+            refreshedLastTime > 0
+              ? refreshedLastTime
+              : (barCacheRef.current.get(key)?.bars.slice(-1)[0]?.time ?? 0);
+          const stillGapped = anchor > 0 && pending.bar.time - anchor > tfSec * 1.5;
+          if (stillGapped) {
+            gapFallbackAnchorRef.current.set(key, anchor);
+          }
+          pending.setter((prev) => {
+            if (prev.loading && prev.bars.length === 0) return prev;
+            const nextBars = upsertBar(prev.bars, pending.bar, tfSec, stillGapped);
+            if (nextBars === prev.bars) return prev;
+            writeBarCache(key, {
+              bars: nextBars,
+              marketCycle: prev.marketCycle,
+              symbolCycle: prev.symbolCycle,
+            });
+            return { ...prev, bars: nextBars };
+          });
         });
+      return 'started';
     },
     [client, writeBarCache],
   );
@@ -725,15 +771,27 @@ export function WatchWorkspace({
       setter: React.Dispatch<React.SetStateAction<ChartSliceState>>,
       isCurrent: () => boolean,
     ) => {
+      const key = `${sym}|${tf}`;
+      let allowGap = false;
       if (lastTime > 0 && bar.time - lastTime > tfSec * 1.5) {
-        refreshLatestFor(sym, tf, setter, isCurrent);
-        return;
+        if (gapFallbackAnchorRef.current.get(key) === lastTime) {
+          allowGap = true;
+        } else {
+          pendingGapBarRef.current.set(key, { bar, setter, isCurrent });
+          const status = refreshLatestFor(sym, tf, setter, isCurrent);
+          if (status !== 'throttled') {
+            return;
+          }
+          pendingGapBarRef.current.delete(key);
+          gapFallbackAnchorRef.current.set(key, lastTime);
+          allowGap = true;
+        }
       }
       setter((prev) => {
         if (prev.loading && prev.bars.length === 0) return prev;
-        const nextBars = upsertBar(prev.bars, bar, tfSec);
+        const nextBars = upsertBar(prev.bars, bar, tfSec, allowGap);
         if (nextBars === prev.bars) return prev;
-        writeBarCache(`${sym}|${tf}`, {
+        writeBarCache(key, {
           bars: nextBars,
           marketCycle: prev.marketCycle,
           symbolCycle: prev.symbolCycle,
@@ -776,8 +834,10 @@ export function WatchWorkspace({
       }
       if (!wasDisconnected) return;
       wasDisconnected = false;
+      gapFallbackAnchorRef.current.delete(`${activeSymbol}|${activeTf}`);
       refreshLatestFor(activeSymbol, activeTf, setPrimarySlice, isPrimaryCurrent, true);
       if (splitMode && compareSymbol) {
+        gapFallbackAnchorRef.current.delete(`${compareSymbol}|${compareTf}`);
         refreshLatestFor(compareSymbol, compareTf, setCompareSlice, isCompareCurrent, true);
       }
     });
@@ -786,6 +846,7 @@ export function WatchWorkspace({
       if (document.visibilityState !== 'visible') return;
       const nowSec = Math.floor(Date.now() / 1000);
       if (primaryLastTimeRef.current > 0 && nowSec - primaryLastTimeRef.current >= primaryTfSec) {
+        gapFallbackAnchorRef.current.delete(`${activeSymbol}|${activeTf}`);
         refreshLatestFor(activeSymbol, activeTf, setPrimarySlice, isPrimaryCurrent);
       }
       if (
@@ -794,6 +855,7 @@ export function WatchWorkspace({
         compareLastTimeRef.current > 0 &&
         nowSec - compareLastTimeRef.current >= compareTfSec
       ) {
+        gapFallbackAnchorRef.current.delete(`${compareSymbol}|${compareTf}`);
         refreshLatestFor(compareSymbol, compareTf, setCompareSlice, isCompareCurrent);
       }
     };
