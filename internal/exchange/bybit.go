@@ -55,7 +55,7 @@ func (b *bybitExchange) SubscribeTickers(ctx context.Context, symbols []string, 
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		conn, _, err := websocket.Dial(ctx, bybitWSEndpoint, nil)
+		conn, _, err := websocket.Dial(ctx, bybitWSEndpoint, newWSDialOptions())
 		if err != nil {
 			flog.Warn("dial", "ws dial failed, retrying",
 				"endpoint", bybitWSEndpoint, "symbols", len(args), "error", err, "backoff", backoff)

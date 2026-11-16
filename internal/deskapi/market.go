@@ -336,82 +336,18 @@ func (s *Server) markBarsCacheFetched(sym, tf string) {
 	s.barsFetchMu.Unlock()
 }
 
-func (s *Server) fetchOHLCVWithFallback(ctx context.Context, sym, tf string, limit int, beforeMs int64) ([]types.Candle, string, error) {
-	var primaryErr error
-	if ex := s.ohlcvFetcher(); ex != nil {
-		fetched, err := ex.FetchOHLCV(ctx, sym, tf, limit, beforeMs)
-		if err == nil && len(fetched) > 0 {
-			return fetched, ex.Name(), nil
-		}
-		primaryErr = err
-		if ex.Name() == "okx" {
-			return nil, ex.Name(), err
-		}
-	}
-	if s.okxFallback != nil {
-		if fetched, err := fetchOKXPaginated(ctx, s.okxFallback, sym, tf, limit, beforeMs); err == nil && len(fetched) > 0 {
-			return fetched, s.okxFallback.Name(), nil
-		}
-	}
-	if primaryErr != nil {
-		return nil, "", primaryErr
-	}
-	return nil, "", nil
-}
-
-func fetchOKXPaginated(ctx context.Context, okx exchange.Exchange, sym, tf string, limit int, beforeMs int64) ([]types.Candle, error) {
-	if limit <= 0 {
-		limit = 300
-	}
-	const maxPerPage = 300
-	var merged []types.Candle
-	seen := make(map[int64]bool, limit)
-	cursorMs := beforeMs
-
-	for len(merged) < limit && ctx.Err() == nil {
-		chunk := limit - len(merged)
-		if chunk > maxPerPage {
-			chunk = maxPerPage
-		}
-		batch, err := okx.FetchOHLCV(ctx, sym, tf, chunk, cursorMs)
-		if err != nil {
-			if len(merged) > 0 {
-				break
-			}
-			return nil, err
-		}
-		if len(batch) == 0 {
-			break
-		}
-		added := 0
-		for _, c := range batch {
-			if !seen[c.Timestamp] {
-				seen[c.Timestamp] = true
-				merged = append(merged, c)
-				added++
-			}
-		}
-		if added == 0 || len(batch) < chunk {
-			break
-		}
-		oldestMs := batch[0].Timestamp * 1000
-		if cursorMs > 0 && oldestMs >= cursorMs {
-			break
-		}
-		cursorMs = oldestMs
-	}
-	sort.Slice(merged, func(i, j int) bool { return merged[i].Timestamp < merged[j].Timestamp })
-	if len(merged) > limit {
-		merged = merged[len(merged)-limit:]
-	}
-	return merged, nil
+func (s *Server) clearBarsFetchCache() {
+	s.barsFetchMu.Lock()
+	clear(s.barsFetchAt)
+	s.barsFetchMu.Unlock()
 }
 
 func (s *Server) warmBarsTailAsync(sym, tf string, fetchLim int) {
 	if s.cache == nil || s.bgCtx.Err() != nil {
 		return
 	}
-	if s.ohlcvFetcher() == nil && s.okxFallback == nil {
+	ex := s.ohlcvFetcher()
+	if ex == nil {
 		return
 	}
 	key := sym + "|" + tf
@@ -428,9 +364,9 @@ func (s *Server) warmBarsTailAsync(sym, tf string, fetchLim int) {
 		defer s.bgWG.Done()
 		bgCtx, cancel := context.WithTimeout(s.bgCtx, 4*time.Second)
 		defer cancel()
-		fetched, src, err := s.fetchOHLCVWithFallback(bgCtx, sym, tf, fetchLim, 0)
+		fetched, err := ex.FetchOHLCV(bgCtx, sym, tf, fetchLim, 0)
 		if err == nil && len(fetched) > 0 && s.bgCtx.Err() == nil {
-			_ = s.cache.UpsertKlines(bgCtx, sym, tf, src, fetched)
+			_ = s.cache.UpsertKlines(bgCtx, sym, tf, ex.Name(), fetched)
 			s.markBarsCacheFetched(sym, tf)
 		}
 		s.barsFetchMu.Lock()
@@ -491,24 +427,26 @@ func (s *Server) loadBarsWithFallback(ctx context.Context, sym, tf string, limit
 	}
 
 	if fetchLim > 0 {
-		reqCtx, cancel := context.WithTimeout(ctx, timeout)
-		var beforeMs int64
-		if beforeTS > 0 {
-			beforeMs = beforeTS * 1000
-		}
-		fetched, src, err := s.fetchOHLCVWithFallback(reqCtx, sym, tf, fetchLim, beforeMs)
-		cancel()
-		if err == nil && len(fetched) > 0 {
-			if beforeTS == 0 {
-				s.markBarsCacheFetched(sym, tf)
+		if ex := s.ohlcvFetcher(); ex != nil {
+			reqCtx, cancel := context.WithTimeout(ctx, timeout)
+			var beforeMs int64
+			if beforeTS > 0 {
+				beforeMs = beforeTS * 1000
 			}
-			if s.cache != nil {
-				_ = s.cache.UpsertKlines(ctx, sym, tf, src, fetched)
-				if reloaded, err := s.cache.GetKlines(ctx, sym, tf, limit, beforeTS); err == nil && len(reloaded) > 0 {
-					return reloaded
+			fetched, err := ex.FetchOHLCV(reqCtx, sym, tf, fetchLim, beforeMs)
+			cancel()
+			if err == nil && len(fetched) > 0 {
+				if beforeTS == 0 {
+					s.markBarsCacheFetched(sym, tf)
 				}
+				if s.cache != nil {
+					_ = s.cache.UpsertKlines(ctx, sym, tf, ex.Name(), fetched)
+					if reloaded, err := s.cache.GetKlines(ctx, sym, tf, limit, beforeTS); err == nil && len(reloaded) > 0 {
+						return reloaded
+					}
+				}
+				return fetched
 			}
-			return fetched
 		}
 	}
 	return cached

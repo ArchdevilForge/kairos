@@ -31,12 +31,14 @@ var binanceCryptoCache = struct {
 var sharedBinanceTransport = func() *http.Transport {
 	if base, ok := http.DefaultTransport.(*http.Transport); ok {
 		cloned := base.Clone()
+		cloned.Proxy = proxyFromConfigOrEnv
 		cloned.MaxIdleConns = 64
 		cloned.MaxIdleConnsPerHost = 16
 		cloned.IdleConnTimeout = 90 * time.Second
 		return cloned
 	}
 	return &http.Transport{
+		Proxy:               proxyFromConfigOrEnv,
 		MaxIdleConns:        64,
 		MaxIdleConnsPerHost: 16,
 		IdleConnTimeout:     90 * time.Second,
@@ -152,7 +154,7 @@ func (b *binanceExchange) SubscribeTickers(ctx context.Context, symbols []string
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		conn, _, err := websocket.Dial(ctx, uri, nil)
+		conn, _, err := websocket.Dial(ctx, uri, newWSDialOptions())
 		if err != nil {
 			flog.Warn("dial", "ws dial failed, retrying",
 				"endpoint", binanceWSEndpoint, "symbols", len(streams), "error", err, "backoff", backoff)

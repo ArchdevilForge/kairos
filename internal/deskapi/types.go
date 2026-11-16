@@ -97,6 +97,7 @@ type DeskStatus struct {
 	GateHealth        GateHealth         `json:"gate_health"`
 	RiskConfig        RiskConfigView     `json:"risk_config"`
 	Account           AccountStatusView  `json:"account"`
+	ProxyURL          string             `json:"proxy_url,omitempty"`
 }
 
 // TicketBundle joins a DecisionTicket with its authoritative journal records and cached execution details.
@@ -153,6 +154,7 @@ type UpdateSettingsRequest struct {
 	TradingBankrollUSD       *float64 `json:"trading_bankroll_usd,omitempty"`
 	MaxLossUSD               *float64 `json:"max_loss_usd,omitempty"`
 	Timezone                 *string  `json:"timezone,omitempty"`
+	ProxyURL                 *string  `json:"proxy_url,omitempty"`
 	BinanceReadonlyAPIKey    *string  `json:"binance_readonly_api_key,omitempty"`
 	BinanceReadonlyAPISecret *string  `json:"binance_readonly_api_secret,omitempty"`
 }

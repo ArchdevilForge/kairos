@@ -996,3 +996,64 @@ func TestDeskAPIServer_HealsKlineGap(t *testing.T) {
 		}
 	}
 }
+
+func TestDeskAPIServer_ProxySettings(t *testing.T) {
+	defer func() { _ = exchange.SetProxyURL("") }()
+
+	if err := exchange.SetProxyURL("ftp://127.0.0.1:7897"); err == nil {
+		t.Fatal("expected unsupported scheme error")
+	}
+	if err := exchange.SetProxyURL("127.0.0.1:7897"); err != nil {
+		t.Fatalf("unexpected error for host:port proxy: %v", err)
+	}
+	if got := exchange.GetProxyURL(); got != "http://127.0.0.1:7897" {
+		t.Fatalf("normalized proxy = %q, want http://127.0.0.1:7897", got)
+	}
+	if err := exchange.SetProxyURL(""); err != nil {
+		t.Fatalf("clear proxy failed: %v", err)
+	}
+
+	tmp := t.TempDir()
+	store, err := cache.Open(filepath.Join(tmp, "desktop-cache.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+
+	srv := deskapi.NewServer(nil, store, "")
+	defer srv.Close()
+	httpSrv := httptest.NewServer(srv.Handler())
+	defer httpSrv.Close()
+
+	bad := "ftp://bad:1234"
+	badResp := doReq(t, http.MethodPut, httpSrv.URL+"/api/v1/settings", "", deskapi.UpdateSettingsRequest{ProxyURL: &bad})
+	_ = badResp.Body.Close()
+	if badResp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected 400 for invalid proxy, got %d", badResp.StatusCode)
+	}
+
+	socks := "socks5://127.0.0.1:1080"
+	okResp := doReq(t, http.MethodPut, httpSrv.URL+"/api/v1/settings", "", deskapi.UpdateSettingsRequest{ProxyURL: &socks})
+	_ = okResp.Body.Close()
+	if okResp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 for valid proxy, got %d", okResp.StatusCode)
+	}
+
+	bootResp := doReq(t, http.MethodGet, httpSrv.URL+"/api/v1/bootstrap", "", nil)
+	var boot deskapi.BootstrapPayload
+	if err := json.NewDecoder(bootResp.Body).Decode(&boot); err != nil {
+		t.Fatal(err)
+	}
+	_ = bootResp.Body.Close()
+	if boot.Status.ProxyURL != socks {
+		t.Fatalf("bootstrap proxy_url = %q, want %q", boot.Status.ProxyURL, socks)
+	}
+
+	// Reopening server against same SQLite cache restores proxy_url.
+	_ = exchange.SetProxyURL("")
+	srv2 := deskapi.NewServer(nil, store, "")
+	defer srv2.Close()
+	if got := exchange.GetProxyURL(); got != socks {
+		t.Fatalf("restored proxy_url = %q, want %q", got, socks)
+	}
+}

@@ -2,10 +2,14 @@ package exchange
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -13,6 +17,7 @@ import (
 	"time"
 
 	"github.com/ArchdevilForge/kairos/internal/types"
+	"github.com/coder/websocket"
 )
 
 const (
@@ -20,8 +25,127 @@ const (
 	wsMaxBackoff     = 30 * time.Second
 )
 
+var (
+	proxyMu            sync.RWMutex
+	configuredProxyURL *url.URL
+	configuredProxyRaw string
+)
+
+func cloneBaseTransport() *http.Transport {
+	if base, ok := http.DefaultTransport.(*http.Transport); ok {
+		return base.Clone()
+	}
+	return &http.Transport{}
+}
+
+var sharedExchangeTransport = func() *http.Transport {
+	tr := cloneBaseTransport()
+	tr.Proxy = proxyFromConfigOrEnv
+	return tr
+}()
+
+var sharedWSTransport = func() *http.Transport {
+	tr := cloneBaseTransport()
+	tr.Proxy = proxyFromConfigOrEnv
+	tr.ForceAttemptHTTP2 = false
+	tr.TLSNextProto = make(map[string]func(string, *tls.Conn) http.RoundTripper)
+	return tr
+}()
+
+// SetProxyURL configures an explicit proxy URL (http/https/socks5) for all
+// exchange REST and WebSocket connections. Empty string clears the override and
+// falls back to KAIROS_PROXY / standard HTTP(S)_PROXY environment variables.
+func SetProxyURL(raw string) error {
+	trimmed := strings.TrimSpace(raw)
+	var parsed *url.URL
+	if trimmed != "" {
+		normalized := trimmed
+		if !strings.Contains(normalized, "://") {
+			normalized = "http://" + normalized
+		}
+		u, err := url.Parse(normalized)
+		if err != nil {
+			return fmt.Errorf("invalid proxy URL: %w", err)
+		}
+		scheme := strings.ToLower(u.Scheme)
+		switch scheme {
+		case "http", "https", "socks5", "socks5h":
+		default:
+			return fmt.Errorf("unsupported proxy scheme %q (use http, https, or socks5)", u.Scheme)
+		}
+		if u.Host == "" {
+			return fmt.Errorf("invalid proxy URL %q: missing host", raw)
+		}
+		u.Scheme = scheme
+		parsed = u
+		trimmed = u.String()
+	}
+
+	proxyMu.Lock()
+	configuredProxyURL = parsed
+	configuredProxyRaw = trimmed
+	proxyMu.Unlock()
+
+	sharedExchangeTransport.CloseIdleConnections()
+	sharedWSTransport.CloseIdleConnections()
+	sharedBinanceTransport.CloseIdleConnections()
+	return nil
+}
+
+// GetProxyURL returns the configured explicit proxy URL, or "" if using env/direct.
+func GetProxyURL() string {
+	proxyMu.RLock()
+	defer proxyMu.RUnlock()
+	return configuredProxyRaw
+}
+
+func isLoopbackHost(host string) bool {
+	if host == "" {
+		return false
+	}
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	host = strings.Trim(host, "[]")
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func proxyFromConfigOrEnv(req *http.Request) (*url.URL, error) {
+	if req != nil && req.URL != nil && isLoopbackHost(req.URL.Host) {
+		return nil, nil
+	}
+	proxyMu.RLock()
+	u := configuredProxyURL
+	proxyMu.RUnlock()
+	if u != nil {
+		return u, nil
+	}
+	if envProxy := strings.TrimSpace(os.Getenv("KAIROS_PROXY")); envProxy != "" {
+		if !strings.Contains(envProxy, "://") {
+			envProxy = "http://" + envProxy
+		}
+		if parsed, err := url.Parse(envProxy); err == nil && parsed.Host != "" {
+			return parsed, nil
+		}
+	}
+	return http.ProxyFromEnvironment(req)
+}
+
+func newWSDialOptions() *websocket.DialOptions {
+	return &websocket.DialOptions{
+		HTTPClient: &http.Client{Transport: sharedWSTransport},
+	}
+}
+
 func newHTTPClient() *http.Client {
-	return &http.Client{Timeout: 15 * time.Second}
+	return &http.Client{
+		Transport: sharedExchangeTransport,
+		Timeout:   15 * time.Second,
+	}
 }
 
 func doHTTPGet(ctx context.Context, cli *http.Client, url string) ([]byte, error) {

@@ -27,7 +27,6 @@ type Server struct {
 	cache        *cache.Store
 	acctClient   *exchange.BinanceAccountClient
 	restFallback exchange.Exchange
-	okxFallback  exchange.Exchange
 	token        string
 
 	wsHub *wsHub
@@ -52,19 +51,17 @@ type cachedCycle struct {
 
 // NewServer builds a deskapi Server wired to pipeline, derived cache, and bearer auth token.
 func NewServer(pipeline *engine.Pipeline, cacheStore *cache.Store, token string) *Server {
-	if pipeline != nil && cacheStore != nil {
+	if cacheStore != nil {
 		restoreNonSecretSettings(context.Background(), cacheStore, pipeline)
 	}
 
 	bgCtx, bgCancel := context.WithCancel(context.Background())
 	fb, _ := exchange.New("binance")
-	okxFB, _ := exchange.New("okx")
 	s := &Server{
 		pipeline:     pipeline,
 		cache:        cacheStore,
 		acctClient:   exchange.NewBinanceAccountClient(),
 		restFallback: fb,
-		okxFallback:  okxFB,
 		token:        token,
 		bgCtx:        bgCtx,
 		bgCancel:     bgCancel,
@@ -98,8 +95,11 @@ func restoreNonSecretSettings(ctx context.Context, cs *cache.Store, p *engine.Pi
 		tz := strings.TrimSpace(v)
 		tzPtr = &tz
 	}
-	if bankrollPtr != nil || maxLossPtr != nil || tzPtr != nil {
+	if p != nil && (bankrollPtr != nil || maxLossPtr != nil || tzPtr != nil) {
 		p.UpdateRiskGateConfig(bankrollPtr, maxLossPtr, tzPtr)
+	}
+	if v, ok := meta["setting_proxy_url"]; ok {
+		_ = exchange.SetProxyURL(v)
 	}
 }
 
@@ -119,9 +119,6 @@ func (s *Server) Close() {
 	s.bgWG.Wait()
 	if s.restFallback != nil {
 		_ = s.restFallback.Close()
-	}
-	if s.okxFallback != nil {
-		_ = s.okxFallback.Close()
 	}
 }
 
@@ -328,7 +325,8 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 				MaxAltLeverage:     gcfg.MaxAltLeverage,
 				CooldownMinutes:    gcfg.CooldownMinutes,
 			},
-			Account: s.accountStatus(ctx),
+			Account:  s.accountStatus(ctx),
+			ProxyURL: exchange.GetProxyURL(),
 		},
 		Tickets:         bundles,
 		UnplannedTrades: unplanned,
@@ -496,6 +494,20 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error(), "INVALID_JSON")
 		return
 	}
+	proxyChanged := false
+	if req.ProxyURL != nil {
+		prevProxy := exchange.GetProxyURL()
+		if err := exchange.SetProxyURL(*req.ProxyURL); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error(), "INVALID_PROXY_URL")
+			return
+		}
+		nextProxy := exchange.GetProxyURL()
+		proxyChanged = nextProxy != prevProxy
+		if s.cache != nil {
+			_ = s.cache.SetAccountMeta(r.Context(), "setting_proxy_url", nextProxy)
+		}
+	}
+
 	if s.pipeline != nil {
 		s.pipeline.UpdateRiskGateConfig(req.TradingBankrollUSD, req.MaxLossUSD, req.Timezone)
 	}
@@ -508,6 +520,19 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.Timezone != nil && strings.TrimSpace(*req.Timezone) != "" {
 			_ = s.cache.SetAccountMeta(r.Context(), "setting_timezone", strings.TrimSpace(*req.Timezone))
+		}
+	}
+	if proxyChanged {
+		s.clearBarsFetchCache()
+		if s.pipeline != nil && s.bgCtx.Err() == nil {
+			s.bgWG.Add(1)
+			go func() {
+				defer s.bgWG.Done()
+				bgCtx, cancel := context.WithTimeout(s.bgCtx, 30*time.Second)
+				defer cancel()
+				s.pipeline.RefreshUniverse(bgCtx)
+				_ = s.pipeline.CatchUpAndBackfill(bgCtx)
+			}()
 		}
 	}
 

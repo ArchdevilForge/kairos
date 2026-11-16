@@ -39,6 +39,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     String(status.risk_config.max_loss_usd || 4),
   );
   const [timezone, setTimezone] = useState(status.timezone || 'Asia/Shanghai');
+  const [proxyUrl, setProxyUrl] = useState(status.proxy_url ?? '');
   const [apiKey, setApiKey] = useState('');
   const [apiSecret, setApiSecret] = useState('');
   const [saving, setSaving] = useState(false);
@@ -50,6 +51,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setBankroll(String(status.risk_config.trading_bankroll_usd || 40));
     setMaxLoss(String(status.risk_config.max_loss_usd || 4));
     setTimezone(status.timezone || 'Asia/Shanghai');
+    setProxyUrl(status.proxy_url ?? '');
     setApiKey('');
     setApiSecret('');
     setErrorMsg(null);
@@ -59,6 +61,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     status.risk_config.max_loss_usd,
     status.risk_config.trading_bankroll_usd,
     status.timezone,
+    status.proxy_url,
   ]);
 
   if (!open) return null;
@@ -99,6 +102,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       trading_bankroll_usd: parsedBankroll,
       max_loss_usd: parsedMaxLoss,
       timezone: timezone.trim() || 'Asia/Shanghai',
+      proxy_url: proxyUrl.trim(),
     };
     if (hasKey) {
       req.binance_readonly_api_key = apiKey.trim();
@@ -348,6 +352,43 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </button>
             </div>
           </div>
+
+          <label
+            className="block rounded-[6px] border p-3"
+            style={{
+              backgroundColor: 'var(--bg-canvas)',
+              borderColor: 'var(--border-hairline)',
+            }}
+          >
+            <span
+              className="mb-1.5 block text-[11px] font-medium"
+              style={{ color: 'var(--text-secondary)' }}
+            >
+              {t('settings.proxyLabel')}
+            </span>
+            <input
+              type="text"
+              value={proxyUrl}
+              onChange={(e) => {
+                setErrorMsg(null);
+                setSuccessMsg(null);
+                setProxyUrl(e.target.value);
+              }}
+              placeholder={t('settings.proxyPlaceholder')}
+              className="w-full rounded-[6px] border px-2.5 py-1.5 font-mono text-[12px] outline-none"
+              style={{
+                backgroundColor: 'var(--bg-surface)',
+                borderColor: 'var(--border-hairline)',
+                color: 'var(--text-primary)',
+              }}
+            />
+            <span
+              className="mt-1.5 block text-[10px] leading-relaxed"
+              style={{ color: 'var(--text-muted)' }}
+            >
+              {t('settings.proxyHint')}
+            </span>
+          </label>
 
           <div
             className="rounded-[6px] border p-3"

@@ -529,6 +529,7 @@ export interface DeskStatus {
     last_sync_at: number;
     sync_error?: string;
   };
+  proxy_url?: string;
 }
 
 export interface BootstrapPayload {
@@ -593,6 +594,7 @@ export interface UpdateSettingsRequest {
   trading_bankroll_usd?: number;
   max_loss_usd?: number;
   timezone?: string;
+  proxy_url?: string;
   binance_readonly_api_key?: string;
   binance_readonly_api_secret?: string;
 }

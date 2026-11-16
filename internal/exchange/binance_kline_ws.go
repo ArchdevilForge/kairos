@@ -47,7 +47,7 @@ func subscribeBinanceKlineWithEndpoint(ctx context.Context, wsBase, symbol, tf s
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		conn, _, err := websocket.Dial(ctx, uri, nil)
+		conn, _, err := websocket.Dial(ctx, uri, newWSDialOptions())
 		if err != nil {
 			flog.Warn("dial", "kline ws dial failed, retrying",
 				"symbol", symbol, "tf", tf, "error", err, "backoff", backoff)

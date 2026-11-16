@@ -877,6 +877,37 @@ export function WatchWorkspace({
     refreshLatestFor,
   ]);
 
+  // Refresh active panes immediately when proxy_url setting changes
+  const prevProxyUrlRef = useRef<string | undefined>(bootstrap.status.proxy_url);
+  useEffect(() => {
+    const nextProxy = bootstrap.status.proxy_url;
+    if (prevProxyUrlRef.current === nextProxy) return;
+    prevProxyUrlRef.current = nextProxy;
+    gapFallbackAnchorRef.current.clear();
+    const p = paneRef.current;
+    refreshLatestFor(
+      p.activeSymbol,
+      p.activeTf,
+      setPrimarySlice,
+      () =>
+        sameSymbol(paneRef.current.activeSymbol, p.activeSymbol) &&
+        paneRef.current.activeTf === p.activeTf,
+      true,
+    );
+    if (p.splitMode && p.compareSymbol) {
+      refreshLatestFor(
+        p.compareSymbol,
+        p.compareTf,
+        setCompareSlice,
+        () =>
+          paneRef.current.splitMode &&
+          sameSymbol(paneRef.current.compareSymbol, p.compareSymbol) &&
+          paneRef.current.compareTf === p.compareTf,
+        true,
+      );
+    }
+  }, [bootstrap.status.proxy_url, refreshLatestFor]);
+
   // Synchronize Top/Bottom dual charts (re-attaches cleanly once both have bars)
   useEffect(() => {
     if (!splitMode || !primaryHandle || !compareHandle) return;

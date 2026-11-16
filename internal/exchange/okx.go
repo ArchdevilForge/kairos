@@ -88,7 +88,7 @@ func (o *okxExchange) SubscribeTickers(ctx context.Context, symbols []string, ti
 			return ctx.Err()
 		}
 
-		conn, _, err := websocket.Dial(ctx, o.wsEndpoint, nil)
+		conn, _, err := websocket.Dial(ctx, o.wsEndpoint, newWSDialOptions())
 		if err != nil {
 			flog.Warn("dial", "ws dial failed, retrying",
 				"endpoint", o.wsEndpoint, "symbols", len(args), "error", err, "backoff", backoff)

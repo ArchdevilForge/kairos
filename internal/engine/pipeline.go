@@ -2083,6 +2083,14 @@ func (p *Pipeline) refreshLoop(ctx context.Context) {
 	}
 }
 
+// RefreshUniverse triggers an immediate universe re-discovery and WS resubscription.
+func (p *Pipeline) RefreshUniverse(ctx context.Context) {
+	if p == nil {
+		return
+	}
+	p.refreshOnce(ctx)
+}
+
 // refreshOnce re-discovers the universe on every exchange, publishes the new
 // snapshots, updates MarketPulse (primary only), and asks the affected WS
 // subscription loops to resubscribe.
