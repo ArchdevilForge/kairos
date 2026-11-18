@@ -102,6 +102,7 @@ func ConfigFromTypes(c types.OpportunityConfig) Config {
 
 // EvaluateRequest is a full offline/analysis path (tests + enricher).
 type EvaluateRequest struct {
+	Exchange  string
 	EventID   string
 	CreatedAt int64
 	SignalAt  int64
@@ -386,6 +387,7 @@ func (s *Service) EvaluateOrAttach(req EvaluateRequest) (EvaluateResult, error) 
 			EntryTriggeredAt: req.TriggeredAt[cand.Symbol],
 			SeasonRegime:     seasonRegime,
 		})
+		t.Exchange = req.Exchange
 		if err := s.persistTicket(t); err != nil {
 			return res, err
 		}

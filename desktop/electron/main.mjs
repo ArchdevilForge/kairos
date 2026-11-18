@@ -378,8 +378,8 @@ function createMainWindow() {
   mainWindow = new BrowserWindow({
     width: 1480,
     height: 920,
-    minWidth: 1120,
-    minHeight: 700,
+    minWidth: 640,
+    minHeight: 480,
     title: 'Kairos',
     icon: path.join(__dirname, 'tray-icon.png'),
     backgroundColor: '#141413',

@@ -1,9 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Bell, BellOff, Lock, RefreshCw, Save, X } from 'lucide-react';
 import { useI18n } from '../i18n';
 import type {
   AccountSyncResponse,
   DeskStatus,
+  MarketSource,
   UpdateSettingsRequest,
 } from '../types/kairos';
 
@@ -39,6 +40,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     String(status.risk_config.max_loss_usd || 4),
   );
   const [timezone, setTimezone] = useState(status.timezone || 'Asia/Shanghai');
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const [marketSource, setMarketSource] = useState<MarketSource>(status.market_source ?? '');
   const [proxyUrl, setProxyUrl] = useState(status.proxy_url ?? '');
   const [apiKey, setApiKey] = useState('');
   const [apiSecret, setApiSecret] = useState('');
@@ -64,7 +67,20 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     status.proxy_url,
   ]);
 
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!open || !dialog) return;
+    const trigger = document.activeElement;
+    dialog.showModal();
+    return () => {
+      dialog.close();
+      if (trigger instanceof HTMLElement && trigger.isConnected) trigger.focus();
+    };
+  }, [open]);
+
   if (!open) return null;
+
+  const canSyncAccount = status.account.configured || Boolean(apiKey.trim() && apiSecret.trim());
 
   const handleApiKeyChange = (value: string) => {
     setErrorMsg(null);
@@ -104,6 +120,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       timezone: timezone.trim() || 'Asia/Shanghai',
       proxy_url: proxyUrl.trim(),
     };
+    if (marketSource !== (status.market_source ?? '')) {
+      req.market_source = marketSource;
+    }
     if (hasKey) {
       req.binance_readonly_api_key = apiKey.trim();
     }
@@ -179,28 +198,31 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   };
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4"
-      style={{ backgroundColor: 'var(--bg-overlay)' }}
-      onClick={onClose}
+    <dialog
+      ref={dialogRef}
+      aria-labelledby="settings-title"
+      className="m-auto max-h-[88dvh] w-[calc(100%-1.5rem)] max-w-[460px] overflow-hidden rounded-[8px] border p-0 shadow-2xl open:flex backdrop:bg-[var(--bg-overlay)]"
+      style={{
+        backgroundColor: 'var(--bg-surface)',
+        borderColor: 'var(--border-strong)',
+        color: 'var(--text-primary)',
+      }}
+      onCancel={(e) => {
+        e.preventDefault();
+        if (!saving) onClose();
+      }}
+      onClick={(e) => {
+        if (!saving && e.target === e.currentTarget) onClose();
+      }}
     >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label={t('settings.title')}
-        className="kairos-contain-panel max-h-[88dvh] w-full max-w-[460px] overflow-y-auto rounded-[8px] border shadow-2xl"
-        style={{
-          backgroundColor: 'var(--bg-surface)',
-          borderColor: 'var(--border-strong)',
-        }}
-        onClick={(e) => e.stopPropagation()}
-      >
+      <div className="flex min-h-0 flex-col">
         <div
-          className="flex items-center justify-between border-b px-4 py-3"
+          className="flex shrink-0 items-center justify-between border-b px-4 py-3"
           style={{ borderColor: 'var(--border-hairline)' }}
         >
           <div>
             <h2
+              id="settings-title"
               className="font-editorial text-[17px] font-medium"
               style={{ color: 'var(--text-primary)' }}
             >
@@ -213,7 +235,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="rounded p-1 transition-colors"
+            disabled={saving}
+            className="rounded p-1 transition-colors pointer-coarse:min-h-11 pointer-coarse:min-w-11"
             style={{ color: 'var(--text-muted)' }}
             aria-label={t('settings.closeAria')}
           >
@@ -221,7 +244,36 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           </button>
         </div>
 
-        <div className="space-y-4 p-4">
+        <div className="min-h-0 space-y-4 overflow-y-auto overscroll-contain p-4">
+          <div>
+            <label htmlFor="market-source" className="mb-1.5 block text-[11px] font-medium">
+              {t('settings.marketSourceLabel')}
+            </label>
+            <select
+              id="market-source"
+              value={marketSource}
+              disabled={saving}
+              aria-describedby="market-source-help"
+              onChange={(e) => {
+                setMarketSource(e.target.value as MarketSource);
+                setErrorMsg(null);
+              }}
+              className="min-h-11 w-full rounded-[6px] border px-2.5 sm:min-h-8 sm:text-xs"
+              style={{
+                backgroundColor: 'var(--bg-canvas)',
+                borderColor: 'var(--border-hairline)',
+                color: 'var(--text-primary)',
+              }}
+            >
+              <option value="">{t('settings.marketSourceConfig')}</option>
+              <option value="binance">Binance</option>
+              <option value="okx">OKX</option>
+            </select>
+            <p id="market-source-help" className="mt-1.5 text-[11px]" style={{ color: 'var(--text-secondary)' }}>
+              {t('settings.marketSourceHint', { exchange: status.exchange.toUpperCase() })}
+            </p>
+          </div>
+
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <label className="block">
               <span
@@ -476,7 +528,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </p>
               <button
                 type="button"
-                disabled={syncingAccount || saving}
+                disabled={!canSyncAccount || syncingAccount || saving}
                 onClick={() => void handleImmediateSync()}
                 className="flex shrink-0 items-center gap-1 rounded border px-2 py-1 text-[11px] disabled:opacity-60"
                 style={{
@@ -528,6 +580,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
           {errorMsg && (
             <div
+              role="alert"
               className="rounded-[6px] border px-3 py-2 text-[12px]"
               style={{
                 backgroundColor: 'var(--candle-bear-soft)',
@@ -541,13 +594,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         </div>
 
         <div
-          className="flex flex-wrap items-center justify-end gap-2 border-t px-4 py-3"
+          className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-t px-4 py-3"
           style={{ borderColor: 'var(--border-hairline)' }}
         >
           <button
             type="button"
             onClick={onClose}
-            className="rounded-[6px] border px-3 py-1.5 text-[12px] font-medium"
+            disabled={saving}
+            className="rounded-[6px] border px-3 py-1.5 text-[12px] font-medium pointer-coarse:min-h-11"
             style={{
               backgroundColor: 'var(--bg-canvas)',
               borderColor: 'var(--border-hairline)',
@@ -561,7 +615,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             type="button"
             disabled={saving}
             onClick={() => void submit(false)}
-            className="flex items-center gap-1.5 rounded-[6px] border px-3 py-1.5 text-[12px] font-medium disabled:opacity-60"
+            className="flex items-center gap-1.5 rounded-[6px] border px-3 py-1.5 text-[12px] font-medium disabled:opacity-60 pointer-coarse:min-h-11"
             style={{
               backgroundColor: 'var(--bg-elevated)',
               borderColor: 'var(--border-strong)',
@@ -569,24 +623,26 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             }}
           >
             <Save className="h-3.5 w-3.5" />
-            {t('settings.save')}
+            {t(saving ? 'settings.saving' : 'settings.save')}
           </button>
 
-          <button
-            type="button"
-            disabled={saving}
-            onClick={() => void submit(true)}
-            className="flex items-center gap-1.5 rounded-[6px] px-3 py-1.5 text-[12px] font-medium disabled:opacity-60"
-            style={{
-              backgroundColor: 'var(--accent-brand)',
-              color: '#FAF9F5',
-            }}
-          >
-            <RefreshCw className={`h-3.5 w-3.5 ${saving ? 'animate-spin' : ''}`} />
-            {t('settings.saveAndSync')}
-          </button>
+          {canSyncAccount && (
+            <button
+              type="button"
+              disabled={saving}
+              onClick={() => void submit(true)}
+              className="flex items-center gap-1.5 rounded-[6px] px-3 py-1.5 text-[12px] font-medium disabled:opacity-60 pointer-coarse:min-h-11"
+              style={{
+                backgroundColor: 'var(--accent-brand)',
+                color: '#FAF9F5',
+              }}
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${saving ? 'animate-spin' : ''}`} />
+              {t('settings.saveAndSync')}
+            </button>
+          )}
         </div>
       </div>
-    </div>
+    </dialog>
   );
 };

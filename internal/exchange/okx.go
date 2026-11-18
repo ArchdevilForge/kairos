@@ -5,6 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -123,7 +126,10 @@ func (o *okxExchange) SubscribeTickers(ctx context.Context, symbols []string, ti
 			}
 			flog.Warn("read", "ws read ended, reconnecting",
 				"endpoint", o.wsEndpoint, "symbols", len(args), "error", err, "backoff", time.Duration(0))
-			continue
+			if err := ctxSleep(ctx, backoff); err != nil {
+				return err
+			}
+			backoff = nextWSBackoff(backoff)
 		}
 	}
 }
@@ -211,6 +217,23 @@ func (o *okxExchange) cryptoUSDTSwapIDs(ctx context.Context) map[string]struct{}
 	return ids
 }
 
+// AvailableSymbols lists live crypto USDT perpetuals for Desk symbol search.
+func (o *okxExchange) AvailableSymbols(ctx context.Context) ([]string, map[string]bool, error) {
+	ids := o.cryptoUSDTSwapIDs(ctx)
+	if len(ids) == 0 {
+		return nil, nil, fmt.Errorf("okx instrument list unavailable")
+	}
+	symbols := make([]string, 0, len(ids))
+	allow := make(map[string]bool, len(ids))
+	for id := range ids {
+		symbol := denormalizeSymbol(id)
+		symbols = append(symbols, symbol)
+		allow[symbol] = true
+	}
+	sort.Strings(symbols)
+	return symbols, allow, nil
+}
+
 func fetchOKXCryptoUSDTSwapIDs(ctx context.Context, cli *http.Client) (map[string]struct{}, error) {
 	body, err := doHTTPGet(ctx, cli, okxRESTEndpoint+"/api/v5/public/instruments?instType=SWAP")
 	if err != nil {
@@ -256,43 +279,62 @@ func okxIsCryptoUSDTSwap(instID string, cryptoIDs map[string]struct{}) bool {
 }
 
 func (o *okxExchange) FetchOHLCV(ctx context.Context, symbol, timeframe string, limit int, beforeMs int64) ([]types.Candle, error) {
-	instID := normalizeSymbol(symbol)
-	bar := mapTimeframe(timeframe)
-	if limit <= 0 || limit > 300 {
-		limit = 100 // OKX max is 300
+	if limit <= 0 {
+		limit = 100
 	}
+	var candles []types.Candle
+	for len(candles) < limit {
+		pageSize := min(300, limit-len(candles))
+		page, err := o.fetchCandlePage(ctx, symbol, timeframe, pageSize, beforeMs)
+		if err != nil {
+			return nil, err
+		}
+		var oldest int64
+		for _, candle := range page {
+			ms := candle.Timestamp * 1000
+			if ms <= 0 || (beforeMs > 0 && ms >= beforeMs) {
+				continue
+			}
+			candles = append(candles, candle)
+			if oldest == 0 || ms < oldest {
+				oldest = ms
+			}
+		}
+		if oldest == 0 || len(page) < pageSize {
+			break
+		}
+		beforeMs = oldest
+	}
+	sortCandlesAscending(candles)
+	return candles, nil
+}
 
-	// Recent bars for scanner; history-candles for backtest pagination.
-	// OKX `after` is an exclusive backward cursor: records earlier than it.
+func (o *okxExchange) fetchCandlePage(ctx context.Context, symbol, timeframe string, limit int, beforeMs int64) ([]types.Candle, error) {
 	path := "candles"
+	query := url.Values{
+		"instId": {normalizeSymbol(symbol)},
+		"bar":    {mapTimeframe(timeframe)},
+		"limit":  {strconv.Itoa(limit)},
+	}
 	if beforeMs > 0 {
 		path = "history-candles"
+		query.Set("after", strconv.FormatInt(beforeMs, 10))
 	}
-	url := fmt.Sprintf("%s/api/v5/market/%s?instId=%s&bar=%s&limit=%d",
-		okxRESTEndpoint, path, instID, bar, limit)
-	if beforeMs > 0 {
-		url += fmt.Sprintf("&after=%d", beforeMs)
-	}
-
-	body, err := doHTTPGet(ctx, o.httpCli, url)
+	body, err := doHTTPGet(ctx, o.httpCli, okxRESTEndpoint+"/api/v5/market/"+path+"?"+query.Encode())
 	if err != nil {
 		return nil, fmt.Errorf("okx fetch ohlcv: %w", err)
 	}
-
-	var okxResp struct {
+	var resp struct {
 		Code string     `json:"code"`
 		Data [][]string `json:"data"`
 	}
-	if err := json.Unmarshal(body, &okxResp); err != nil {
+	if err := json.Unmarshal(body, &resp); err != nil {
 		return nil, fmt.Errorf("okx fetch ohlcv: decode: %w", err)
 	}
-	if okxResp.Code != "0" {
-		return nil, fmt.Errorf("okx fetch ohlcv: code=%s", okxResp.Code)
+	if resp.Code != "0" {
+		return nil, fmt.Errorf("okx fetch ohlcv: code=%s", resp.Code)
 	}
-
-	candles := parseOKXCandleRows(okxResp.Data)
-	sortCandlesAscending(candles)
-	return candles, nil
+	return parseOKXCandleRows(resp.Data), nil
 }
 
 func (o *okxExchange) Close() error {
@@ -304,8 +346,10 @@ func (o *okxExchange) Close() error {
 // ---------------------------------------------------------------------------
 
 func (o *okxExchange) readTickers(ctx context.Context, conn *websocket.Conn, tickerCh chan<- types.Ticker) error {
+	ctx, stop := okxHeartbeat(ctx, conn)
+	defer stop()
 	for {
-		_, msg, err := conn.Read(ctx)
+		msg, err := readOKXMessage(ctx, conn)
 		if err != nil {
 			return err
 		}
@@ -319,10 +363,8 @@ func (o *okxExchange) readTickers(ctx context.Context, conn *websocket.Conn, tic
 			continue
 		}
 
-		// Application-level ping from OKX
-		if raw.Event == "ping" {
-			_ = conn.Write(ctx, websocket.MessageText, []byte(`{"event":"pong"}`))
-			continue
+		if raw.Event == "error" {
+			return fmt.Errorf("okx ticker subscription: %s", msg)
 		}
 
 		for _, item := range raw.Data {
@@ -410,15 +452,15 @@ func mapTimeframe(tf string) string {
 	case "4h":
 		return "4H"
 	case "6h":
-		return "6H"
+		return "6Hutc"
 	case "12h":
-		return "12H"
+		return "12Hutc"
 	case "1d":
-		return "1D"
+		return "1Dutc"
 	case "1w":
-		return "1W"
+		return "1Wutc"
 	case "1M":
-		return "1M"
+		return "1Mutc"
 	default:
 		return "1H"
 	}

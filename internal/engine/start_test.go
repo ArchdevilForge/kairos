@@ -262,7 +262,7 @@ func TestPipeline_DeskHelpers_And_CatchUpAndBackfill(t *testing.T) {
 	if err := p.CatchUpAndBackfill(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	klines, err := store.GetKlines(context.Background(), "BTC/USDT:USDT", "5m", 100, 0)
+	klines, err := store.GetKlines(context.Background(), "mock", "BTC/USDT:USDT", "5m", 100, 0)
 	if err != nil || len(klines) == 0 {
 		t.Fatalf("expected backfilled BTC klines, got len=%d err=%v", len(klines), err)
 	}

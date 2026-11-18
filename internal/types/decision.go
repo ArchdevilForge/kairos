@@ -231,6 +231,8 @@ type RiskPlan struct {
 
 // DecisionTicket is the human-facing structured decision card.
 type DecisionTicket struct {
+	Exchange string `json:"exchange,omitempty" yaml:"exchange,omitempty"`
+
 	SchemaVersion string `json:"schema_version" yaml:"schema_version"`
 
 	ID            string     `json:"id" yaml:"id"`

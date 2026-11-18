@@ -23,11 +23,13 @@ import (
 
 // Server exposes the local loopback HTTP & WebSocket API for Kairos Desk.
 type Server struct {
-	pipeline     *engine.Pipeline
-	cache        *cache.Store
-	acctClient   *exchange.BinanceAccountClient
-	restFallback exchange.Exchange
-	token        string
+	pipeline             *engine.Pipeline
+	cache                *cache.Store
+	acctClient           *exchange.BinanceAccountClient
+	restFallback         exchange.Exchange
+	marketSource         string
+	onMarketSourceChange func()
+	token                string
 
 	wsHub *wsHub
 
@@ -56,7 +58,15 @@ func NewServer(pipeline *engine.Pipeline, cacheStore *cache.Store, token string)
 	}
 
 	bgCtx, bgCancel := context.WithCancel(context.Background())
-	fb, _ := exchange.New("binance")
+	name := "binance"
+	var endpoints exchange.Endpoints
+	if pipeline != nil {
+		if primary := pipeline.PrimaryExchange(); primary != "" {
+			name = primary
+		}
+		endpoints.OKX = pipeline.Config().Exchanges.WSEndpoints.OKX
+	}
+	fb, _ := exchange.NewWithEndpoints(name, endpoints)
 	s := &Server{
 		pipeline:     pipeline,
 		cache:        cacheStore,
@@ -72,6 +82,34 @@ func NewServer(pipeline *engine.Pipeline, cacheStore *cache.Store, token string)
 	}
 	s.wsHub = newWSHub(s)
 	return s
+}
+
+// MarketSourceSetting stores the Desk override. An empty string follows YAML.
+const MarketSourceSetting = "setting_market_source"
+
+// SetMarketSourceSettings wires the daemon's reload callback before serving requests.
+func (s *Server) SetMarketSourceSettings(source string, onChange func()) {
+	s.marketSource = source
+	s.onMarketSourceChange = onChange
+}
+
+func (s *Server) marketExchange() string {
+	if s.restFallback != nil {
+		return s.restFallback.Name()
+	}
+	return "binance"
+}
+
+func (s *Server) availableMarketSymbols(ctx context.Context) ([]string, map[string]bool, error) {
+	if s.marketExchange() == "binance" {
+		return exchange.FetchBinanceCryptoPerpSymbols(ctx)
+	}
+	if lister, ok := s.ohlcvFetcher().(interface {
+		AvailableSymbols(context.Context) ([]string, map[string]bool, error)
+	}); ok {
+		return lister.AvailableSymbols(ctx)
+	}
+	return nil, nil, errors.New("symbol list unavailable")
 }
 
 func restoreNonSecretSettings(ctx context.Context, cs *cache.Store, p *engine.Pipeline) {
@@ -183,8 +221,9 @@ func (s *Server) isAuthorized(r *http.Request) bool {
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok": true,
-		"ts": time.Now().Unix(),
+		"ok":            true,
+		"ts":            time.Now().Unix(),
+		"market_source": s.marketSource,
 	})
 }
 
@@ -196,20 +235,17 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 	loc := decision.ResolveLocation(gcfg.Timezone)
 
 	symbols := s.trackedSymbols(ctx)
-	exName := "binance"
+	exName := s.marketExchange()
 	var pulseView engine.MarketPulseView
 	var anomalies []types.AnomalyEvent
 	if s.pipeline != nil {
-		if p := s.pipeline.PrimaryExchange(); p != "" {
-			exName = p
-		}
 		pulseView = s.pipeline.MarketPulseView()
 		anomalies = s.pipeline.RecentAnomalies(200)
 	} else {
 		pulseView.State = types.MarketStateQuiet
 	}
 	availCtx, availCancel := context.WithTimeout(ctx, 4*time.Second)
-	availableSymbols, cryptoAllow, availErr := exchange.FetchBinanceCryptoPerpSymbols(availCtx)
+	availableSymbols, cryptoAllow, availErr := s.availableMarketSymbols(availCtx)
 	availCancel()
 	if availErr == nil && len(cryptoAllow) > 0 {
 		filtered := make([]string, 0, len(symbols))
@@ -220,6 +256,8 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 		}
 		if len(filtered) > 0 {
 			symbols = filtered
+		} else {
+			symbols = availableSymbols
 		}
 	} else {
 		availableSymbols = symbols
@@ -296,6 +334,7 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 	payload := BootstrapPayload{
 		Status: DeskStatus{
 			Exchange:         exName,
+			MarketSource:     s.marketSource,
 			Symbols:          symbols,
 			AvailableSymbols: availableSymbols,
 			Timezone:         loc.String(),
@@ -494,6 +533,18 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error(), "INVALID_JSON")
 		return
 	}
+	if req.MarketSource != nil {
+		switch *req.MarketSource {
+		case "", "binance", "okx":
+		default:
+			writeError(w, http.StatusBadRequest, "unknown market source", "INVALID_MARKET_SOURCE")
+			return
+		}
+		if s.cache == nil || s.onMarketSourceChange == nil {
+			writeError(w, http.StatusServiceUnavailable, "market source settings are unavailable", "MARKET_SOURCE_UNAVAILABLE")
+			return
+		}
+	}
 	proxyChanged := false
 	if req.ProxyURL != nil {
 		prevProxy := exchange.GetProxyURL()
@@ -562,6 +613,13 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 			_ = s.cache.SetAccountMeta(r.Context(), "sync_error", "")
 		}
 	}
+	if req.MarketSource != nil {
+		if err := s.cache.SetAccountMeta(r.Context(), MarketSourceSetting, *req.MarketSource); err != nil {
+			writeError(w, http.StatusInternalServerError, "could not persist market source", "MARKET_SOURCE_SAVE_FAILED")
+			return
+		}
+		s.onMarketSourceChange()
+	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -612,7 +670,7 @@ func (s *Server) noticeJournal() *storage.NoticeJournal {
 
 func (s *Server) ohlcvFetcher() exchange.Exchange {
 	if s.pipeline != nil {
-		if ex := s.pipeline.PrimaryExchangeClient(); ex != nil {
+		if ex := s.pipeline.PrimaryExchangeClient(); ex != nil && ex.Name() == s.marketExchange() {
 			return ex
 		}
 	}
@@ -625,7 +683,7 @@ func (s *Server) trackedSymbols(ctx context.Context) []string {
 		syms = s.pipeline.TrackedSymbols()
 	}
 	if len(syms) == 0 && s.cache != nil {
-		syms, _ = s.cache.ListCachedSymbols(ctx)
+		syms, _ = s.cache.ListCachedSymbols(ctx, s.marketExchange())
 	}
 	if len(syms) == 0 {
 		syms = []string{"BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT"}

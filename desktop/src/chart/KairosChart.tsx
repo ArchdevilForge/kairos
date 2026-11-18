@@ -129,6 +129,7 @@ export interface KairosChartProps {
   drawings?: ChartDrawingItem[];
   loading?: boolean;
   error?: string | null;
+  stale?: boolean;
   statusSlot?: ReactNode;
   symbolSlot?: ReactNode;
   headerBadge?: string;
@@ -384,6 +385,7 @@ export default function KairosChart({
   loading = false,
   error = null,
   statusSlot,
+  stale,
   symbolSlot,
   headerBadge,
   showTimeframeTabs = true,
@@ -1862,6 +1864,7 @@ export default function KairosChart({
   // Escape exits active drawing/selection
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      if (document.querySelector('dialog:modal')) return;
       const active = document.activeElement;
       if (
         active instanceof HTMLInputElement ||
@@ -2012,6 +2015,11 @@ export default function KairosChart({
             </span>
           ) : null}
           {statusSlot}
+          {stale && (
+            <span className="shrink-0 text-[11px]" style={{ color: 'var(--state-warn)' }} role="status">
+              {t('chart.cachedHistory')}
+            </span>
+          )}
 
           {hideFuture ? (
             <span
@@ -2035,7 +2043,7 @@ export default function KairosChart({
         </div>
 
         {/* Right tools & replay bar */}
-        <div className="flex shrink-0 flex-nowrap items-center gap-1">
+        <div className="flex max-w-full shrink-0 flex-wrap items-center gap-1 lg:flex-nowrap">
           {onStepCursor ? (
             <div
               className="mr-1 flex items-center gap-1 border-r pr-2"

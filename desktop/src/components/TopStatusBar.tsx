@@ -129,13 +129,13 @@ export const TopStatusBar: React.FC<TopStatusBarProps> = ({
 
   return (
     <header
-      className="flex h-[38px] shrink-0 items-center justify-between gap-1.5 border-b px-2 select-none sm:gap-2 sm:px-3"
+      className="flex min-h-[38px] shrink-0 items-center justify-between gap-x-1.5 gap-y-1 border-b px-2 py-1 select-none max-[359px]:flex-wrap sm:gap-x-2 sm:px-3 pointer-coarse:max-[419px]:flex-wrap"
       style={{
         backgroundColor: 'var(--bg-surface)',
         borderColor: 'var(--border-hairline)',
       }}
     >
-      <div className="flex min-w-0 items-center gap-1.5 sm:gap-2.5">
+      <div className="flex min-w-0 items-center gap-1.5 max-[359px]:basis-full sm:gap-2.5 pointer-coarse:max-[419px]:basis-full">
         <div className="hidden items-center pr-0.5 min-[420px]:flex sm:pr-1">
           <span
             className="font-editorial text-[15px] font-medium tracking-tight"
@@ -160,7 +160,8 @@ export const TopStatusBar: React.FC<TopStatusBarProps> = ({
                 key={tab.id}
                 type="button"
                 onClick={() => onChangeView(tab.id)}
-                className="shrink-0 whitespace-nowrap rounded-[4px] px-2 py-0.5 text-[12px] font-medium transition-colors sm:px-2.5"
+                aria-current={active ? 'page' : undefined}
+                className="min-h-6 shrink-0 whitespace-nowrap rounded-[4px] px-2 py-0.5 text-[12px] font-medium transition-colors sm:px-2.5 pointer-coarse:min-h-11 pointer-coarse:min-w-11"
                 style={{
                   backgroundColor: active ? 'var(--bg-elevated)' : 'transparent',
                   color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
@@ -175,7 +176,7 @@ export const TopStatusBar: React.FC<TopStatusBarProps> = ({
         <button
           type="button"
           onClick={onOpenCommandPalette}
-          className="flex min-w-0 items-center gap-1.5 rounded-[6px] border px-2 py-0.5 text-[12px] transition-colors"
+          className="flex min-h-6 min-w-0 items-center gap-1.5 rounded-[6px] border px-2 py-0.5 text-[12px] transition-colors pointer-coarse:min-h-11"
           style={{
             backgroundColor: 'var(--bg-canvas)',
             borderColor: 'var(--border-hairline)',
@@ -252,10 +253,13 @@ export const TopStatusBar: React.FC<TopStatusBarProps> = ({
 
       {/* Right: Language, Theme & Settings */}
       <div className="flex shrink-0 items-center gap-1">
+        <span className="px-1 font-mono text-[10px]" style={{ color: 'var(--text-secondary)' }} translate="no">
+          {status.exchange.toUpperCase()}
+        </span>
         <button
           type="button"
           onClick={toggleLocale}
-          className="flex h-7 items-center gap-0.5 rounded-[6px] border px-1.5 text-[11px] font-medium transition-colors hover:opacity-85"
+          className="flex h-7 items-center gap-0.5 rounded-[6px] border px-1.5 text-[11px] font-medium transition-colors hover:opacity-85 pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:justify-center"
           style={{
             backgroundColor: 'var(--bg-canvas)',
             borderColor: 'var(--border-hairline)',
@@ -283,7 +287,7 @@ export const TopStatusBar: React.FC<TopStatusBarProps> = ({
         <button
           type="button"
           onClick={onToggleTheme}
-          className="flex h-7 w-7 items-center justify-center rounded-[6px] transition-colors hover:opacity-80"
+          className="flex h-7 w-7 items-center justify-center rounded-[6px] transition-colors hover:opacity-80 pointer-coarse:h-11 pointer-coarse:w-11"
           style={{ color: 'var(--text-secondary)' }}
           title={theme === 'dark' ? t('top.themeToLight') : t('top.themeToDark')}
           aria-label={t('top.themeAria')}
@@ -298,7 +302,7 @@ export const TopStatusBar: React.FC<TopStatusBarProps> = ({
         <button
           type="button"
           onClick={onOpenSettings}
-          className="flex h-7 w-7 items-center justify-center rounded-[6px] transition-colors hover:opacity-80"
+          className="flex h-7 w-7 items-center justify-center rounded-[6px] transition-colors hover:opacity-80 pointer-coarse:h-11 pointer-coarse:w-11"
           style={{ color: 'var(--text-secondary)' }}
           title={t('top.settingsTitle')}
           aria-label={t('top.settingsAria')}

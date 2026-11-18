@@ -23,6 +23,7 @@ export const chartZh = {
   'chart.rulerBars': '{count} 根',
 
   // KairosChart - replay & toolbar controls
+  'chart.cachedHistory': '缓存行情 · 回补失败',
   'chart.hideFuture': '藏未来',
   'chart.hideFutureOn': '藏未来 开',
   'chart.hideFutureTitle': 'Hide Future · 零前视隐藏未来',
@@ -82,6 +83,7 @@ export const chartEn: Record<keyof typeof chartZh, string> = {
   'chart.rulerBars': '{count} bars',
 
   // KairosChart - replay & toolbar controls
+  'chart.cachedHistory': 'Cached candles · refresh failed',
   'chart.hideFuture': 'Hide Future',
   'chart.hideFutureOn': 'Hide Future On',
   'chart.hideFutureTitle': 'Hide Future · Zero-lookahead mode',

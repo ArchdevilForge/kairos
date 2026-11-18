@@ -142,30 +142,30 @@ func TestCacheStore_Comprehensive(t *testing.T) {
 	if err := store.UpsertKline(ctx, "BTC/USDT:USDT", "5m", "binance", types.Candle{Timestamp: 1700001900_000, Open: 109, High: 112, Low: 108, Close: 111, Volume: 20, QuoteVol: 2220}); err != nil {
 		t.Fatal(err)
 	}
-	kl, err := store.GetKlines(ctx, "BTC/USDT:USDT", "5m", 10, 0)
+	kl, err := store.GetKlines(ctx, "binance", "BTC/USDT:USDT", "5m", 10, 0)
 	if err != nil || len(kl) != 4 || kl[3].Timestamp != 1700001900 {
 		t.Fatalf("GetKlines: len=%d kl=%+v err=%v", len(kl), kl, err)
 	}
-	klBefore, err := store.GetKlines(ctx, "BTC/USDT:USDT", "5m", 10, 1700001600)
+	klBefore, err := store.GetKlines(ctx, "binance", "BTC/USDT:USDT", "5m", 10, 1700001600)
 	if err != nil || len(klBefore) != 2 {
 		t.Fatalf("GetKlines before: len=%d err=%v", len(klBefore), err)
 	}
-	klUpTo, err := store.GetKlinesUpTo(ctx, "BTC/USDT:USDT", "5m", 1700001600, 10)
+	klUpTo, err := store.GetKlinesUpTo(ctx, "binance", "BTC/USDT:USDT", "5m", 1700001600, 10)
 	if err != nil || len(klUpTo) != 3 {
 		t.Fatalf("GetKlinesUpTo: len=%d err=%v", len(klUpTo), err)
 	}
-	klRange, err := store.GetKlinesRange(ctx, "BTC/USDT:USDT", "5m", 1700001300, 1700001600)
+	klRange, err := store.GetKlinesRange(ctx, "binance", "BTC/USDT:USDT", "5m", 1700001300, 1700001600)
 	if err != nil || len(klRange) != 2 {
 		t.Fatalf("GetKlinesRange: len=%d err=%v", len(klRange), err)
 	}
-	latestTS, err := store.LatestKlineTime(ctx, "BTC/USDT:USDT", "5m")
+	latestTS, err := store.LatestKlineTime(ctx, "binance", "BTC/USDT:USDT", "5m")
 	if err != nil || latestTS != 1700001900 {
 		t.Fatalf("LatestKlineTime = %d err=%v", latestTS, err)
 	}
-	if missingTS, err := store.LatestKlineTime(ctx, "NONE/USDT:USDT", "5m"); err != nil || missingTS != 0 {
+	if missingTS, err := store.LatestKlineTime(ctx, "binance", "NONE/USDT:USDT", "5m"); err != nil || missingTS != 0 {
 		t.Fatalf("missing LatestKlineTime = %d err=%v", missingTS, err)
 	}
-	syms, err := store.ListCachedSymbols(ctx)
+	syms, err := store.ListCachedSymbols(ctx, "binance")
 	if err != nil || len(syms) != 1 || syms[0] != "BTC/USDT:USDT" {
 		t.Fatalf("ListCachedSymbols = %v err=%v", syms, err)
 	}
