@@ -25,6 +25,8 @@ type Bar struct {
 
 // MarketBarsResponse is returned by GET /api/v1/market/bars.
 type MarketBarsResponse struct {
+	Exchange    string                  `json:"exchange"`
+	Stale       bool                    `json:"stale,omitempty"`
 	Symbol      string                  `json:"symbol"`
 	TF          string                  `json:"tf"`
 	Bars        []Bar                   `json:"bars"`
@@ -83,6 +85,7 @@ type AccountStatusView struct {
 
 // DeskStatus is status inside BootstrapPayload.
 type DeskStatus struct {
+	MarketSource      string             `json:"market_source"`
 	Exchange          string             `json:"exchange"`
 	Symbols           []string           `json:"symbols"`
 	AvailableSymbols  []string           `json:"available_symbols,omitempty"`
@@ -151,6 +154,7 @@ type ReplayStateResponse struct {
 
 // UpdateSettingsRequest is accepted by PUT /api/v1/settings.
 type UpdateSettingsRequest struct {
+	MarketSource             *string  `json:"market_source,omitempty"`
 	TradingBankrollUSD       *float64 `json:"trading_bankroll_usd,omitempty"`
 	MaxLossUSD               *float64 `json:"max_loss_usd,omitempty"`
 	Timezone                 *string  `json:"timezone,omitempty"`

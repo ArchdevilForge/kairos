@@ -158,6 +158,8 @@ export interface MetricsPoint {
 }
 
 export interface MarketBarsResponse {
+  exchange?: string;
+  stale?: boolean;
   symbol: string;
   tf: Timeframe;
   bars: Bar[];
@@ -256,6 +258,7 @@ export interface RiskPlan {
 }
 
 export interface DecisionTicket {
+  exchange?: string;
   schema_version: string;
   id: string;
   session_id: string;
@@ -497,7 +500,10 @@ export interface CooldownEntry {
   remaining_sec: number;
 }
 
+export type MarketSource = '' | 'binance' | 'okx';
+
 export interface DeskStatus {
+  market_source?: MarketSource;
   exchange: string;
   symbols: string[];
   available_symbols?: string[];
@@ -591,6 +597,7 @@ export interface ReplayStateResponse {
 }
 
 export interface UpdateSettingsRequest {
+  market_source?: MarketSource;
   trading_bankroll_usd?: number;
   max_loss_usd?: number;
   timezone?: string;
@@ -743,6 +750,7 @@ export type WsEvent =
     }
   | {
       type: 'kline';
+      exchange?: string;
       symbol: string;
       tf: Timeframe;
       bar: Bar;

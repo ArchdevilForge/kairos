@@ -1339,6 +1339,9 @@ func matchTradesToTickets(trades []cache.SyncedTrade, tickets []types.DecisionTi
 	}
 	var cands []candTicket
 	for _, t := range tickets {
+		if t.Exchange != "" && t.Exchange != "binance" {
+			continue
+		}
 		var decPtr *types.DecisionRecord
 		if decisions != nil {
 			if d, ok := decisions[t.ID]; ok {

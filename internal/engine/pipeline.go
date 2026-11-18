@@ -98,10 +98,12 @@ type Pipeline struct {
 	mpStore *storage.MarketPulseStore
 
 	// Opportunity desk: one session per market pulse event (tickets need enrichment).
-	journal     *storage.Journal
-	opportunity *opportunity.Service
+	journal              *storage.Journal
+	opportunity          *opportunity.Service
+	legacyTicketExchange string
 	// oppCtx cancelled when pipeline stops — watch/enrich goroutines should honor it.
 	oppCtx context.Context
+	oppWG  sync.WaitGroup
 
 	// Independent Phase 3c opportunity notice layer (notice-journal.jsonl + Telegram).
 	noticeJournal *storage.NoticeJournal
@@ -166,7 +168,8 @@ type Pipeline struct {
 	refreshInterval time.Duration
 
 	// Lifecycle
-	cancel context.CancelFunc
+	cancelMu sync.Mutex
+	cancel   context.CancelFunc
 }
 
 // exchangeState holds per-exchange state: the exchange handle and the
@@ -320,7 +323,9 @@ func NewPipeline(cfg *types.Config, tg *notify.TelegramClient) *Pipeline {
 // goroutines finish (or the context is cancelled).
 func (p *Pipeline) Start(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
+	p.cancelMu.Lock()
 	p.cancel = cancel
+	p.cancelMu.Unlock()
 
 	exchangeNames := p.cfg.DataManager.Exchanges
 	if len(exchangeNames) == 0 {
@@ -526,10 +531,7 @@ func (p *Pipeline) Start(ctx context.Context) error {
 			if ex == nil {
 				return nil
 			}
-			ocfg := opportunity.DefaultOutcomeTrackConfig()
-			if p.cfg.Opportunity.OutcomeMaxAgeHours > 0 {
-				ocfg.MaxAge = time.Duration(p.cfg.Opportunity.OutcomeMaxAgeHours * float64(time.Hour))
-			}
+			ocfg := p.outcomeTrackConfig(ex.Name())
 			p.opportunity.RunOutcomeLoop(gCtx, ex, ocfg)
 			return nil
 		})
@@ -593,6 +595,8 @@ func (p *Pipeline) Start(ctx context.Context) error {
 
 	// Wait for all goroutines.
 	err := g.Wait()
+	cancel()
+	p.oppWG.Wait()
 	if err != nil && err != context.Canceled {
 		return err
 	}
@@ -673,13 +677,12 @@ func (p *Pipeline) enrichOpportunityAsync(evt types.AnomalyEvent) {
 	if base == nil {
 		base = context.Background()
 	}
-	go func(evt types.AnomalyEvent, fetch opportunity.OHLCVFetcher, base context.Context) {
+	p.oppWG.Add(1)
+	go func(evt types.AnomalyEvent, fetch exchange.Exchange, base context.Context) {
+		defer p.oppWG.Done()
 		ecfg := opportunity.DefaultEnrichConfig()
 		ecfg.AssumeSpreadOK = p.cfg.Opportunity.AssumeSpreadOK
-		ocfg := opportunity.DefaultOutcomeTrackConfig()
-		if p.cfg.Opportunity.OutcomeMaxAgeHours > 0 {
-			ocfg.MaxAge = time.Duration(p.cfg.Opportunity.OutcomeMaxAgeHours * float64(time.Hour))
-		}
+		ocfg := p.outcomeTrackConfig(fetch.Name())
 		// Watch loop respects pipeline cancel + session TTL inside WatchAndEnrich.
 		p.opportunity.WatchAndEnrich(base, opportunity.EnrichRequest{
 			Event:                  evt,
@@ -766,6 +769,8 @@ func (p *Pipeline) runSubscription(ctx context.Context, es *exchangeState) error
 
 // Stop gracefully cancels the pipeline and waits for shutdown.
 func (p *Pipeline) Stop() {
+	p.cancelMu.Lock()
+	defer p.cancelMu.Unlock()
 	if p.cancel != nil {
 		p.cancel()
 	}
@@ -2228,6 +2233,24 @@ func (p *Pipeline) SetCacheStore(cs *cache.Store) {
 	p.cacheStore = cs
 }
 
+// SetLegacyTicketExchange defines the YAML source for tickets predating source attribution.
+func (p *Pipeline) SetLegacyTicketExchange(source string) {
+	p.legacyTicketExchange = source
+}
+
+func (p *Pipeline) outcomeTrackConfig(source string) opportunity.OutcomeTrackConfig {
+	cfg := opportunity.DefaultOutcomeTrackConfig()
+	cfg.Exchange = source
+	cfg.LegacyExchange = p.legacyTicketExchange
+	if cfg.LegacyExchange == "" {
+		cfg.LegacyExchange = p.primaryExchange()
+	}
+	if hours := p.Config().Opportunity.OutcomeMaxAgeHours; hours > 0 {
+		cfg.MaxAge = time.Duration(hours * float64(time.Hour))
+	}
+	return cfg
+}
+
 // SetDesktopObserver registers live callbacks for the local desktop API.
 func (p *Pipeline) SetDesktopObserver(obs DesktopObserver) {
 	if p == nil {
@@ -2591,12 +2614,7 @@ func (p *Pipeline) CatchUpAndBackfill(ctx context.Context) error {
 	}
 
 	if p.opportunity != nil {
-		ocfg := opportunity.DefaultOutcomeTrackConfig()
-		p.cfgMu.RLock()
-		if p.cfg != nil && p.cfg.Opportunity.OutcomeMaxAgeHours > 0 {
-			ocfg.MaxAge = time.Duration(p.cfg.Opportunity.OutcomeMaxAgeHours * float64(time.Hour))
-		}
-		p.cfgMu.RUnlock()
+		ocfg := p.outcomeTrackConfig(ex.Name())
 		if n, err := p.opportunity.TrackOutcomes(ctx, ex, ocfg); err != nil {
 			p.log.Warn("catchup TrackOutcomes failed", "error", err)
 		} else if n > 0 {
@@ -2669,7 +2687,7 @@ func (p *Pipeline) CatchUpAndBackfill(ctx context.Context) error {
 }
 
 func (p *Pipeline) backfillSymbolTF(ctx context.Context, ex exchange.Exchange, sym, tf string, nowSec int64) {
-	latestTS, err := p.cacheStore.LatestKlineTime(ctx, sym, tf)
+	latestTS, err := p.cacheStore.LatestKlineTime(ctx, ex.Name(), sym, tf)
 	if err != nil {
 		return
 	}

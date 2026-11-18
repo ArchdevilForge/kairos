@@ -16,6 +16,7 @@ import {
   type WatchWorkspaceProps,
 } from '../types/kairos';
 import { useI18n } from '../i18n';
+import { INITIAL_WATCH_BARS } from '../services/deskClient';
 import { PHASE_LABEL, sameSymbol } from '../utils/doctrine';
 import { TIMEFRAME_SECONDS, fmtDateTimeSec, fmtIsoUtc8, fmtPctPoints } from '../utils/format';
 
@@ -58,6 +59,7 @@ interface ChartSliceState {
   symbolCycle: CycleMap | null;
   loading: boolean;
   loadingMore?: boolean;
+  stale?: boolean;
   error: string | null;
   errorKey?: 'watch.error.loadBars' | 'watch.error.loadCompareBars' | null;
 }
@@ -428,7 +430,7 @@ export function WatchWorkspace({
     }
 
     client
-      .getMarketBars({ symbol: activeSymbol, tf: activeTf, limit: 800, signal: ac.signal })
+      .getMarketBars({ symbol: activeSymbol, tf: activeTf, limit: INITIAL_WATCH_BARS, signal: ac.signal })
       .then((res) => {
         if (cancelled) return;
         const loaded = res.bars ?? [];
@@ -455,6 +457,7 @@ export function WatchWorkspace({
           symbolCycle,
           loading: false,
           loadingMore: false,
+          stale: res.stale,
           error: null,
           errorKey: null,
         });
@@ -464,6 +467,7 @@ export function WatchWorkspace({
         setPrimarySlice((prev) => ({
           ...prev,
           loading: false,
+          stale: prev.bars.length > 0,
           error: err instanceof Error ? err.message : null,
           errorKey: err instanceof Error ? null : 'watch.error.loadBars',
         }));
@@ -518,7 +522,7 @@ export function WatchWorkspace({
     }
 
     client
-      .getMarketBars({ symbol: compareSymbol, tf: compareTf, limit: 800, signal: ac.signal })
+      .getMarketBars({ symbol: compareSymbol, tf: compareTf, limit: INITIAL_WATCH_BARS, signal: ac.signal })
       .then((res) => {
         if (cancelled) return;
         const loaded = res.bars ?? [];
@@ -545,6 +549,7 @@ export function WatchWorkspace({
           symbolCycle,
           loading: false,
           loadingMore: false,
+          stale: res.stale,
           error: null,
           errorKey: null,
         });
@@ -554,6 +559,7 @@ export function WatchWorkspace({
         setCompareSlice((prev) => ({
           ...prev,
           loading: false,
+          stale: prev.bars.length > 0,
           error: err instanceof Error ? err.message : null,
           errorKey: err instanceof Error ? null : 'watch.error.loadCompareBars',
         }));
@@ -694,12 +700,15 @@ export function WatchWorkspace({
             marketCycle,
             symbolCycle,
             loading: false,
+            stale: res.stale,
             error: null,
             errorKey: null,
           }));
         })
         .catch(() => {
-          // Keep existing bars if backfill fails; pending gap bar falls through below.
+          if (isCurrentPane()) {
+            setter((prev) => prev.bars.length > 0 ? { ...prev, stale: true } : prev);
+          }
         })
         .finally(() => {
           const cur = refreshGuardRef.current.get(key);
@@ -735,6 +744,9 @@ export function WatchWorkspace({
     },
     [client, writeBarCache],
   );
+
+  const hadLiveConnection = useRef(false);
+  useEffect(() => () => client.subscribeMany([]), [client]);
 
   // Subscribe WebSocket to primary (+ optional compare) symbol & timeframe
   useEffect(() => {
@@ -832,8 +844,10 @@ export function WatchWorkspace({
         wasDisconnected = true;
         return;
       }
-      if (!wasDisconnected) return;
+      const reconnect = hadLiveConnection.current && wasDisconnected;
+      hadLiveConnection.current = true;
       wasDisconnected = false;
+      if (!reconnect) return;
       gapFallbackAnchorRef.current.delete(`${activeSymbol}|${activeTf}`);
       refreshLatestFor(activeSymbol, activeTf, setPrimarySlice, isPrimaryCurrent, true);
       if (splitMode && compareSymbol) {
@@ -1089,7 +1103,7 @@ export function WatchWorkspace({
   // Keyboard shortcuts (1-5 TFs, s split, j/k nav, Esc close queue drawer)
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.metaKey || e.ctrlKey || e.altKey || document.querySelector('dialog:modal')) return;
       if (e.key === 'Escape' && hotkeyRef.current.drawerOpen) {
         e.preventDefault();
         setDrawerOpen(false);
@@ -1511,6 +1525,7 @@ export function WatchWorkspace({
               loading={primarySlice.loading}
               loadingMore={Boolean(primarySlice.loadingMore)}
               error={primaryError}
+              stale={primarySlice.stale}
               followLatest
               onLoadMoreHistory={loadMorePrimary}
               onUserDrawing={handleUserDrawing}
@@ -1543,6 +1558,7 @@ export function WatchWorkspace({
               loading={compareSlice.loading}
               loadingMore={Boolean(compareSlice.loadingMore)}
               error={compareError}
+              stale={compareSlice.stale}
               followLatest
               onLoadMoreHistory={loadMoreCompare}
               onUserDrawing={handleCompareDrawing}
@@ -1568,6 +1584,7 @@ export function WatchWorkspace({
             loading={primarySlice.loading}
             loadingMore={Boolean(primarySlice.loadingMore)}
             error={primaryError}
+            stale={primarySlice.stale}
             followLatest
             onLoadMoreHistory={loadMorePrimary}
             onUserDrawing={handleUserDrawing}

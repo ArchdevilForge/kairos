@@ -11,7 +11,9 @@ import (
 
 // OutcomeTrackConfig controls forward-path refresh.
 type OutcomeTrackConfig struct {
-	Interval time.Duration
+	Interval       time.Duration
+	Exchange       string
+	LegacyExchange string
 	// MaxAge: skip tickets older than this since CreatedAt/SignalAt.
 	MaxAge   time.Duration
 	BarLimit int
@@ -55,6 +57,13 @@ func (s *Service) TrackOutcomes(ctx context.Context, fetch OHLCVFetcher, cfg Out
 	hz := evaluation.DefaultHorizons()
 
 	for _, t := range tickets {
+		ticketExchange := t.Exchange
+		if ticketExchange == "" {
+			ticketExchange = cfg.LegacyExchange
+		}
+		if cfg.Exchange != "" && ticketExchange != cfg.Exchange {
+			continue
+		}
 		if t.ID == "" || t.Symbol == "" {
 			continue
 		}

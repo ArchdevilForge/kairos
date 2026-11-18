@@ -193,11 +193,22 @@ export function App() {
     setActiveSymbol((prev) => sanitizeSymbol(sym, prev || 'BTC/USDT:USDT'));
   }, []);
 
+  const bootstrapRequestRef = useRef(0);
+  const currentExchangeRef = useRef('');
   const refreshBootstrap = useCallback(async (targetClient?: DeskClient) => {
     const active = targetClient ?? client;
     if (!active) return;
+    const request = ++bootstrapRequestRef.current;
     try {
       const data = await active.bootstrap();
+      if (request !== bootstrapRequestRef.current) return;
+      const exchangeChanged = currentExchangeRef.current !== data.status.exchange;
+      currentExchangeRef.current = data.status.exchange;
+      active.setMarketExchange(data.status.exchange);
+      if (exchangeChanged) {
+        lastPulseStateRef.current = '';
+        lastQuietPulseUpdateRef.current = 0;
+      }
       const visibleNotices = (data.notices ?? []).filter(
         (n) => n.delivery_status !== 'suppressed',
       );
@@ -219,10 +230,13 @@ export function App() {
       setConnError(null);
       setActiveSymbol((prev) => {
         const clean = sanitizeSymbol(prev, '');
-        if (clean) return clean;
+        const available = data.status.available_symbols ?? [];
+        if (clean && (!exchangeChanged || available.length === 0 || available.includes(clean))) return clean;
         return sanitizeSymbol(data.status.symbols[0], 'BTC/USDT:USDT');
       });
+      return data;
     } catch (err) {
+      if (request !== bootstrapRequestRef.current) return;
       setConnError(
         err instanceof Error ? err.message : t('app.err.unreachable'),
       );
@@ -243,8 +257,14 @@ export function App() {
         currentClient = c;
         setClient(c);
 
+        let wasConnected = false;
         unsubConn = c.onConnectionChange((connected) => {
-          if (!cancelled) setWsConnected(connected);
+          if (cancelled) return;
+          setWsConnected(connected);
+          if (connected) {
+            if (wasConnected) void refreshBootstrap(c);
+            wasConnected = true;
+          }
         });
 
         unsubWs = c.onWsEvent((evt: WsEvent) => {
@@ -369,7 +389,12 @@ export function App() {
           }
         });
 
-        await refreshBootstrap(c);
+        c.prefetchWatchBars(activeSymbol, activeTf);
+        const data = await refreshBootstrap(c);
+        if (cancelled || !data) {
+          c.discardPrefetchedBars();
+          return;
+        }
         c.connectWs();
       } catch (err) {
         if (!cancelled) {
@@ -388,6 +413,7 @@ export function App() {
       cancelled = true;
       unsubWs?.();
       unsubConn?.();
+      currentClient?.discardPrefetchedBars();
       currentClient?.disconnectWs();
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -431,22 +457,14 @@ export function App() {
     };
   }, [handleSyncAccount, selectTradeableSymbol]);
 
-  const modalStateRef = useRef({ paletteOpen: false, settingsOpen: false });
-  modalStateRef.current = { paletteOpen, settingsOpen };
+  const settingsOpenRef = useRef(false);
+  settingsOpenRef.current = settingsOpen;
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
-        setPaletteOpen((prev) => !prev);
-      } else if (e.key === 'Escape') {
-        if (modalStateRef.current.paletteOpen) {
-          e.preventDefault();
-          setPaletteOpen(false);
-        } else if (modalStateRef.current.settingsOpen) {
-          e.preventDefault();
-          setSettingsOpen(false);
-        }
+        if (!settingsOpenRef.current) setPaletteOpen((prev) => !prev);
       }
     };
     window.addEventListener('keydown', onKeyDown);
@@ -470,11 +488,22 @@ export function App() {
     ): Promise<AccountSyncResponse | undefined> => {
       if (!client) return undefined;
       await client.updateSettings(req);
+      if (req.market_source !== undefined) {
+        client.disconnectWs();
+        try {
+          await client.waitForMarketSource(req.market_source);
+          if (!await refreshBootstrap(client)) {
+            throw new Error(i18nT('settings.err.sourceTimeout'));
+          }
+        } finally {
+          client.connectWs();
+        }
+      }
       let syncRes: AccountSyncResponse | undefined;
       if (syncAfter) {
         syncRes = await client.syncAccount();
       }
-      await refreshBootstrap(client);
+      if (syncAfter || req.market_source === undefined) await refreshBootstrap(client);
       return syncRes;
     },
     [client, refreshBootstrap],
@@ -632,14 +661,14 @@ export function App() {
 
       {connError && (
         <div
-          className="flex shrink-0 items-center justify-between border-b px-3 py-1 text-[11px]"
+          className="flex shrink-0 items-center justify-between gap-2 border-b px-3 py-1 text-[11px]"
           style={{
             backgroundColor: 'var(--state-warn-soft)',
             borderColor: 'var(--border-hairline)',
             color: 'var(--state-warn)',
           }}
         >
-          <span>{t('app.daemonWarning', { message: connError })}</span>
+          <span className="min-w-0 [overflow-wrap:anywhere]">{t('app.daemonWarning', { message: connError })}</span>
           <button
             type="button"
             onClick={() => void refreshBootstrap()}
@@ -653,6 +682,7 @@ export function App() {
       <main className="min-h-0 flex-1 overflow-hidden">
         {activeView === 'watch' && (
           <WatchWorkspace
+            key={bootstrap.status.exchange}
             client={client}
             bootstrap={bootstrap}
             activeSymbol={activeSymbol}
@@ -673,13 +703,14 @@ export function App() {
             }
           >
             <ReviewWorkspace
+              key={bootstrap.status.exchange}
               client={client}
               bootstrap={bootstrap}
               initialSymbol={reviewTarget.symbol || activeSymbol}
               initialCursorTs={reviewTarget.cursorTs}
               initialTicketId={reviewTarget.ticketId}
               onSelectSymbol={selectTradeableSymbol}
-              onRefreshBootstrap={() => refreshBootstrap()}
+              onRefreshBootstrap={async () => { await refreshBootstrap(); }}
             />
           </Suspense>
         )}

@@ -518,6 +518,7 @@ export function ReviewWorkspace({
   useEffect(() => {
     if (!hideFuture || cursorTs <= 0) return;
     let cancelled = false;
+    const ac = new AbortController();
     setReplayErrorState(null);
     client
       .getReplayState({
@@ -525,6 +526,7 @@ export function ReviewWorkspace({
         cursorTs,
         tfs: [activeTf],
         limit: 300,
+        signal: ac.signal,
       })
       .then((res) => {
         if (cancelled) return;
@@ -536,6 +538,7 @@ export function ReviewWorkspace({
       });
     return () => {
       cancelled = true;
+      ac.abort();
     };
   }, [client, hideFuture, symbol, activeTf, cursorTs]);
 
@@ -626,7 +629,7 @@ export function ReviewWorkspace({
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.metaKey || e.ctrlKey || e.altKey || document.querySelector('dialog:modal')) return;
       if (e.key === 'Escape') {
         if (replayKeyRef.current.selectorOpen) {
           e.preventDefault();
@@ -668,20 +671,27 @@ export function ReviewWorkspace({
     };
   }, []);
 
+  // A result from an earlier cursor can remain visible as playback advances.
+  // On rewind or symbol change it would reveal data outside the active cursor.
+  const visibleReplayState =
+    replayState && sameSymbol(replayState.symbol, symbol) && replayState.cursor_ts <= cursorTs
+      ? replayState
+      : null;
+
   // Zero-lookahead visible data passed to KairosChart
   const chartBars = useMemo<Bar[]>(() => {
-    if (hideFuture) return replayState?.bars_by_tf?.[activeTf] ?? [];
+    if (hideFuture) return visibleReplayState?.bars_by_tf?.[activeTf] ?? [];
     return fullBars;
-  }, [hideFuture, replayState, activeTf, fullBars]);
+  }, [hideFuture, visibleReplayState, activeTf, fullBars]);
 
   const chartDrawings = useMemo<ChartDrawingItem[]>(() => {
-    if (hideFuture) return replayState?.drawings ?? [];
+    if (hideFuture) return visibleReplayState?.drawings ?? [];
     return fullDrawings;
-  }, [hideFuture, replayState, fullDrawings]);
+  }, [hideFuture, visibleReplayState, fullDrawings]);
 
   const activeFills = useMemo<TradeFillItem[]>(() => {
     if (!subjectMatchesSymbol || chartBars.length === 0) return [];
-    if (hideFuture) return replayState?.fills ?? [];
+    if (hideFuture) return visibleReplayState?.fills ?? [];
     if (selectedSubject?.kind === 'ticket') {
       return selectedSubject.bundle.fills ?? selectedSubject.bundle.linked_trade?.fills ?? [];
     }
@@ -689,7 +699,7 @@ export function ReviewWorkspace({
       return selectedSubject.trade.fills ?? [];
     }
     return [];
-  }, [hideFuture, replayState, selectedSubject, subjectMatchesSymbol, chartBars.length]);
+  }, [hideFuture, visibleReplayState, selectedSubject, subjectMatchesSymbol, chartBars.length]);
 
   const futureCount = useMemo(() => {
     if (!hideFuture || fullBars.length === 0) return null;

@@ -71,7 +71,7 @@ func (h *wsHub) close() {
 	}
 	h.klineSubs = make(map[klineSubKey]*upstreamKlineSub)
 	for c := range h.clients {
-		_ = c.conn.Close(websocket.StatusGoingAway, "server shutdown")
+		_ = c.conn.CloseNow()
 	}
 	h.mu.Unlock()
 	h.wg.Wait()
@@ -79,8 +79,8 @@ func (h *wsHub) close() {
 
 func (h *wsHub) observer() engine.DesktopObserver {
 	return engine.DesktopObserver{
-		OnTicker: func(_ string, t types.Ticker) {
-			if h.hasNoClients() || t.LastPrice == nil {
+		OnTicker: func(source string, t types.Ticker) {
+			if h.hasNoClients() || t.LastPrice == nil || source != h.server.marketExchange() {
 				return
 			}
 			nowMs := time.Now().UnixMilli()
@@ -197,16 +197,17 @@ func (h *wsHub) broadcastDiscrete(payload any) {
 func (h *wsHub) onUpstreamKline(sym, tf string, candle types.Candle, closed bool) {
 	if h.server != nil && h.server.cache != nil && closed {
 		ctx, cancel := context.WithTimeout(h.ctx, 2*time.Second)
-		_ = h.server.cache.UpsertKline(ctx, sym, tf, "binance", candle)
+		_ = h.server.cache.UpsertKline(ctx, sym, tf, h.server.marketExchange(), candle)
 		cancel()
 	}
 	if h.hasNoClients() {
 		return
 	}
 	msg := wsKlineMsg{
-		Type:   "kline",
-		Symbol: sym,
-		TF:     tf,
+		Type:     "kline",
+		Exchange: h.server.marketExchange(),
+		Symbol:   sym,
+		TF:       tf,
 		Bar: Bar{
 			Time:     candle.Timestamp,
 			Open:     candle.Open,
@@ -321,15 +322,9 @@ func (h *wsHub) acquireKlineLocked(key klineSubKey) {
 		cb := func(candle types.Candle, closed bool) {
 			h.onUpstreamKline(sym, tf, candle, closed)
 		}
-		if h.server != nil && h.server.pipeline != nil {
-			if ex := h.server.pipeline.PrimaryExchangeClient(); ex != nil {
-				if ks, ok := ex.(exchange.KlineSubscriber); ok {
-					_ = ks.SubscribeKline(subCtx, sym, tf, cb)
-					return
-				}
-			}
+		if ks, ok := h.server.ohlcvFetcher().(exchange.KlineSubscriber); ok {
+			_ = ks.SubscribeKline(subCtx, sym, tf, cb)
 		}
-		_ = exchange.SubscribeKline(subCtx, sym, tf, cb)
 	}()
 }
 
@@ -356,7 +351,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
+	defer func() { _ = conn.CloseNow() }()
 
 	client := &wsClient{
 		hub:     s.wsHub,
@@ -426,11 +421,12 @@ type wsTickerMsg struct {
 }
 
 type wsKlineMsg struct {
-	Type   string `json:"type"`
-	Symbol string `json:"symbol"`
-	TF     string `json:"tf"`
-	Bar    Bar    `json:"bar"`
-	Closed bool   `json:"closed"`
+	Exchange string `json:"exchange"`
+	Type     string `json:"type"`
+	Symbol   string `json:"symbol"`
+	TF       string `json:"tf"`
+	Bar      Bar    `json:"bar"`
+	Closed   bool   `json:"closed"`
 }
 
 type wsPulseMsg struct {

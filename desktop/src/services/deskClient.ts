@@ -5,6 +5,7 @@ import type {
   ChartDrawingItem,
   CreateDrawingRequest,
   MarketBarsResponse,
+  MarketSource,
   ReplayStateResponse,
   StatsPayload,
   Timeframe,
@@ -12,6 +13,16 @@ import type {
   UpdateSettingsRequest,
   WsEvent,
 } from '../types/kairos';
+
+export const INITIAL_WATCH_BARS = 300;
+
+interface MarketBarsRequest {
+  symbol: string;
+  tf: Timeframe;
+  limit?: number;
+  beforeTs?: number;
+  signal?: AbortSignal;
+}
 
 export class DeskApiError extends Error {
   status: number;
@@ -35,6 +46,13 @@ export class DeskClient {
   private baseUrl: string;
   private wsUrl: string;
   private token: string;
+  private marketExchange = '';
+  private initialBars?: {
+    symbol: string;
+    tf: Timeframe;
+    controller: AbortController;
+    response: Promise<MarketBarsResponse | undefined>;
+  };
 
   private ws: WebSocket | null = null;
   private wsListeners = new Set<(evt: WsEvent) => void>();
@@ -94,6 +112,10 @@ export class DeskClient {
     if (opts.token !== undefined) {
       this.token = opts.token;
     }
+  }
+
+  setMarketExchange(exchange: string): void {
+    this.marketExchange = exchange;
   }
 
   getToken(): string {
@@ -216,10 +238,22 @@ export class DeskClient {
     }
   }
 
-  async health(): Promise<{ ok: boolean; ts: number }> {
-    return this.request<{ ok: boolean; ts: number }>('/api/v1/health', {
-      skipAuth: true,
-    });
+  async health(timeoutMs?: number): Promise<{ ok: boolean; ts: number; market_source?: MarketSource }> {
+    return this.request('/api/v1/health', { skipAuth: true, timeoutMs });
+  }
+
+  async waitForMarketSource(source: MarketSource): Promise<void> {
+    const deadline = Date.now() + 30_000;
+    while (Date.now() < deadline) {
+      try {
+        const health = await this.health(2_000);
+        if (health.market_source === source) return;
+      } catch (err) {
+        if (err instanceof DeskApiError && err.status < 500 && err.status !== 408) throw err;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    }
+    throw new Error(t('settings.err.sourceTimeout'));
   }
 
   async bootstrap(): Promise<BootstrapPayload> {
@@ -255,15 +289,46 @@ export class DeskClient {
     };
   }
 
-  async getMarketBars(params: {
-    symbol: string;
-    tf: Timeframe;
-    limit?: number;
-    beforeTs?: number;
-    signal?: AbortSignal;
-  }): Promise<MarketBarsResponse> {
+  prefetchWatchBars(symbol: string, tf: Timeframe): void {
+    const controller = new AbortController();
+    this.initialBars = {
+      symbol,
+      tf,
+      controller,
+      response: this.fetchMarketBars({
+        symbol, tf, limit: INITIAL_WATCH_BARS, signal: controller.signal,
+      }).catch(() => undefined),
+    };
+  }
+
+  discardPrefetchedBars(): void {
+    this.initialBars?.controller.abort();
+    this.initialBars = undefined;
+  }
+
+  async getMarketBars(params: MarketBarsRequest): Promise<MarketBarsResponse> {
+    const pending = this.initialBars;
+    if (pending && !params.beforeTs && params.limit === INITIAL_WATCH_BARS) {
+      if (pending.symbol === params.symbol && pending.tf === params.tf) {
+        this.initialBars = undefined;
+        const abort = () => pending.controller.abort();
+        if (params.signal?.aborted) abort();
+        params.signal?.addEventListener('abort', abort, { once: true });
+        const response = await pending.response;
+        params.signal?.removeEventListener('abort', abort);
+        // A source switch may have occurred while bootstrap was in flight.
+        if (response && response.exchange === this.marketExchange) return response;
+      } else {
+        this.discardPrefetchedBars();
+      }
+    }
+    return this.fetchMarketBars(params);
+  }
+
+  private async fetchMarketBars(params: MarketBarsRequest): Promise<MarketBarsResponse> {
     const res = await this.request<MarketBarsResponse>('/api/v1/market/bars', {
       params: {
+        exchange: this.marketExchange,
         symbol: params.symbol,
         tf: params.tf,
         limit: params.limit,
@@ -283,9 +348,12 @@ export class DeskClient {
     cursorTs: number;
     tfs?: Timeframe[];
     limit?: number;
+    signal?: AbortSignal;
   }): Promise<ReplayStateResponse> {
     const res = await this.request<ReplayStateResponse>('/api/v1/replay/state', {
+      signal: params.signal,
       params: {
+        exchange: this.marketExchange,
         symbol: params.symbol,
         cursor_ts: params.cursorTs,
         tfs: params.tfs?.join(','),
@@ -408,9 +476,11 @@ export class DeskClient {
       };
 
       socket.onmessage = (msg) => {
-        if (typeof msg.data !== 'string') return;
+        if (this.ws !== socket || typeof msg.data !== 'string') return;
         try {
           const parsed = JSON.parse(msg.data) as WsEvent;
+          if (parsed.type === 'kline' && parsed.exchange && this.marketExchange &&
+              parsed.exchange !== this.marketExchange) return;
           for (const cb of this.wsListeners) {
             cb(parsed);
           }
@@ -420,9 +490,8 @@ export class DeskClient {
       };
 
       socket.onclose = () => {
-        if (this.ws === socket) {
-          this.ws = null;
-        }
+        if (this.ws !== socket) return;
+        this.ws = null;
         this.setConnected(false);
         if (!this.closedByCaller) {
           this.scheduleReconnect();
@@ -461,7 +530,7 @@ export class DeskClient {
     this.activeSubs = subs.map((s) => ({ symbol: s.symbol, tfs: [...s.tfs] }));
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.sendSubscribeMany(this.activeSubs);
-    } else if (!this.closedByCaller && !this.ws) {
+    } else if (!this.closedByCaller && !this.ws && this.activeSubs.length > 0) {
       this.connectWs();
     }
   }

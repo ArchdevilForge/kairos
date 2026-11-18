@@ -70,14 +70,22 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
   const { locale, toggleLocale, t } = useI18n();
   const [query, setQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const resultsRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
-    if (!open) return;
+    const dialog = dialogRef.current;
+    if (!open || !dialog) return;
+    const trigger = document.activeElement;
     setQuery('');
     setSelectedIndex(0);
-    const timer = setTimeout(() => inputRef.current?.focus(), 10);
-    return () => clearTimeout(timer);
+    dialog.showModal();
+    inputRef.current?.focus();
+    return () => {
+      dialog.close();
+      if (trigger instanceof HTMLElement && trigger.isConnected) trigger.focus();
+    };
   }, [open]);
 
   const items = useMemo<PaletteItem[]>(() => {
@@ -276,13 +284,16 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
     );
   }, [items.length]);
 
+  useEffect(() => {
+    if (document.activeElement === inputRef.current) {
+      resultsRef.current?.children[selectedIndex]?.scrollIntoView({ block: 'nearest' });
+    }
+  }, [selectedIndex]);
+
   if (!open) return null;
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      onClose();
-    } else if (e.key === 'ArrowDown') {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'ArrowDown') {
       e.preventDefault();
       if (items.length > 0) {
         setSelectedIndex((prev) => (prev + 1) % items.length);
@@ -300,25 +311,26 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
   };
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-start justify-center px-3 pt-[10dvh] sm:pt-[12dvh]"
-      style={{ backgroundColor: 'var(--bg-overlay)' }}
-      onClick={onClose}
+    <dialog
+      ref={dialogRef}
+      aria-label={t('palette.ariaLabel')}
+      className="mx-auto mt-[min(10dvh,5rem)] max-h-[calc(100dvh-min(10dvh,5rem)-0.75rem)] w-[calc(100%-1.5rem)] max-w-[540px] overflow-hidden rounded-[8px] border p-0 shadow-2xl open:flex backdrop:bg-[var(--bg-overlay)]"
+      style={{
+        backgroundColor: 'var(--bg-surface)',
+        borderColor: 'var(--border-strong)',
+        color: 'var(--text-primary)',
+      }}
+      onCancel={(e) => {
+        e.preventDefault();
+        onClose();
+      }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
     >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label={t('palette.ariaLabel')}
-        className="kairos-contain-panel w-full max-w-[540px] overflow-hidden rounded-[8px] border shadow-2xl"
-        style={{
-          backgroundColor: 'var(--bg-surface)',
-          borderColor: 'var(--border-strong)',
-        }}
-        onClick={(e) => e.stopPropagation()}
-        onKeyDown={handleKeyDown}
-      >
+      <div className="flex min-h-0 w-full flex-col">
         <div
-          className="flex items-center gap-2 border-b px-3 py-2.5"
+          className="flex shrink-0 items-center gap-2 border-b px-3 py-2.5"
           style={{ borderColor: 'var(--border-hairline)' }}
         >
           <Search
@@ -333,8 +345,10 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
               setQuery(e.target.value);
               setSelectedIndex(0);
             }}
+            aria-label={t('palette.searchLabel')}
             placeholder={t('palette.searchPlaceholder')}
-            className="w-full bg-transparent text-[13px] outline-none"
+            onKeyDown={handleKeyDown}
+            className="min-w-0 flex-1 bg-transparent text-[13px] pointer-coarse:text-base"
             style={{ color: 'var(--text-primary)' }}
           />
           <span
@@ -348,7 +362,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
           </span>
         </div>
 
-        <div className="max-h-[380px] overflow-y-auto p-1.5">
+        <div ref={resultsRef} className="min-h-0 max-h-[380px] overflow-y-auto overscroll-contain p-1.5">
           {items.length === 0 ? (
             <div
               className="px-3 py-6 text-center text-[12px]"
@@ -364,8 +378,9 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
                   key={item.id}
                   type="button"
                   onMouseEnter={() => setSelectedIndex(idx)}
+                  onFocus={() => setSelectedIndex(idx)}
                   onClick={item.run}
-                  className="flex w-full items-center justify-between gap-2 rounded-[6px] px-2.5 py-2 text-left transition-colors"
+                  className="flex w-full items-center justify-between gap-2 rounded-[6px] px-2.5 py-2 text-left transition-colors pointer-coarse:min-h-11"
                   style={{
                     backgroundColor: active
                       ? 'var(--bg-elevated)'
@@ -384,7 +399,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
                       {item.icon}
                     </span>
                     <div className="min-w-0">
-                      <div className="tabular-nums truncate text-[13px] font-medium">
+                      <div className="tabular-nums text-[13px] font-medium [overflow-wrap:anywhere] min-[400px]:truncate">
                         {item.label}
                       </div>
                       {item.hint && (
@@ -398,7 +413,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
                     </div>
                   </div>
                   <span
-                    className="shrink-0 text-[10px] uppercase tracking-wider"
+                    className="hidden shrink-0 text-[10px] uppercase tracking-wider min-[400px]:block"
                     style={{ color: 'var(--text-muted)' }}
                   >
                     {item.group}
@@ -409,6 +424,6 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
           )}
         </div>
       </div>
-    </div>
+    </dialog>
   );
 };

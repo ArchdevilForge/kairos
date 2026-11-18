@@ -104,6 +104,19 @@ func (s *Store) initSchema(ctx context.Context) error {
 			source TEXT NOT NULL DEFAULT '',
 			PRIMARY KEY (symbol, tf, time_sec)
 		);`,
+		`CREATE TABLE IF NOT EXISTS market_klines (
+			symbol TEXT NOT NULL,
+			tf TEXT NOT NULL,
+			time_sec INTEGER NOT NULL,
+			open REAL NOT NULL,
+			high REAL NOT NULL,
+			low REAL NOT NULL,
+			close REAL NOT NULL,
+			volume REAL NOT NULL,
+			quote_vol REAL NOT NULL DEFAULT 0,
+			source TEXT NOT NULL DEFAULT '',
+			PRIMARY KEY (source, symbol, tf, time_sec)
+		);`,
 		`CREATE TABLE IF NOT EXISTS trade_fills (
 			fill_id TEXT PRIMARY KEY,
 			order_id TEXT NOT NULL,
@@ -187,7 +200,29 @@ func (s *Store) initSchema(ctx context.Context) error {
 			return fmt.Errorf("cache init schema: %w", err)
 		}
 	}
-	return nil
+	// Keep the legacy table intact for rollback. Only import attributed rows
+	// that match the current bar boundaries (legacy OKX days were UTC+8).
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err = tx.ExecContext(ctx, `
+		INSERT OR IGNORE INTO market_klines
+		SELECT symbol, tf, time_sec, open, high, low, close, volume, quote_vol, source
+		FROM klines
+		WHERE source <> ''
+			AND (source <> 'okx' OR tf <> '1d' OR time_sec % 86400 = 0)
+			AND NOT EXISTS (SELECT 1 FROM account_meta WHERE key = 'market_klines_imported')
+	`); err != nil {
+		return fmt.Errorf("import legacy klines: %w", err)
+	}
+	if _, err = tx.ExecContext(ctx, `
+		INSERT OR IGNORE INTO account_meta (key, value) VALUES ('market_klines_imported', '1')
+	`); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // -----------------------------------------------------------------------------
@@ -206,16 +241,15 @@ func (s *Store) UpsertKlines(ctx context.Context, symbol, tf, source string, can
 	defer func() { _ = tx.Rollback() }()
 
 	stmt, err := tx.PrepareContext(ctx, `
-		INSERT INTO klines (symbol, tf, time_sec, open, high, low, close, volume, quote_vol, source)
+		INSERT INTO market_klines (symbol, tf, time_sec, open, high, low, close, volume, quote_vol, source)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(symbol, tf, time_sec) DO UPDATE SET
+		ON CONFLICT(source, symbol, tf, time_sec) DO UPDATE SET
 			open = excluded.open,
 			high = excluded.high,
 			low = excluded.low,
 			close = excluded.close,
 			volume = excluded.volume,
-			quote_vol = excluded.quote_vol,
-			source = excluded.source
+			quote_vol = excluded.quote_vol
 	`)
 	if err != nil {
 		return err
@@ -244,23 +278,22 @@ func (s *Store) UpsertKline(ctx context.Context, symbol, tf, source string, c ty
 		return nil
 	}
 	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO klines (symbol, tf, time_sec, open, high, low, close, volume, quote_vol, source)
+		INSERT INTO market_klines (symbol, tf, time_sec, open, high, low, close, volume, quote_vol, source)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(symbol, tf, time_sec) DO UPDATE SET
+		ON CONFLICT(source, symbol, tf, time_sec) DO UPDATE SET
 			open = excluded.open,
 			high = excluded.high,
 			low = excluded.low,
 			close = excluded.close,
 			volume = excluded.volume,
-			quote_vol = excluded.quote_vol,
-			source = excluded.source
+			quote_vol = excluded.quote_vol
 	`, symbol, tf, ts, c.Open, c.High, c.Low, c.Close, c.Volume, c.QuoteVol, source)
 	return err
 }
 
 // GetKlines returns up to limit candles for (symbol, tf), strictly earlier than
 // beforeSec if beforeSec > 0, sorted ascending by time_sec.
-func (s *Store) GetKlines(ctx context.Context, symbol, tf string, limit int, beforeSec int64) ([]types.Candle, error) {
+func (s *Store) GetKlines(ctx context.Context, source, symbol, tf string, limit int, beforeSec int64) ([]types.Candle, error) {
 	if s == nil {
 		return nil, nil
 	}
@@ -274,19 +307,19 @@ func (s *Store) GetKlines(ctx context.Context, symbol, tf string, limit int, bef
 	if beforeSec > 0 {
 		rows, err = s.db.QueryContext(ctx, `
 			SELECT time_sec, open, high, low, close, volume, quote_vol
-			FROM klines
-			WHERE symbol = ? AND tf = ? AND time_sec < ?
+			FROM market_klines
+			WHERE source = ? AND symbol = ? AND tf = ? AND time_sec < ?
 			ORDER BY time_sec DESC
 			LIMIT ?
-		`, symbol, tf, beforeSec, limit)
+		`, source, symbol, tf, beforeSec, limit)
 	} else {
 		rows, err = s.db.QueryContext(ctx, `
 			SELECT time_sec, open, high, low, close, volume, quote_vol
-			FROM klines
-			WHERE symbol = ? AND tf = ?
+			FROM market_klines
+			WHERE source = ? AND symbol = ? AND tf = ?
 			ORDER BY time_sec DESC
 			LIMIT ?
-		`, symbol, tf, limit)
+		`, source, symbol, tf, limit)
 	}
 	if err != nil {
 		return nil, err
@@ -297,7 +330,7 @@ func (s *Store) GetKlines(ctx context.Context, symbol, tf string, limit int, bef
 
 // GetKlinesUpTo returns up to limit candles with time_sec <= maxSec (zero-lookahead),
 // sorted ascending by time_sec.
-func (s *Store) GetKlinesUpTo(ctx context.Context, symbol, tf string, maxSec int64, limit int) ([]types.Candle, error) {
+func (s *Store) GetKlinesUpTo(ctx context.Context, source, symbol, tf string, maxSec int64, limit int) ([]types.Candle, error) {
 	if s == nil {
 		return nil, nil
 	}
@@ -306,11 +339,11 @@ func (s *Store) GetKlinesUpTo(ctx context.Context, symbol, tf string, maxSec int
 	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT time_sec, open, high, low, close, volume, quote_vol
-		FROM klines
-		WHERE symbol = ? AND tf = ? AND time_sec <= ?
+		FROM market_klines
+		WHERE source = ? AND symbol = ? AND tf = ? AND time_sec <= ?
 		ORDER BY time_sec DESC
 		LIMIT ?
-	`, symbol, tf, maxSec, limit)
+	`, source, symbol, tf, maxSec, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -319,16 +352,16 @@ func (s *Store) GetKlinesUpTo(ctx context.Context, symbol, tf string, maxSec int
 }
 
 // GetKlinesRange returns all candles in [fromSec, toSec] inclusive, sorted ascending.
-func (s *Store) GetKlinesRange(ctx context.Context, symbol, tf string, fromSec, toSec int64) ([]types.Candle, error) {
+func (s *Store) GetKlinesRange(ctx context.Context, source, symbol, tf string, fromSec, toSec int64) ([]types.Candle, error) {
 	if s == nil {
 		return nil, nil
 	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT time_sec, open, high, low, close, volume, quote_vol
-		FROM klines
-		WHERE symbol = ? AND tf = ? AND time_sec >= ? AND time_sec <= ?
+		FROM market_klines
+		WHERE source = ? AND symbol = ? AND tf = ? AND time_sec >= ? AND time_sec <= ?
 		ORDER BY time_sec ASC
-	`, symbol, tf, fromSec, toSec)
+	`, source, symbol, tf, fromSec, toSec)
 	if err != nil {
 		return nil, err
 	}
@@ -346,14 +379,14 @@ func (s *Store) GetKlinesRange(ctx context.Context, symbol, tf string, fromSec, 
 }
 
 // LatestKlineTime returns the latest cached time_sec for (symbol, tf), or 0 if empty.
-func (s *Store) LatestKlineTime(ctx context.Context, symbol, tf string) (int64, error) {
+func (s *Store) LatestKlineTime(ctx context.Context, source, symbol, tf string) (int64, error) {
 	if s == nil {
 		return 0, nil
 	}
 	var ts sql.NullInt64
 	err := s.db.QueryRowContext(ctx, `
-		SELECT MAX(time_sec) FROM klines WHERE symbol = ? AND tf = ?
-	`, symbol, tf).Scan(&ts)
+		SELECT MAX(time_sec) FROM market_klines WHERE source = ? AND symbol = ? AND tf = ?
+	`, source, symbol, tf).Scan(&ts)
 	if err != nil {
 		return 0, err
 	}
@@ -364,11 +397,11 @@ func (s *Store) LatestKlineTime(ctx context.Context, symbol, tf string) (int64, 
 }
 
 // ListCachedSymbols returns distinct symbols present in the klines cache.
-func (s *Store) ListCachedSymbols(ctx context.Context) ([]string, error) {
+func (s *Store) ListCachedSymbols(ctx context.Context, source string) ([]string, error) {
 	if s == nil {
 		return nil, nil
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT symbol FROM klines ORDER BY symbol ASC`)
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT symbol FROM market_klines WHERE source = ? ORDER BY symbol ASC`, source)
 	if err != nil {
 		return nil, err
 	}

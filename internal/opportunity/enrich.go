@@ -245,7 +245,12 @@ func (s *Service) EnrichAndEvaluate(ctx context.Context, req EnrichRequest) (Eva
 	if created <= 0 {
 		created = time.Now().Unix()
 	}
+	source := req.Event.Exchange
+	if named, ok := req.Fetcher.(interface{ Name() string }); ok {
+		source = named.Name()
+	}
 	res, err := s.EvaluateOrAttach(EvaluateRequest{
+		Exchange:       source,
 		EventID:        eventID,
 		CreatedAt:      created,
 		SignalAt:       created,

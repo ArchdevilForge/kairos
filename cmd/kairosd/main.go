@@ -4,23 +4,19 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"log"
 	"log/slog"
 	"net"
-	"net/http"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
 	"time"
 
-	"github.com/ArchdevilForge/kairos/internal/cache"
 	"github.com/ArchdevilForge/kairos/internal/config"
-	"github.com/ArchdevilForge/kairos/internal/deskapi"
 	"github.com/ArchdevilForge/kairos/internal/engine"
 	"github.com/ArchdevilForge/kairos/internal/notify"
 	"github.com/ArchdevilForge/kairos/internal/types"
@@ -67,7 +63,7 @@ func run(ctx context.Context, p pipelineRunner) error {
 		}
 	case startErr = <-errCh:
 		// Pipeline returned on its own: never a healthy state for a daemon.
-		early = true
+		early = ctx.Err() == nil
 		p.Stop()
 	}
 
@@ -98,8 +94,6 @@ func main() {
 		AddSource: true,
 	})))
 
-	slog.Info("starting kairosd", "primary", cfg.Exchanges.Primary, "realtime", cfg.DataManager.Exchanges)
-
 	var tg *notify.TelegramClient
 	if cfg.Telegram.Enabled && cfg.Telegram.BotToken != "" && cfg.Telegram.ChatID != "" {
 		chatID, err := parseChatID(cfg.Telegram.ChatID)
@@ -126,82 +120,26 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	pipeline := engine.NewPipeline(cfg, tg)
-	if ding != nil {
-		pipeline.SetDingTalk(ding)
+	notifyStarted := func() {
+		const message = "🟢 kairosd started — monitoring pipeline"
+		if tg != nil {
+			_ = tg.SendText(ctx, message)
+		}
+		if ding != nil {
+			_ = ding.SendText(ctx, message)
+		}
 	}
-
-	var (
-		cacheStore *cache.Store
-		deskSrv    *deskapi.Server
-		httpSrv    *http.Server
-	)
+	var runErr error
 	if listenAddr := strings.TrimSpace(*deskListen); listenAddr != "" {
-		if err := pipeline.EnsureDeskStorage(); err != nil {
-			log.Fatalf("desk storage init: %v", err)
+		runErr = runDesk(ctx, cfg, tg, ding, listenAddr, strings.TrimSpace(*deskToken), notifyStarted)
+	} else {
+		notifyStarted()
+		slog.Info("starting kairosd", "primary", cfg.Exchanges.Primary, "realtime", cfg.DataManager.Exchanges)
+		pipeline := engine.NewPipeline(cfg, tg)
+		if ding != nil {
+			pipeline.SetDingTalk(ding)
 		}
-		cacheStore, err = cache.OpenFromStorageConfig(cfg.Storage)
-		if err != nil {
-			log.Fatalf("desk cache init: %v", err)
-		}
-		defer func() { _ = cacheStore.Close() }()
-		pipeline.SetCacheStore(cacheStore)
-
-		token := strings.TrimSpace(*deskToken)
-		if token == "" {
-			token, err = randomHexToken(16)
-			if err != nil {
-				log.Fatalf("generate desk token: %v", err)
-			}
-		}
-
-		deskSrv = deskapi.NewServer(pipeline, cacheStore, token)
-		pipeline.SetDesktopObserver(deskSrv.Observer())
-
-		ln, err := net.Listen("tcp", listenAddr)
-		if err != nil {
-			log.Fatalf("desk listen %s: %v", listenAddr, err)
-		}
-		httpSrv = &http.Server{
-			Handler:           deskSrv.Handler(),
-			ReadHeaderTimeout: 10 * time.Second,
-		}
-		go func() {
-			if err := httpSrv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
-				slog.Error("deskapi server error", "error", err)
-			}
-		}()
-
-		bound := normalizeBoundAddr(ln.Addr().String())
-		readyJSON, err := json.Marshal(map[string]string{
-			"url":    "http://" + bound,
-			"ws_url": "ws://" + bound + "/api/v1/ws",
-			"token":  token,
-		})
-		if err != nil {
-			log.Fatalf("marshal KAIROSD_DESK_READY: %v", err)
-		}
-		fmt.Printf("KAIROSD_DESK_READY %s\n", readyJSON)
-		_ = os.Stdout.Sync()
-	}
-
-	startMsg := "🟢 kairosd started — monitoring pipeline"
-	if tg != nil {
-		_ = tg.SendText(ctx, startMsg)
-	}
-	if ding != nil {
-		_ = ding.SendText(ctx, startMsg)
-	}
-
-	runErr := run(ctx, pipeline)
-
-	if httpSrv != nil {
-		shutCtx, shutCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		_ = httpSrv.Shutdown(shutCtx)
-		shutCancel()
-	}
-	if deskSrv != nil {
-		deskSrv.Close()
+		runErr = run(ctx, pipeline)
 	}
 
 	stopMsg := "🔴 kairosd stopped"
