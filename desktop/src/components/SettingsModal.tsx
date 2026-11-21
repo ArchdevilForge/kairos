@@ -6,6 +6,7 @@ import type {
   DeskStatus,
   UpdateSettingsRequest,
 } from '../types/kairos';
+import { formatExchangeLabel, resolveAccountExchange } from '../utils/doctrine';
 
 export interface SettingsModalProps {
   open: boolean;
@@ -32,6 +33,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onSaveSettings,
 }) => {
   const { locale, setLocale, t } = useI18n();
+  const activeExchange = resolveAccountExchange(status);
+  const isBinance = activeExchange === 'binance';
+  const exchangeTitle = isBinance ? 'Binance' : 'Bybit';
+  const exchangeLabel = formatExchangeLabel(activeExchange, locale);
+  const envPrefix = isBinance ? 'BINANCE' : 'BYBIT';
   const [bankroll, setBankroll] = useState(
     String(status.risk_config.trading_bankroll_usd || 40),
   );
@@ -58,6 +64,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setSuccessMsg(null);
   }, [
     open,
+    activeExchange,
     status.risk_config.max_loss_usd,
     status.risk_config.trading_bankroll_usd,
     status.timezone,
@@ -105,10 +112,18 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       proxy_url: proxyUrl.trim(),
     };
     if (hasKey) {
-      req.binance_readonly_api_key = apiKey.trim();
+      if (isBinance) {
+        req.binance_readonly_api_key = apiKey.trim();
+      } else {
+        req.bybit_readonly_api_key = apiKey.trim();
+      }
     }
     if (hasSecret) {
-      req.binance_readonly_api_secret = apiSecret.trim();
+      if (isBinance) {
+        req.binance_readonly_api_secret = apiSecret.trim();
+      } else {
+        req.bybit_readonly_api_secret = apiSecret.trim();
+      }
     }
     return req;
   };
@@ -207,7 +222,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               {t('settings.title')}
             </h2>
             <p className="text-[11px]" style={{ color: 'var(--text-secondary)' }}>
-              {t('settings.subtitle')}
+              {t('settings.subtitle', { exchange: exchangeLabel })}
             </p>
           </div>
           <button
@@ -364,7 +379,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               className="mb-1.5 block text-[11px] font-medium"
               style={{ color: 'var(--text-secondary)' }}
             >
-              {t('settings.proxyLabel')}
+              {t('settings.proxyLabel', { exchange: exchangeTitle })}
             </span>
             <input
               type="text"
@@ -403,7 +418,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 style={{ color: 'var(--text-primary)' }}
               >
                 <Lock className="h-3.5 w-3.5" style={{ color: 'var(--accent-info)' }} />
-                {t('settings.apiSectionTitle')}
+                {t('settings.apiSectionTitle', { exchange: exchangeLabel })}
               </span>
               <span
                 className="tabular-nums"
@@ -432,7 +447,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     ? t('settings.apiKeyKeepPlaceholder', {
                         masked: status.account.api_key_masked,
                       })
-                    : t('settings.apiKeyPlaceholder')
+                    : t('settings.apiKeyPlaceholder', { envPrefix })
                 }
                 autoComplete="off"
                 className="tabular-nums w-full rounded-[6px] border px-2.5 py-1.5 text-[12px] outline-none"
@@ -451,7 +466,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   setSuccessMsg(null);
                   setApiSecret(e.target.value);
                 }}
-                placeholder={t('settings.apiSecretPlaceholder')}
+                placeholder={t('settings.apiSecretPlaceholder', { envPrefix })}
                 autoComplete="new-password"
                 className="tabular-nums w-full rounded-[6px] border px-2.5 py-1.5 text-[12px] outline-none"
                 style={{
@@ -461,6 +476,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 }}
               />
             </div>
+
+            <p className="mt-2 text-[10px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
+              {t(isBinance ? 'settings.apiPermHintBinance' : 'settings.apiPermHintBybit')}
+            </p>
 
             {status.account.sync_error && !errorMsg && (
               <p className="mt-2 text-[11px]" style={{ color: 'var(--pnl-neg)' }}>

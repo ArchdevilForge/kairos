@@ -31,6 +31,15 @@ func TestNewPipeline_Defaults(t *testing.T) {
 	if p.minSeverityRank != severityRank("LOW") {
 		t.Fatalf("min severity rank: %d", p.minSeverityRank)
 	}
+	if p.PrimaryExchange() != "bybit" {
+		t.Fatalf("default PrimaryExchange = %q, want bybit", p.PrimaryExchange())
+	}
+	cfg.Exchanges.WSEndpoints.Bybit = "wss://stream.example.test/v5/public/linear"
+	cfg.Exchanges.WSEndpoints.OKX = "wss://ws.example.test:443/ws/v5/public"
+	eps := p.exchangeEndpoints()
+	if eps.Bybit != cfg.Exchanges.WSEndpoints.Bybit || eps.OKX != cfg.Exchanges.WSEndpoints.OKX {
+		t.Fatalf("exchangeEndpoints mismatch: %+v", eps)
+	}
 }
 
 func TestSeverityRank(t *testing.T) {

@@ -23,7 +23,8 @@ func (s *Server) handleMarketBars(w http.ResponseWriter, r *http.Request) {
 	limit := parseLimit(r.URL.Query().Get("limit"), 800, 1500)
 	beforeTS, _ := strconv.ParseInt(r.URL.Query().Get("before_ts"), 10, 64)
 
-	if _, allow, err := exchange.FetchBinanceCryptoPerpSymbols(ctx); err == nil && len(allow) > 0 && !allow[sym] {
+	exName := s.activeExchange()
+	if _, allow, err := exchange.FetchCryptoPerpSymbols(ctx, exName); err == nil && len(allow) > 0 && !allow[sym] {
 		writeError(w, http.StatusBadRequest, "仅支持 Crypto 永续合约: "+sym, "NON_CRYPTO_SYMBOL")
 		return
 	}
@@ -102,6 +103,7 @@ func (s *Server) handleReplayState(w http.ResponseWriter, r *http.Request) {
 			maxTFSec = sec
 		}
 	}
+	exName := s.activeExchange()
 	var all1m []types.Candle
 	if s.cache != nil {
 		// Load enough 1m bars up to cursorTS to cover forming higher-TF candles (and 1m fallback).
@@ -109,9 +111,9 @@ func (s *Server) handleReplayState(w http.ResponseWriter, r *http.Request) {
 		if minFrom < 0 {
 			minFrom = 0
 		}
-		all1m, _ = s.cache.GetKlinesUpTo(ctx, sym, "1m", cursorTS, maxInt(limit*2, 1500))
+		all1m, _ = s.cache.GetKlinesUpToForSource(ctx, sym, "1m", exName, cursorTS, maxInt(limit*2, 1500))
 		if len(all1m) == 0 && minFrom > 0 {
-			all1m, _ = s.cache.GetKlinesRange(ctx, sym, "1m", minFrom, cursorTS)
+			all1m, _ = s.cache.GetKlinesRangeForSource(ctx, sym, "1m", exName, minFrom, cursorTS)
 		}
 	}
 
@@ -128,10 +130,10 @@ func (s *Server) handleReplayState(w http.ResponseWriter, r *http.Request) {
 		if d, err := s.cache.ListDrawings(ctx, sym, cursorTS); err == nil && d != nil {
 			drawings = d
 		}
-		if fl, err := s.cache.ListTradeFills(ctx, sym, cursorTS*1000); err == nil && fl != nil {
+		if fl, err := s.cache.ListTradeFillsForExchange(ctx, exName, sym, cursorTS*1000); err == nil && fl != nil {
 			fills = fl
 		}
-		if st, err := s.cache.ListSyncedTrades(ctx, sym); err == nil {
+		if st, err := s.cache.ListSyncedTradesForExchange(ctx, exName, sym); err == nil {
 			syncedTrades = st
 		}
 	}
@@ -224,9 +226,10 @@ func (s *Server) handleReplayState(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) replayCandlesForTF(ctx context.Context, sym, tf string, cursorTS int64, limit int, all1m []types.Candle) []types.Candle {
+	exName := s.activeExchange()
 	if tf == "1m" {
 		if len(all1m) == 0 && s.cache != nil {
-			all1m, _ = s.cache.GetKlinesUpTo(ctx, sym, "1m", cursorTS, limit)
+			all1m, _ = s.cache.GetKlinesUpToForSource(ctx, sym, "1m", exName, cursorTS, limit)
 		}
 		if len(all1m) > limit {
 			return all1m[len(all1m)-limit:]
@@ -240,7 +243,7 @@ func (s *Server) replayCandlesForTF(ctx context.Context, sym, tf string, cursorT
 
 	var closed []types.Candle
 	if s.cache != nil && maxClosedOpen >= 0 {
-		closed, _ = s.cache.GetKlinesUpTo(ctx, sym, tf, maxClosedOpen, limit)
+		closed, _ = s.cache.GetKlinesUpToForSource(ctx, sym, tf, exName, maxClosedOpen, limit)
 	}
 	// If higher-TF klines were not cached (e.g. only 1m bars seeded), synthesize closed bars from 1m <= cursorTS.
 	if len(closed) == 0 && len(all1m) > 0 {
@@ -360,13 +363,14 @@ func (s *Server) warmBarsTailAsync(sym, tf string, fetchLim int) {
 	s.bgWG.Add(1)
 	s.barsFetchMu.Unlock()
 
+	source := s.activeExchange()
 	go func() {
 		defer s.bgWG.Done()
 		bgCtx, cancel := context.WithTimeout(s.bgCtx, 4*time.Second)
 		defer cancel()
 		fetched, err := ex.FetchOHLCV(bgCtx, sym, tf, fetchLim, 0)
 		if err == nil && len(fetched) > 0 && s.bgCtx.Err() == nil {
-			_ = s.cache.UpsertKlines(bgCtx, sym, tf, ex.Name(), fetched)
+			_ = s.cache.UpsertKlines(bgCtx, sym, tf, source, fetched)
 			s.markBarsCacheFetched(sym, tf)
 		}
 		s.barsFetchMu.Lock()
@@ -389,9 +393,10 @@ func earliestGapPrevTS(candles []types.Candle, tfSec int64) (int64, bool) {
 }
 
 func (s *Server) loadBarsWithFallback(ctx context.Context, sym, tf string, limit int, beforeTS int64) []types.Candle {
+	source := s.activeExchange()
 	var cached []types.Candle
 	if s.cache != nil {
-		cached, _ = s.cache.GetKlines(ctx, sym, tf, limit, beforeTS)
+		cached, _ = s.cache.GetKlinesForSource(ctx, sym, tf, source, limit, beforeTS)
 	}
 
 	fetchLim := 0
@@ -440,8 +445,8 @@ func (s *Server) loadBarsWithFallback(ctx context.Context, sym, tf string, limit
 					s.markBarsCacheFetched(sym, tf)
 				}
 				if s.cache != nil {
-					_ = s.cache.UpsertKlines(ctx, sym, tf, ex.Name(), fetched)
-					if reloaded, err := s.cache.GetKlines(ctx, sym, tf, limit, beforeTS); err == nil && len(reloaded) > 0 {
+					_ = s.cache.UpsertKlines(ctx, sym, tf, source, fetched)
+					if reloaded, err := s.cache.GetKlinesForSource(ctx, sym, tf, source, limit, beforeTS); err == nil && len(reloaded) > 0 {
 						return reloaded
 					}
 				}
@@ -460,7 +465,7 @@ func (s *Server) loadClosedCandles(ctx context.Context, sym, tf string, limit in
 		return nil, nil
 	}
 	if s.cache != nil {
-		bars, err := s.cache.GetKlinesUpTo(ctx, sym, tf, maxOpen, limit)
+		bars, err := s.cache.GetKlinesUpToForSource(ctx, sym, tf, s.activeExchange(), maxOpen, limit)
 		if err == nil && (len(bars) >= 40 || strictCacheOnly) {
 			return bars, nil
 		}

@@ -11,8 +11,6 @@ import (
 	"math"
 	"net/http"
 	"net/url"
-	"os"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -20,14 +18,8 @@ import (
 	"time"
 
 	"github.com/ArchdevilForge/kairos/internal/cache"
-	"github.com/ArchdevilForge/kairos/internal/decision"
 	"github.com/ArchdevilForge/kairos/internal/storage"
 	"github.com/ArchdevilForge/kairos/internal/types"
-)
-
-const (
-	envBinanceReadonlyKey    = "BINANCE_READONLY_API_KEY"
-	envBinanceReadonlySecret = "BINANCE_READONLY_API_SECRET"
 )
 
 // BinanceAccountSummary holds the non-secret USD summary from GET /fapi/v2/account.
@@ -82,131 +74,6 @@ type BinanceIncomeRow struct {
 	Info       string `json:"info"`
 }
 
-// AccountSyncOutcome summarizes a completed read-only sync into desktop-cache.db.
-type AccountSyncOutcome struct {
-	SyncedTrades     int
-	SyncedFills      int
-	OpenPositions    int
-	WalletBalanceUSD float64
-	UnrealizedPnLUSD float64
-	LastSyncAt       int64
-}
-
-// SecretsFilePath returns ~/.config/kairos/secrets.env.
-func SecretsFilePath() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil || strings.TrimSpace(home) == "" {
-		return "", fmt.Errorf("resolve user home dir: %w", err)
-	}
-	return filepath.Join(home, ".config", "kairos", "secrets.env"), nil
-}
-
-func cleanCredential(v string) string {
-	return strings.Trim(strings.TrimSpace(v), "\"'")
-}
-
-// LoadBinanceReadonlyKeys loads BINANCE_READONLY_API_KEY and BINANCE_READONLY_API_SECRET
-// from environment variables first, falling back to ~/.config/kairos/secrets.env.
-func LoadBinanceReadonlyKeys() (apiKey, apiSecret string) {
-	apiKey = cleanCredential(os.Getenv(envBinanceReadonlyKey))
-	apiSecret = cleanCredential(os.Getenv(envBinanceReadonlySecret))
-	if apiKey != "" && apiSecret != "" {
-		return apiKey, apiSecret
-	}
-	p, err := SecretsFilePath()
-	if err != nil {
-		return apiKey, apiSecret
-	}
-	kv := parseEnvFile(p)
-	if apiKey == "" {
-		apiKey = cleanCredential(kv[envBinanceReadonlyKey])
-	}
-	if apiSecret == "" {
-		apiSecret = cleanCredential(kv[envBinanceReadonlySecret])
-	}
-	return apiKey, apiSecret
-}
-
-// SaveBinanceReadonlyKeys stores read-only Binance API credentials in ~/.config/kairos/secrets.env
-// with 0600 permissions, preserving any other key/value entries in that file.
-func SaveBinanceReadonlyKeys(apiKey, apiSecret string) error {
-	p, err := SecretsFilePath()
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
-		return fmt.Errorf("secrets mkdir: %w", err)
-	}
-	existing := parseEnvFile(p)
-	if k := cleanCredential(apiKey); k != "" {
-		existing[envBinanceReadonlyKey] = k
-	}
-	if s := cleanCredential(apiSecret); s != "" {
-		existing[envBinanceReadonlySecret] = s
-	}
-
-	keys := make([]string, 0, len(existing))
-	for k := range existing {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-
-	var b strings.Builder
-	b.WriteString("# Kairos read-only secrets (0600, never commit)\n")
-	for _, k := range keys {
-		b.WriteString(k)
-		b.WriteByte('=')
-		b.WriteString(existing[k])
-		b.WriteByte('\n')
-	}
-
-	if err := os.WriteFile(p, []byte(b.String()), 0o600); err != nil {
-		return fmt.Errorf("write secrets.env: %w", err)
-	}
-	_ = os.Chmod(p, 0o600)
-	return nil
-}
-
-// MaskAPIKey returns a redacted form suitable for UI display and logs.
-func MaskAPIKey(key string) string {
-	key = strings.TrimSpace(key)
-	if key == "" {
-		return ""
-	}
-	if len(key) <= 8 {
-		return "****"
-	}
-	return key[:4] + "****" + key[len(key)-4:]
-}
-
-func parseEnvFile(path string) map[string]string {
-	out := make(map[string]string)
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return out
-	}
-	for _, line := range strings.Split(string(raw), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		line = strings.TrimPrefix(line, "export ")
-		idx := strings.IndexByte(line, '=')
-		if idx <= 0 {
-			continue
-		}
-		k := strings.TrimSpace(line[:idx])
-		v := strings.TrimSpace(line[idx+1:])
-		if len(v) >= 2 && ((v[0] == '"' && v[len(v)-1] == '"') || (v[0] == '\'' && v[len(v)-1] == '\'')) {
-			v = v[1 : len(v)-1]
-		}
-		if k != "" {
-			out[k] = v
-		}
-	}
-	return out
-}
-
 // BinanceAccountClient is a strictly read-only Binance USDT-M account client.
 // It exposes ONLY GET endpoints and never serializes or logs credentials.
 type BinanceAccountClient struct {
@@ -233,6 +100,9 @@ func NewBinanceAccountClient() *BinanceAccountClient {
 		httpCli:   newPooledHTTPClient(15 * time.Second),
 	}
 }
+
+// Exchange identifies this client as "binance".
+func (c *BinanceAccountClient) Exchange() string { return "binance" }
 
 // HasKeys reports whether both API key and secret are configured.
 func (c *BinanceAccountClient) HasKeys() bool {
@@ -501,7 +371,7 @@ func (c *BinanceAccountClient) fetchBNBPriceUSD(ctx context.Context) float64 {
 
 // SyncToCache pulls read-only account balances, open positions, income ledger, and user trades,
 // aggregates FIFO lots keyed by (symbol, positionSide), matches accepted DecisionTickets,
-// and updates desktop-cache.db.
+// and updates desktop-cache.db strictly under exchange="binance".
 func (c *BinanceAccountClient) SyncToCache(
 	ctx context.Context,
 	store *cache.Store,
@@ -515,8 +385,10 @@ func (c *BinanceAccountClient) SyncToCache(
 		return nil, fmt.Errorf("binance read-only api keys not configured")
 	}
 
+	const ex = "binance"
+
 	// 1. Fetch account summary, position risks, incremental income events, and warm BNB price concurrently.
-	latestIncomeMs, err := store.LatestIncomeTimeMs(ctx)
+	latestIncomeMs, err := store.LatestIncomeTimeMsForExchange(ctx, ex)
 	if err != nil {
 		return nil, err
 	}
@@ -567,6 +439,7 @@ func (c *BinanceAccountClient) SyncToCache(
 				}
 				tranID := fmt.Sprintf("%v_%s_%d", r.TranID, r.IncomeType, r.Time)
 				newIncomes = append(newIncomes, cache.IncomeRecord{
+					Exchange:   ex,
 					TranID:     tranID,
 					Symbol:     sym,
 					IncomeType: r.IncomeType,
@@ -592,16 +465,17 @@ func (c *BinanceAccountClient) SyncToCache(
 
 	for _, fetchErr := range []error{acctErr, risksErr, incomeErr} {
 		if fetchErr != nil {
+			_ = store.SetExchangeMeta(ctx, ex, "sync_error", fetchErr.Error())
 			_ = store.SetAccountMeta(ctx, "sync_error", fetchErr.Error())
 			return nil, fetchErr
 		}
 	}
 
-	if err := store.UpsertIncomeRecords(ctx, newIncomes); err != nil {
+	if err := store.UpsertIncomeRecordsForExchange(ctx, ex, newIncomes); err != nil {
 		return nil, err
 	}
 
-	allIncomes, err := store.ListIncomeRecords(ctx, "")
+	allIncomes, err := store.ListIncomeRecordsForExchange(ctx, ex, "")
 	if err != nil {
 		return nil, err
 	}
@@ -650,7 +524,7 @@ func (c *BinanceAccountClient) SyncToCache(
 			}
 		}
 	}
-	existingFills, err := store.ListTradeFills(ctx, "", 0)
+	existingFills, err := store.ListTradeFillsForExchange(ctx, ex, "", 0)
 	if err != nil {
 		return nil, err
 	}
@@ -760,37 +634,12 @@ func (c *BinanceAccountClient) SyncToCache(
 		return nil, ctx.Err()
 	}
 
-	// Merge existing + newly fetched fills deduplicating by base FillID.
-	mergedFillMap := make(map[string]cache.TradeFill, len(existingFills)+len(fetchedFills))
-	for _, f := range existingFills {
-		// Re-collapse prior flip splits back to canonical base FillID before re-aggregating.
-		if strings.HasSuffix(f.FillID, ":flip") {
-			baseID := strings.TrimSuffix(f.FillID, ":flip")
-			if base, ok := mergedFillMap[baseID]; ok {
-				base.Qty += f.Qty
-				base.QuoteQty += f.QuoteQty
-				base.Commission += f.Commission
-				base.RealizedPnL += f.RealizedPnL
-				base.TradeID = ""
-				mergedFillMap[baseID] = base
-			}
-			continue
-		}
-		f.TradeID = ""
-		mergedFillMap[f.FillID] = f
-	}
-	for _, f := range fetchedFills {
+	allFills := mergeFillsForSync(ex, existingFills, fetchedFills)
+	for _, f := range allFills {
 		if strings.EqualFold(f.CommissionAsset, "BNB") {
 			needBNB = true
+			break
 		}
-		mergedFillMap[f.FillID] = f
-	}
-	allFills := make([]cache.TradeFill, 0, len(mergedFillMap))
-	for _, f := range mergedFillMap {
-		if strings.EqualFold(f.CommissionAsset, "BNB") {
-			needBNB = true
-		}
-		allFills = append(allFills, f)
 	}
 
 	var bnbPrice float64
@@ -802,18 +651,11 @@ func (c *BinanceAccountClient) SyncToCache(
 	trades, linkedFills := AggregateBinanceTrades(allFills, allIncomes, risks, tickets, decisions, bnbPrice)
 
 	nowSec := time.Now().Unix()
-	openPositions := buildOpenPositions(risks, nowSec)
+	openPositions := buildBinanceOpenPositions(risks, nowSec)
 
-	if err := store.ReplaceAllSyncedTrades(ctx, trades, linkedFills); err != nil {
+	if err := persistAccountSync(ctx, store, ex, trades, linkedFills, openPositions, acct.WalletBalanceUSD, acct.UnrealizedPnLUSD, nowSec); err != nil {
 		return nil, err
 	}
-	if err := store.ReplaceOpenPositions(ctx, openPositions); err != nil {
-		return nil, err
-	}
-	_ = store.SetAccountMeta(ctx, "wallet_balance_usd", strconv.FormatFloat(acct.WalletBalanceUSD, 'f', 6, 64))
-	_ = store.SetAccountMeta(ctx, "unrealized_pnl_usd", strconv.FormatFloat(acct.UnrealizedPnLUSD, 'f', 6, 64))
-	_ = store.SetAccountMeta(ctx, "last_sync_at", strconv.FormatInt(nowSec, 10))
-	_ = store.SetAccountMeta(ctx, "sync_error", "")
 
 	return &AccountSyncOutcome{
 		SyncedTrades:     len(trades),
@@ -831,6 +673,7 @@ func convertBinanceTrade(canonicalSym string, r BinanceUserTrade) cache.TradeFil
 		posSide = "BOTH"
 	}
 	return cache.TradeFill{
+		Exchange:        "binance",
 		FillID:          fmt.Sprintf("%s:%d", canonicalSym, r.ID),
 		OrderID:         strconv.FormatInt(r.OrderID, 10),
 		Symbol:          canonicalSym,
@@ -859,7 +702,7 @@ func parseTrailingBinanceTradeID(fillID string) int64 {
 	return id
 }
 
-func buildOpenPositions(risks []BinancePositionRisk, updatedAt int64) []cache.OpenPosition {
+func buildBinanceOpenPositions(risks []BinancePositionRisk, updatedAt int64) []cache.OpenPosition {
 	out := make([]cache.OpenPosition, 0)
 	for _, r := range risks {
 		amt := parseFloat(r.PositionAmt)
@@ -883,6 +726,7 @@ func buildOpenPositions(risks []BinancePositionRisk, updatedAt int64) []cache.Op
 			lev = 1
 		}
 		out = append(out, cache.OpenPosition{
+			Exchange:       "binance",
 			Symbol:         sym,
 			PositionSide:   posSide,
 			MarginMode:     marginMode,
@@ -899,61 +743,8 @@ func buildOpenPositions(risks []BinancePositionRisk, updatedAt int64) []cache.Op
 	return out
 }
 
-type fifoLot struct {
-	qty   float64
-	price float64
-}
-
-type activeTradeAcc struct {
-	id                 string
-	symbol             string
-	direction          string
-	positionSide       string
-	entryTimeMs        int64
-	exitTimeMs         int64
-	openQty            float64
-	totalOpenedQty     float64
-	totalClosedQty     float64
-	totalEntryNotional float64
-	totalExitNotional  float64
-	realizedPnL        float64
-	feeUSD             float64
-	lots               []fifoLot
-}
-
-// AggregateBinanceTrades performs deterministic FIFO lot aggregation keyed by
-// (symbol, positionSide), preserves open positions, attaches leverage/margin/liq_price
-// and real commission+funding costs, links TradeFill.TradeID, and matches trades
-// to accepted DecisionTickets (unmatched flagged GATE_NO_VALID_TICKET).
-func AggregateBinanceTrades(
-	rawFills []cache.TradeFill,
-	incomes []cache.IncomeRecord,
-	posRisks []BinancePositionRisk,
-	tickets []types.DecisionTicket,
-	decisions map[string]types.DecisionRecord,
-	bnbPriceUSD float64,
-) ([]cache.SyncedTrade, []cache.TradeFill) {
-	if len(rawFills) == 0 {
-		return nil, nil
-	}
-
-	fills := make([]cache.TradeFill, len(rawFills))
-	copy(fills, rawFills)
-	sort.Slice(fills, func(i, j int) bool {
-		if fills[i].TimeMs != fills[j].TimeMs {
-			return fills[i].TimeMs < fills[j].TimeMs
-		}
-		return fills[i].FillID < fills[j].FillID
-	})
-
-	type posMeta struct {
-		marginMode     string
-		leverage       float64
-		liqPrice       float64
-		isolatedWallet float64
-	}
-	metaByKey := make(map[string]posMeta)
-	metaBySym := make(map[string]posMeta)
+func binanceRisksToPositionMeta(posRisks []BinancePositionRisk) []PositionMeta {
+	out := make([]PositionMeta, 0, len(posRisks))
 	for _, r := range posRisks {
 		sym := toCanonicalBinance(r.Symbol)
 		if sym == "" {
@@ -971,529 +762,39 @@ func AggregateBinanceTrades(
 		if mm == "" {
 			mm = "cross"
 		}
-		pm := posMeta{
-			marginMode:     mm,
-			leverage:       lev,
-			liqPrice:       parseFloat(r.LiquidationPrice),
-			isolatedWallet: parseFloat(r.IsolatedWallet),
-		}
-		metaByKey[sym+"|"+ps] = pm
-		if _, exists := metaBySym[sym]; !exists || parseFloat(r.PositionAmt) != 0 {
-			metaBySym[sym] = pm
-		}
+		out = append(out, PositionMeta{
+			Symbol:         sym,
+			PositionSide:   ps,
+			MarginMode:     mm,
+			Leverage:       lev,
+			LiqPrice:       parseFloat(r.LiquidationPrice),
+			IsolatedWallet: parseFloat(r.IsolatedWallet),
+			IsOpen:         parseFloat(r.PositionAmt) != 0,
+		})
 	}
+	return out
+}
 
-	type streamKey struct {
-		symbol  string
-		posSide string
-	}
-	grouped := make(map[streamKey][]cache.TradeFill)
-	var keys []streamKey
-	for _, f := range fills {
-		ps := strings.ToUpper(strings.TrimSpace(f.PositionSide))
-		if ps == "" {
-			ps = "BOTH"
-		}
-		f.PositionSide = ps
-		f.Side = strings.ToUpper(strings.TrimSpace(f.Side))
-		k := streamKey{symbol: f.Symbol, posSide: ps}
-		if _, ok := grouped[k]; !ok {
-			keys = append(keys, k)
-		}
-		grouped[k] = append(grouped[k], f)
-	}
-	sort.Slice(keys, func(i, j int) bool {
-		if keys[i].symbol != keys[j].symbol {
-			return keys[i].symbol < keys[j].symbol
-		}
-		return keys[i].posSide < keys[j].posSide
+// AggregateBinanceTrades performs deterministic FIFO lot aggregation keyed by
+// (symbol, positionSide), preserves open positions, attaches leverage/margin/liq_price
+// and real commission+funding costs, links TradeFill.TradeID, and matches trades
+// to accepted DecisionTickets (unmatched flagged GATE_NO_VALID_TICKET).
+func AggregateBinanceTrades(
+	rawFills []cache.TradeFill,
+	incomes []cache.IncomeRecord,
+	posRisks []BinancePositionRisk,
+	tickets []types.DecisionTicket,
+	decisions map[string]types.DecisionRecord,
+	bnbPriceUSD float64,
+) ([]cache.SyncedTrade, []cache.TradeFill) {
+	return AggregateTrades(AggregateTradesInput{
+		Exchange:          "binance",
+		Fills:             rawFills,
+		Incomes:           incomes,
+		PositionMeta:      binanceRisksToPositionMeta(posRisks),
+		DefaultMarginMode: "cross",
+		Tickets:           tickets,
+		Decisions:         decisions,
+		BNBPriceUSD:       bnbPriceUSD,
 	})
-
-	var trades []cache.SyncedTrade
-	linkedFills := make([]cache.TradeFill, 0, len(fills))
-
-	finalizeTrade := func(acc *activeTradeAcc, open bool) cache.SyncedTrade {
-		meta := metaByKey[acc.symbol+"|"+acc.positionSide]
-		if meta.leverage <= 0 {
-			meta = metaBySym[acc.symbol]
-		}
-		if meta.leverage <= 0 {
-			meta.leverage = 1
-		}
-		if meta.marginMode == "" {
-			meta.marginMode = "cross"
-		}
-
-		entryPx := 0.0
-		qty := 0.0
-		exitPx := 0.0
-		status := "closed"
-		exitMs := acc.exitTimeMs
-
-		if open {
-			status = "open"
-			exitMs = 0
-			var remNotional, remQty float64
-			for _, lot := range acc.lots {
-				remQty += lot.qty
-				remNotional += lot.qty * lot.price
-			}
-			qty = remQty
-			if remQty > 0 {
-				entryPx = remNotional / remQty
-			}
-		} else {
-			qty = acc.totalOpenedQty
-			if acc.totalOpenedQty > 0 {
-				entryPx = acc.totalEntryNotional / acc.totalOpenedQty
-			}
-			if acc.totalClosedQty > 0 {
-				exitPx = acc.totalExitNotional / acc.totalClosedQty
-			}
-		}
-
-		margin := 0.0
-		if entryPx > 0 && qty > 0 && meta.leverage > 0 {
-			margin = (entryPx * qty) / meta.leverage
-		}
-		if open && meta.marginMode == decision.MarginModeIsolated && meta.isolatedWallet > 0 {
-			margin = meta.isolatedWallet
-		}
-		liqPx := 0.0
-		if open {
-			liqPx = meta.liqPrice
-		}
-
-		return cache.SyncedTrade{
-			ID:           acc.id,
-			Symbol:       acc.symbol,
-			Direction:    acc.direction,
-			PositionSide: acc.positionSide,
-			MarginMode:   meta.marginMode,
-			Leverage:     meta.leverage,
-			EntryPrice:   entryPx,
-			ExitPrice:    exitPx,
-			Qty:          qty,
-			EntryTimeMs:  acc.entryTimeMs,
-			ExitTimeMs:   exitMs,
-			RealizedPnL:  acc.realizedPnL,
-			FeeUSD:       acc.feeUSD,
-			Margin:       margin,
-			LiqPrice:     liqPx,
-			Status:       status,
-		}
-	}
-
-	newAcc := func(f cache.TradeFill, dir string) *activeTradeAcc {
-		return &activeTradeAcc{
-			id:           fmt.Sprintf("trd-%s-%s-%d-%d", strings.ToLower(binanceSymbol(f.Symbol)), strings.ToLower(f.PositionSide), f.TimeMs, parseTrailingBinanceTradeID(f.FillID)),
-			symbol:       f.Symbol,
-			direction:    dir,
-			positionSide: f.PositionSide,
-			entryTimeMs:  f.TimeMs,
-		}
-	}
-
-	for _, k := range keys {
-		stream := grouped[k]
-		var acc *activeTradeAcc
-
-		for _, f := range stream {
-			if f.Qty <= 0 {
-				continue
-			}
-			feeUSD := fillFeeUSD(f, bnbPriceUSD)
-			fillDir := fillSideDirection(f.PositionSide, f.Side)
-
-			// Check if fill opens/scales in or closes/reduces existing open lots.
-			if acc == nil {
-				dir := fillDir
-				if dir == "" {
-					if f.Side == "BUY" {
-						dir = "long"
-					} else {
-						dir = "short"
-					}
-				}
-				acc = newAcc(f, dir)
-				acc.lots = append(acc.lots, fifoLot{qty: f.Qty, price: f.Price})
-				acc.openQty += f.Qty
-				acc.totalOpenedQty += f.Qty
-				acc.totalEntryNotional += f.Qty * f.Price
-				acc.feeUSD += feeUSD
-
-				fc := f
-				fc.TradeID = acc.id
-				linkedFills = append(linkedFills, fc)
-				continue
-			}
-
-			isOpening := false
-			switch f.PositionSide {
-			case "LONG":
-				isOpening = f.Side == "BUY"
-			case "SHORT":
-				isOpening = f.Side == "SELL"
-			default: // BOTH
-				isOpening = (acc.direction == "long" && f.Side == "BUY") || (acc.direction == "short" && f.Side == "SELL")
-			}
-
-			if isOpening {
-				acc.lots = append(acc.lots, fifoLot{qty: f.Qty, price: f.Price})
-				acc.openQty += f.Qty
-				acc.totalOpenedQty += f.Qty
-				acc.totalEntryNotional += f.Qty * f.Price
-				acc.feeUSD += feeUSD
-
-				fc := f
-				fc.TradeID = acc.id
-				linkedFills = append(linkedFills, fc)
-				continue
-			}
-
-			// Reducing / closing / flipping.
-			closeQty := math.Min(f.Qty, acc.openQty)
-			remOpenQty := f.Qty - closeQty
-			closeRatio := 1.0
-			if f.Qty > 0 {
-				closeRatio = closeQty / f.Qty
-			}
-			closeFee := feeUSD * closeRatio
-			openFee := feeUSD - closeFee
-
-			consumeFIFOLots(&acc.lots, closeQty)
-			acc.openQty -= closeQty
-			acc.totalClosedQty += closeQty
-			acc.totalExitNotional += closeQty * f.Price
-			acc.exitTimeMs = f.TimeMs
-			acc.realizedPnL += f.RealizedPnL
-			acc.feeUSD += closeFee
-
-			if remOpenQty <= 1e-10 {
-				fc := f
-				fc.TradeID = acc.id
-				linkedFills = append(linkedFills, fc)
-				if acc.openQty <= 1e-10 {
-					trades = append(trades, finalizeTrade(acc, false))
-					acc = nil
-				}
-			} else {
-				// Position flip in BOTH mode: split fill across closing trade and newly opened opposite trade.
-				fcClose := f
-				fcClose.Qty = closeQty
-				fcClose.QuoteQty = closeQty * f.Price
-				fcClose.Commission = closeFee
-				fcClose.TradeID = acc.id
-				linkedFills = append(linkedFills, fcClose)
-
-				trades = append(trades, finalizeTrade(acc, false))
-
-				newDir := "short"
-				if f.Side == "BUY" {
-					newDir = "long"
-				}
-				acc = newAcc(f, newDir)
-				acc.lots = append(acc.lots, fifoLot{qty: remOpenQty, price: f.Price})
-				acc.openQty = remOpenQty
-				acc.totalOpenedQty = remOpenQty
-				acc.totalEntryNotional = remOpenQty * f.Price
-				acc.feeUSD = openFee
-
-				fcOpen := f
-				fcOpen.FillID = f.FillID + ":flip"
-				fcOpen.Qty = remOpenQty
-				fcOpen.QuoteQty = remOpenQty * f.Price
-				fcOpen.Commission = openFee
-				fcOpen.RealizedPnL = 0
-				fcOpen.TradeID = acc.id
-				linkedFills = append(linkedFills, fcOpen)
-			}
-		}
-
-		if acc != nil && acc.openQty > 1e-10 {
-			trades = append(trades, finalizeTrade(acc, true))
-		}
-	}
-
-	// Allocate FUNDING_FEE income to trades active at each funding settlement timestamp.
-	allocateFundingFees(trades, incomes)
-
-	// Compute NetPnL = RealizedPnL - FeeUSD + FundingUSD (FundingUSD is signed cashflow: negative = paid, positive = received).
-	for i := range trades {
-		trades[i].NetPnL = trades[i].RealizedPnL - trades[i].FeeUSD + trades[i].FundingUSD
-	}
-
-	// Match synced trades against accepted DecisionTickets.
-	matchTradesToTickets(trades, tickets, decisions)
-
-	// Sort newest-first by entry_time_ms.
-	sort.Slice(trades, func(i, j int) bool {
-		if trades[i].EntryTimeMs != trades[j].EntryTimeMs {
-			return trades[i].EntryTimeMs > trades[j].EntryTimeMs
-		}
-		return trades[i].ID > trades[j].ID
-	})
-
-	return trades, linkedFills
-}
-
-func fillSideDirection(posSide, side string) string {
-	switch posSide {
-	case "LONG":
-		return "long"
-	case "SHORT":
-		return "short"
-	default:
-		if side == "BUY" {
-			return "long"
-		}
-		if side == "SELL" {
-			return "short"
-		}
-		return ""
-	}
-}
-
-func consumeFIFOLots(lots *[]fifoLot, qty float64) {
-	rem := qty
-	arr := *lots
-	idx := 0
-	for idx < len(arr) && rem > 1e-12 {
-		if arr[idx].qty <= rem+1e-12 {
-			rem -= arr[idx].qty
-			idx++
-		} else {
-			arr[idx].qty -= rem
-			rem = 0
-		}
-	}
-	*lots = arr[idx:]
-}
-
-func fillFeeUSD(f cache.TradeFill, bnbPriceUSD float64) float64 {
-	comm := math.Abs(f.Commission)
-	if comm == 0 {
-		return 0
-	}
-	switch strings.ToUpper(f.CommissionAsset) {
-	case "", "USDT", "USDC", "BUSD", "FDUSD":
-		return comm
-	case "BNB":
-		if bnbPriceUSD > 0 {
-			return comm * bnbPriceUSD
-		}
-		return comm
-	default:
-		return comm
-	}
-}
-
-func allocateFundingFees(trades []cache.SyncedTrade, incomes []cache.IncomeRecord) {
-	if len(trades) == 0 || len(incomes) == 0 {
-		return
-	}
-	for _, inc := range incomes {
-		if inc.IncomeType != "FUNDING_FEE" || inc.Symbol == "" {
-			continue
-		}
-		// Binance income is signed cashflow: negative = paid, positive = received.
-		cashflowUSD := inc.Income
-		var matches []int
-		var totalNotional float64
-		for i := range trades {
-			tr := &trades[i]
-			if tr.Symbol != inc.Symbol {
-				continue
-			}
-			if inc.TimeMs < tr.EntryTimeMs {
-				continue
-			}
-			if tr.Status != "open" && tr.ExitTimeMs > 0 && inc.TimeMs > tr.ExitTimeMs {
-				continue
-			}
-			matches = append(matches, i)
-			totalNotional += tr.EntryPrice * tr.Qty
-		}
-		if len(matches) == 0 {
-			continue
-		}
-		if len(matches) == 1 || totalNotional <= 0 {
-			share := cashflowUSD / float64(len(matches))
-			for _, idx := range matches {
-				trades[idx].FundingUSD += share
-			}
-			continue
-		}
-		for _, idx := range matches {
-			w := (trades[idx].EntryPrice * trades[idx].Qty) / totalNotional
-			trades[idx].FundingUSD += cashflowUSD * w
-		}
-	}
-}
-
-func matchTradesToTickets(trades []cache.SyncedTrade, tickets []types.DecisionTicket, decisions map[string]types.DecisionRecord) {
-	type candTicket struct {
-		ticket    types.DecisionTicket
-		dec       *types.DecisionRecord
-		anchorSec int64
-	}
-	var cands []candTicket
-	for _, t := range tickets {
-		var decPtr *types.DecisionRecord
-		if decisions != nil {
-			if d, ok := decisions[t.ID]; ok {
-				dCopy := d
-				decPtr = &dCopy
-			}
-		}
-		accepted := t.Status == types.TicketStatusAccepted ||
-			t.Status == types.TicketStatusClosed ||
-			(decPtr != nil && decPtr.Decision == types.DecisionAccepted)
-		if !accepted {
-			continue
-		}
-		anchor := t.EntryTriggeredAt
-		if decPtr != nil && decPtr.DecidedAt > 0 {
-			anchor = decPtr.DecidedAt
-		}
-		if anchor <= 0 {
-			anchor = t.CreatedAt
-		}
-		if anchor <= 0 {
-			anchor = t.SignalAt
-		}
-		cands = append(cands, candTicket{ticket: t, dec: decPtr, anchorSec: anchor})
-	}
-
-	usedTickets := make(map[string]bool)
-	const preWindowSec int64 = 15 * 60
-	const postWindowSec int64 = 4 * 3600
-
-	for i := range trades {
-		tr := &trades[i]
-		entrySec := tr.EntryTimeMs / 1000
-		wantCycleDir := types.CycleDirectionUp
-		if tr.Direction == "short" {
-			wantCycleDir = types.CycleDirectionDown
-		}
-
-		bestIdx := -1
-		var bestDist int64 = math.MaxInt64
-		for ci, c := range cands {
-			if usedTickets[c.ticket.ID] {
-				continue
-			}
-			if c.ticket.Symbol != tr.Symbol || c.ticket.Direction != wantCycleDir {
-				continue
-			}
-			if c.anchorSec > 0 && entrySec > 0 {
-				if entrySec < c.anchorSec-preWindowSec || entrySec > c.anchorSec+postWindowSec {
-					continue
-				}
-				dist := entrySec - c.anchorSec
-				if dist < 0 {
-					dist = -dist
-				}
-				if dist < bestDist {
-					bestDist = dist
-					bestIdx = ci
-				}
-			}
-		}
-
-		if bestIdx < 0 {
-			tr.GateCode = decision.GateNoValidTicket
-			continue
-		}
-
-		matched := cands[bestIdx]
-		usedTickets[matched.ticket.ID] = true
-		tr.LinkedTicketID = matched.ticket.ID
-
-		if tr.MarginMode != "" && tr.MarginMode != decision.MarginModeIsolated {
-			tr.GateCode = decision.GateCrossMargin
-			continue
-		}
-		if tr.Status == "closed" && tr.EntryTimeMs > 0 && tr.ExitTimeMs > tr.EntryTimeMs {
-			var er types.ExitReason
-			if matched.ticket.ExitReason != "" {
-				er = matched.ticket.ExitReason
-			} else if matched.dec != nil {
-				er = matched.dec.ExitReason
-			}
-			r1USD := 0.0
-			if matched.dec != nil && matched.dec.PlannedMaxLossUSD != nil && *matched.dec.PlannedMaxLossUSD > 0 {
-				r1USD = *matched.dec.PlannedMaxLossUSD
-			} else if matched.ticket.RiskPlan.EntryPrice > 0 && matched.ticket.RiskPlan.StopPrice > 0 && tr.Qty > 0 {
-				r1USD = math.Abs(matched.ticket.RiskPlan.EntryPrice-matched.ticket.RiskPlan.StopPrice) * tr.Qty
-			}
-			realizedR := 0.0
-			if r1USD > 0 {
-				realizedR = tr.NetPnL / r1USD
-			}
-			res := decision.AuditExit(decision.ExitAuditInput{
-				TicketID:        matched.ticket.ID,
-				HasValidTicket:  true,
-				Symbol:          tr.Symbol,
-				Direction:       wantCycleDir,
-				OpenedAt:        time.UnixMilli(tr.EntryTimeMs),
-				ClosedAt:        time.UnixMilli(tr.ExitTimeMs),
-				ExitPrice:       tr.ExitPrice,
-				PresetStopPrice: matched.ticket.RiskPlan.StopPrice,
-				RealizedR:       realizedR,
-				ExitReason:      er,
-			})
-			tr.GateCode = res.Code
-		}
-	}
-}
-
-type timeWindow struct {
-	start int64
-	end   int64
-}
-
-func buildCovering7DayWindows(timestamps []int64, isOpen bool, nowMs int64) []timeWindow {
-	const sevenDaysMs = int64(7 * 24 * 3600 * 1000)
-
-	sorted := make([]int64, 0, len(timestamps))
-	for _, ts := range timestamps {
-		if ts > 0 {
-			sorted = append(sorted, ts)
-		}
-	}
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
-
-	var windows []timeWindow
-	coveredUntil := int64(-1)
-	for _, ts := range sorted {
-		if coveredUntil >= 0 && ts <= coveredUntil-60_000 {
-			continue
-		}
-		winStart := ts - 3600_000
-		if winStart < 0 {
-			winStart = 0
-		}
-		winEnd := winStart + sevenDaysMs - 1000
-		if winEnd > nowMs {
-			winEnd = nowMs
-		}
-		windows = append(windows, timeWindow{start: winStart, end: winEnd})
-		coveredUntil = winEnd
-	}
-
-	if isOpen || len(windows) == 0 {
-		recentStart := nowMs - sevenDaysMs + 1
-		if recentStart < 0 {
-			recentStart = 0
-		}
-		if len(windows) == 0 || windows[len(windows)-1].end < nowMs {
-			windows = append(windows, timeWindow{start: recentStart, end: nowMs})
-		}
-	}
-
-	if len(windows) > 8 {
-		windows = windows[len(windows)-8:]
-	}
-	return windows
 }
