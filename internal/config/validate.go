@@ -24,7 +24,7 @@ func Normalize(cfg *types.Config) {
 		if cfg.Exchange != "" {
 			cfg.Exchanges.Primary = cfg.Exchange
 		} else {
-			cfg.Exchanges.Primary = "binance"
+			cfg.Exchanges.Primary = "bybit"
 		}
 	}
 	if len(cfg.DataManager.Exchanges) == 0 {
@@ -101,6 +101,11 @@ func Validate(cfg *types.Config) error {
 	if ep := cfg.Exchanges.WSEndpoints.OKX; ep != "" {
 		if err := validateWSEndpoint(ep); err != nil {
 			addf("exchanges.wsEndpoints.okx %q %v", ep, err)
+		}
+	}
+	if ep := cfg.Exchanges.WSEndpoints.Bybit; ep != "" {
+		if err := validateWSEndpoint(ep); err != nil {
+			addf("exchanges.wsEndpoints.bybit %q %v", ep, err)
 		}
 	}
 

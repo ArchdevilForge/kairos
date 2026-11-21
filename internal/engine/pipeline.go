@@ -324,7 +324,7 @@ func (p *Pipeline) Start(ctx context.Context) error {
 
 	exchangeNames := p.cfg.DataManager.Exchanges
 	if len(exchangeNames) == 0 {
-		exchangeNames = []string{"binance", "okx", "bybit"}
+		exchangeNames = []string{"bybit", "okx", "binance"}
 	}
 
 	// 1. Create exchange instances.
@@ -604,7 +604,10 @@ func (p *Pipeline) exchangeEndpoints() exchange.Endpoints {
 	if p == nil || p.cfg == nil {
 		return exchange.Endpoints{}
 	}
-	return exchange.Endpoints{OKX: p.cfg.Exchanges.WSEndpoints.OKX}
+	return exchange.Endpoints{
+		OKX:   p.cfg.Exchanges.WSEndpoints.OKX,
+		Bybit: p.cfg.Exchanges.WSEndpoints.Bybit,
+	}
 }
 
 // ── Symbol universe (locked) ───────────────────────────────────
@@ -794,7 +797,7 @@ func (p *Pipeline) discoverSymbols(ctx context.Context, ex exchange.Exchange, to
 		return nil, fmt.Errorf("fetch tickers: %w", err)
 	}
 
-	if ex.Name() == "binance" && p.cfg != nil && p.cfg.AlertPolicy.LiquidityWeight.Enabled {
+	if (ex.Name() == "bybit" || ex.Name() == "binance") && p.cfg != nil && p.cfg.AlertPolicy.LiquidityWeight.Enabled {
 		p.liqMu.RLock()
 		entriesSnapshot := make(map[string]data.MarketCapEntry, len(p.marketCapEntries))
 		for k, v := range p.marketCapEntries {
@@ -823,9 +826,18 @@ func (p *Pipeline) discoverSymbols(ctx context.Context, ex exchange.Exchange, to
 			MaxVolToOIRatio:  20.0,
 			RequireSpotPair:  true,
 		}
-		if symbols, applied := exchange.FilterBinanceTop100Universe(
-			ctx, filteredTickers, entriesSnapshot, incumbents, topN, filterCfg,
-		); applied {
+		var symbols []string
+		var applied bool
+		if ex.Name() == "bybit" {
+			symbols, applied = exchange.FilterBybitTop100Universe(
+				ctx, filteredTickers, entriesSnapshot, incumbents, topN, filterCfg,
+			)
+		} else {
+			symbols, applied = exchange.FilterBinanceTop100Universe(
+				ctx, filteredTickers, entriesSnapshot, incumbents, topN, filterCfg,
+			)
+		}
+		if applied {
 			return symbols, nil
 		}
 	}
@@ -2288,7 +2300,7 @@ func (p *Pipeline) EnsureDeskStorage() error {
 	return nil
 }
 
-// PrimaryExchange returns the primary exchange identifier (e.g. "binance").
+// PrimaryExchange returns the primary exchange identifier (e.g. "bybit").
 func (p *Pipeline) PrimaryExchange() string {
 	if p == nil {
 		return ""

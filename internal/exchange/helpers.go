@@ -89,6 +89,7 @@ func SetProxyURL(raw string) error {
 	sharedExchangeTransport.CloseIdleConnections()
 	sharedWSTransport.CloseIdleConnections()
 	sharedBinanceTransport.CloseIdleConnections()
+	sharedBybitTransport.CloseIdleConnections()
 	return nil
 }
 
@@ -185,6 +186,12 @@ func (w *wsLifecycle) begin(ctx context.Context, name string) (context.Context, 
 	return ctx, nil
 }
 
+func (w *wsLifecycle) isClosed() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.closed
+}
+
 func (w *wsLifecycle) close() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -275,8 +282,13 @@ func toCanonicalBinance(raw string) string {
 	return base + "/USDT:USDT"
 }
 
-// toCanonicalBybit converts "BTCUSDT" → "BTC/USDT:USDT".
+// toCanonicalBybit converts "BTCUSDT" → "BTC/USDT:USDT", rejecting
+// dated/delivery contracts (any symbol containing "-") and non-USDT quotes.
 func toCanonicalBybit(raw string) string {
+	raw = strings.ToUpper(strings.TrimSpace(raw))
+	if strings.ContainsAny(raw, "-/_:") {
+		return ""
+	}
 	return toCanonicalBinance(raw)
 }
 

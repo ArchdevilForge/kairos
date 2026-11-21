@@ -2,13 +2,21 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/ArchdevilForge/kairos/internal/config"
+	"github.com/ArchdevilForge/kairos/internal/data"
 	"github.com/ArchdevilForge/kairos/internal/detector"
+	"github.com/ArchdevilForge/kairos/internal/exchange"
 	"github.com/ArchdevilForge/kairos/internal/types"
 )
 
@@ -150,6 +158,110 @@ func TestDiscoverSymbols_MockExchange(t *testing.T) {
 	}
 	if len(symbols) != 2 {
 		t.Fatalf("symbols: %v", symbols)
+	}
+}
+
+type engineRewriteRT struct {
+	base *url.URL
+}
+
+func (rt *engineRewriteRT) RoundTrip(req *http.Request) (*http.Response, error) {
+	clone := req.Clone(req.Context())
+	clone.URL.Scheme = rt.base.Scheme
+	clone.URL.Host = rt.base.Host
+	return http.DefaultTransport.RoundTrip(clone)
+}
+
+func TestDiscoverSymbols_BybitTop100(t *testing.T) {
+	oldLaunch := fmt.Sprintf("%d", time.Now().Add(-90*24*time.Hour).UnixMilli())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.Contains(r.URL.Path, "/v5/market/instruments-info"):
+			if r.URL.Query().Get("category") == "spot" {
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"retCode": 0,
+					"result": map[string]any{
+						"list": []map[string]string{
+							{"symbol": "BTCUSDT", "baseCoin": "BTC", "quoteCoin": "USDT", "status": "Trading"},
+							{"symbol": "ETHUSDT", "baseCoin": "ETH", "quoteCoin": "USDT", "status": "Trading"},
+							{"symbol": "SOLUSDT", "baseCoin": "SOL", "quoteCoin": "USDT", "status": "Trading"},
+							{"symbol": "DOGEUSDT", "baseCoin": "DOGE", "quoteCoin": "USDT", "status": "Trading"},
+							{"symbol": "AVAXUSDT", "baseCoin": "AVAX", "quoteCoin": "USDT", "status": "Trading"},
+							{"symbol": "SHITUSDT", "baseCoin": "SHIT", "quoteCoin": "USDT", "status": "Trading"},
+						},
+					},
+				})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"retCode": 0,
+				"result": map[string]any{
+					"list": []map[string]any{
+						{"symbol": "BTCUSDT", "contractType": "LinearPerpetual", "status": "Trading", "quoteCoin": "USDT", "settleCoin": "USDT", "launchTime": oldLaunch},
+						{"symbol": "ETHUSDT", "contractType": "LinearPerpetual", "status": "Trading", "quoteCoin": "USDT", "settleCoin": "USDT", "launchTime": oldLaunch},
+						{"symbol": "SOLUSDT", "contractType": "LinearPerpetual", "status": "Trading", "quoteCoin": "USDT", "settleCoin": "USDT", "launchTime": oldLaunch},
+						{"symbol": "DOGEUSDT", "contractType": "LinearPerpetual", "status": "Trading", "quoteCoin": "USDT", "settleCoin": "USDT", "launchTime": oldLaunch},
+						{"symbol": "AVAXUSDT", "contractType": "LinearPerpetual", "status": "Trading", "quoteCoin": "USDT", "settleCoin": "USDT", "launchTime": oldLaunch},
+						{"symbol": "SHITUSDT", "contractType": "LinearPerpetual", "status": "Trading", "quoteCoin": "USDT", "settleCoin": "USDT", "launchTime": oldLaunch},
+					},
+				},
+			})
+		case strings.Contains(r.URL.Path, "/v5/market/tickers"):
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"retCode": 0,
+				"result": map[string]any{
+					"list": []map[string]string{
+						{"symbol": "BTCUSDT", "lastPrice": "65000", "turnover24h": "500000000", "openInterestValue": "500000000"},
+						{"symbol": "ETHUSDT", "lastPrice": "3000", "turnover24h": "300000000", "openInterestValue": "300000000"},
+						{"symbol": "SOLUSDT", "lastPrice": "150", "turnover24h": "200000000", "openInterestValue": "100000000"},
+						{"symbol": "DOGEUSDT", "lastPrice": "0.2", "turnover24h": "100000000", "openInterestValue": "50000000"},
+						{"symbol": "AVAXUSDT", "lastPrice": "30", "turnover24h": "80000000", "openInterestValue": "40000000"},
+						{"symbol": "SHITUSDT", "lastPrice": "1", "turnover24h": "900000000", "openInterestValue": "50000000"},
+					},
+				},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	u, _ := url.Parse(srv.URL)
+	defer exchange.SetBybitTestHooks(&engineRewriteRT{base: u}, "")()
+
+	ex, err := exchange.New("bybit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = ex.Close() }()
+
+	cfg, err := config.LoadString("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := NewPipeline(cfg, nil)
+	p.liqMu.Lock()
+	p.marketCapEntries = map[string]data.MarketCapEntry{
+		"BTC":  {Rank: 1, CapUSD: 1_300_000_000_000},
+		"ETH":  {Rank: 2, CapUSD: 350_000_000_000},
+		"SOL":  {Rank: 5, CapUSD: 70_000_000_000},
+		"DOGE": {Rank: 9, CapUSD: 25_000_000_000},
+		"AVAX": {Rank: 15, CapUSD: 12_000_000_000},
+		"SHIT": {Rank: 250, CapUSD: 50_000_000}, // outside Top-100
+	}
+	p.liqMu.Unlock()
+
+	syms, err := p.discoverSymbols(context.Background(), ex, 10)
+	if err != nil {
+		t.Fatalf("discoverSymbols: %v", err)
+	}
+	if len(syms) != 5 {
+		t.Fatalf("expected 5 Top-100 filtered Bybit symbols, got %v", syms)
+	}
+	for _, s := range syms {
+		if s == "SHIT/USDT:USDT" {
+			t.Fatalf("rank > 100 symbol must be filtered out: %v", syms)
+		}
 	}
 }
 

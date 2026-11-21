@@ -36,7 +36,8 @@ type KlineSubscriber interface {
 // (config: exchanges.wsEndpoints). An empty field keeps the adapter default, so
 // exchanges can migrate endpoints without a code change.
 type Endpoints struct {
-	OKX string
+	OKX   string
+	Bybit string
 }
 
 // New creates an exchange by name ("okx", "binance", "bybit") with default endpoints.
@@ -50,7 +51,7 @@ func NewWithEndpoints(name string, eps Endpoints) (Exchange, error) {
 	case "binance":
 		return newBinance(), nil
 	case "bybit":
-		return newBybit(), nil
+		return newBybitWithEndpoint(eps.Bybit), nil
 	default:
 		return nil, fmt.Errorf("unknown exchange: %s", name)
 	}

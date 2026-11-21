@@ -424,7 +424,8 @@ type ExchangesConfig struct {
 
 // WSEndpointsConfig holds per-exchange WebSocket endpoint overrides.
 type WSEndpointsConfig struct {
-	OKX string `mapstructure:"okx" json:"okx,omitempty" yaml:"okx,omitempty"`
+	OKX   string `mapstructure:"okx" json:"okx,omitempty" yaml:"okx,omitempty"`
+	Bybit string `mapstructure:"bybit" json:"bybit,omitempty" yaml:"bybit,omitempty"`
 }
 
 // StorageConfig defines persistence configuration. DatabasePath anchors the
