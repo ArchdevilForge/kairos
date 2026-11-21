@@ -25,7 +25,7 @@ import (
 type Server struct {
 	pipeline     *engine.Pipeline
 	cache        *cache.Store
-	acctClient   *exchange.BinanceAccountClient
+	acctClients  map[string]exchange.AccountClient
 	restFallback exchange.Exchange
 	token        string
 
@@ -56,11 +56,23 @@ func NewServer(pipeline *engine.Pipeline, cacheStore *cache.Store, token string)
 	}
 
 	bgCtx, bgCancel := context.WithCancel(context.Background())
-	fb, _ := exchange.New("binance")
+	exName := "bybit"
+	if pipeline != nil {
+		if p := strings.ToLower(strings.TrimSpace(pipeline.PrimaryExchange())); p != "" {
+			exName = p
+		}
+	}
+	fb, err := exchange.New(exName)
+	if err != nil || fb == nil {
+		fb, _ = exchange.New("bybit")
+	}
 	s := &Server{
-		pipeline:     pipeline,
-		cache:        cacheStore,
-		acctClient:   exchange.NewBinanceAccountClient(),
+		pipeline: pipeline,
+		cache:    cacheStore,
+		acctClients: map[string]exchange.AccountClient{
+			"bybit":   exchange.NewAccountClient("bybit"),
+			"binance": exchange.NewAccountClient("binance"),
+		},
 		restFallback: fb,
 		token:        token,
 		bgCtx:        bgCtx,
@@ -196,20 +208,17 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 	loc := decision.ResolveLocation(gcfg.Timezone)
 
 	symbols := s.trackedSymbols(ctx)
-	exName := "binance"
+	exName := s.activeExchange()
 	var pulseView engine.MarketPulseView
 	var anomalies []types.AnomalyEvent
 	if s.pipeline != nil {
-		if p := s.pipeline.PrimaryExchange(); p != "" {
-			exName = p
-		}
 		pulseView = s.pipeline.MarketPulseView()
 		anomalies = s.pipeline.RecentAnomalies(200)
 	} else {
 		pulseView.State = types.MarketStateQuiet
 	}
 	availCtx, availCancel := context.WithTimeout(ctx, 4*time.Second)
-	availableSymbols, cryptoAllow, availErr := exchange.FetchBinanceCryptoPerpSymbols(availCtx)
+	availableSymbols, cryptoAllow, availErr := exchange.FetchCryptoPerpSymbols(availCtx, exName)
 	availCancel()
 	if availErr == nil && len(cryptoAllow) > 0 {
 		filtered := make([]string, 0, len(symbols))
@@ -242,13 +251,13 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 	openPositions := []cache.OpenPosition{}
 	allFills := []cache.TradeFill{}
 	if s.cache != nil {
-		if st, err := s.cache.ListSyncedTrades(ctx, ""); err == nil {
+		if st, err := s.cache.ListSyncedTradesForExchange(ctx, exName, ""); err == nil {
 			syncedTrades = st
 		}
-		if op, err := s.cache.ListOpenPositions(ctx); err == nil {
+		if op, err := s.cache.ListOpenPositionsForExchange(ctx, exName); err == nil {
 			openPositions = op
 		}
-		if fl, err := s.cache.ListTradeFills(ctx, "", 0); err == nil {
+		if fl, err := s.cache.ListTradeFillsForExchange(ctx, exName, "", 0); err == nil {
 			allFills = fl
 		}
 	}
@@ -461,20 +470,22 @@ func (s *Server) handleAccountSync(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "cache store unavailable", "CACHE_UNAVAILABLE")
 		return
 	}
-	if !s.acctClient.HasKeys() {
-		writeError(w, http.StatusBadRequest, "binance read-only API credentials not configured", "NO_API_KEYS")
+	exName := s.activeExchange()
+	acctClient := s.activeAccountClient()
+	if !acctClient.HasKeys() {
+		writeError(w, http.StatusBadRequest, exName+" read-only API credentials not configured", "NO_API_KEYS")
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
 	defer cancel()
 
-	out, err := s.acctClient.SyncToCache(ctx, s.cache, s.journal(), s.trackedSymbols(ctx))
+	out, err := acctClient.SyncToCache(ctx, s.cache, s.journal(), s.trackedSymbols(ctx))
 	if err != nil {
-		writeError(w, http.StatusBadGateway, err.Error(), "BINANCE_SYNC_FAILED")
+		writeError(w, http.StatusBadGateway, exName+" account sync failed: "+err.Error(), "ACCOUNT_SYNC_FAILED")
 		return
 	}
 	acct := s.accountStatus(ctx)
-	if positions, err := s.cache.ListOpenPositions(ctx); err == nil {
+	if positions, err := s.cache.ListOpenPositionsForExchange(ctx, exName); err == nil {
 		s.wsHub.broadcastAccountUpdated(acct, positions)
 	} else {
 		s.wsHub.broadcastAccountUpdated(acct, nil)
@@ -536,33 +547,77 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	var key, sec string
-	if req.BinanceReadonlyAPIKey != nil {
-		key = strings.TrimSpace(*req.BinanceReadonlyAPIKey)
-	}
-	if req.BinanceReadonlyAPISecret != nil {
-		sec = strings.TrimSpace(*req.BinanceReadonlyAPISecret)
-	}
-	if key != "" && sec == "" {
-		if fields := strings.Fields(key); len(fields) == 2 {
-			key, sec = fields[0], fields[1]
-		}
-	}
-	if !s.acctClient.HasKeys() && (key == "") != (sec == "") {
-		writeError(w, http.StatusBadRequest, "请同时填写完整的币安只读 API Key 和 API Secret", "INCOMPLETE_API_KEYS")
+	if status, code, msg := s.applyReadonlyKeySettings(r.Context(), req); status != 0 {
+		writeError(w, status, msg, code)
 		return
 	}
-	if key != "" || sec != "" {
-		if err := exchange.SaveBinanceReadonlyKeys(key, sec); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error(), "SECRETS_SAVE_FAILED")
-			return
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+type readonlyKeySpec struct {
+	exName      string
+	displayName string
+	rawKey      *string
+	rawSecret   *string
+	save        func(string, string) error
+	key         string
+	sec         string
+	client      exchange.AccountClient
+}
+
+func (s *Server) applyReadonlyKeySettings(ctx context.Context, req UpdateSettingsRequest) (int, string, string) {
+	specs := []readonlyKeySpec{
+		{
+			exName:      "bybit",
+			displayName: "Bybit",
+			rawKey:      req.BybitReadonlyAPIKey,
+			rawSecret:   req.BybitReadonlyAPISecret,
+			save:        exchange.SaveBybitReadonlyKeys,
+		},
+		{
+			exName:      "binance",
+			displayName: "币安",
+			rawKey:      req.BinanceReadonlyAPIKey,
+			rawSecret:   req.BinanceReadonlyAPISecret,
+			save:        exchange.SaveBinanceReadonlyKeys,
+		},
+	}
+
+	for i := range specs {
+		sp := &specs[i]
+		if sp.rawKey != nil {
+			sp.key = strings.TrimSpace(*sp.rawKey)
 		}
-		s.acctClient.SetKeys(key, sec)
-		if s.cache != nil {
-			_ = s.cache.SetAccountMeta(r.Context(), "sync_error", "")
+		if sp.rawSecret != nil {
+			sp.sec = strings.TrimSpace(*sp.rawSecret)
+		}
+		if sp.key != "" && sp.sec == "" {
+			if fields := strings.Fields(sp.key); len(fields) == 2 {
+				sp.key, sp.sec = fields[0], fields[1]
+			}
+		}
+		sp.client = s.accountClientFor(sp.exName)
+		if !sp.client.HasKeys() && (sp.key == "") != (sp.sec == "") {
+			return http.StatusBadRequest, "INCOMPLETE_API_KEYS", "请同时填写完整的 " + sp.displayName + " 只读 API Key 和 API Secret"
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+
+	for _, sp := range specs {
+		if sp.key == "" && sp.sec == "" {
+			continue
+		}
+		if err := sp.save(sp.key, sp.sec); err != nil {
+			return http.StatusInternalServerError, "SECRETS_SAVE_FAILED", err.Error()
+		}
+		sp.client.SetKeys(sp.key, sp.sec)
+		if s.cache != nil {
+			_ = s.cache.SetExchangeMeta(ctx, sp.exName, "sync_error", "")
+			if sp.exName == "binance" {
+				_ = s.cache.SetAccountMeta(ctx, "sync_error", "")
+			}
+		}
+	}
+	return 0, "", ""
 }
 
 func (s *Server) handleSystemWake(w http.ResponseWriter, r *http.Request) {
@@ -610,6 +665,34 @@ func (s *Server) noticeJournal() *storage.NoticeJournal {
 	return nil
 }
 
+func (s *Server) activeExchange() string {
+	if s != nil && s.pipeline != nil {
+		if p := strings.ToLower(strings.TrimSpace(s.pipeline.PrimaryExchange())); p != "" {
+			return p
+		}
+	}
+	return "bybit"
+}
+
+func (s *Server) accountClientFor(exName string) exchange.AccountClient {
+	ex := strings.ToLower(strings.TrimSpace(exName))
+	if s != nil && s.acctClients != nil {
+		if cli, ok := s.acctClients[ex]; ok && cli != nil {
+			return cli
+		}
+		if ex != "binance" {
+			if cli, ok := s.acctClients["bybit"]; ok && cli != nil {
+				return cli
+			}
+		}
+	}
+	return exchange.NewAccountClient(ex)
+}
+
+func (s *Server) activeAccountClient() exchange.AccountClient {
+	return s.accountClientFor(s.activeExchange())
+}
+
 func (s *Server) ohlcvFetcher() exchange.Exchange {
 	if s.pipeline != nil {
 		if ex := s.pipeline.PrimaryExchangeClient(); ex != nil {
@@ -625,7 +708,7 @@ func (s *Server) trackedSymbols(ctx context.Context) []string {
 		syms = s.pipeline.TrackedSymbols()
 	}
 	if len(syms) == 0 && s.cache != nil {
-		syms, _ = s.cache.ListCachedSymbols(ctx)
+		syms, _ = s.cache.ListCachedSymbolsForSource(ctx, s.activeExchange())
 	}
 	if len(syms) == 0 {
 		syms = []string{"BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT"}
@@ -634,14 +717,17 @@ func (s *Server) trackedSymbols(ctx context.Context) []string {
 }
 
 func (s *Server) accountStatus(ctx context.Context) AccountStatusView {
+	exName := s.activeExchange()
+	acctClient := s.activeAccountClient()
 	view := AccountStatusView{
-		Configured:   s.acctClient.HasKeys(),
-		APIKeyMasked: s.acctClient.APIKeyMasked(),
+		Exchange:     exName,
+		Configured:   acctClient.HasKeys(),
+		APIKeyMasked: acctClient.APIKeyMasked(),
 	}
 	if s.cache == nil {
 		return view
 	}
-	meta, err := s.cache.GetAllAccountMeta(ctx)
+	meta, err := s.cache.GetAllExchangeMeta(ctx, exName)
 	if err != nil {
 		return view
 	}

@@ -73,6 +73,7 @@ type RiskConfigView struct {
 
 // AccountStatusView holds redacted read-only account state (never exposes secrets).
 type AccountStatusView struct {
+	Exchange         string  `json:"exchange,omitempty"`
 	Configured       bool    `json:"configured"`
 	APIKeyMasked     string  `json:"api_key_masked"`
 	WalletBalanceUSD float64 `json:"wallet_balance_usd"`
@@ -155,6 +156,8 @@ type UpdateSettingsRequest struct {
 	MaxLossUSD               *float64 `json:"max_loss_usd,omitempty"`
 	Timezone                 *string  `json:"timezone,omitempty"`
 	ProxyURL                 *string  `json:"proxy_url,omitempty"`
+	BybitReadonlyAPIKey      *string  `json:"bybit_readonly_api_key,omitempty"`
+	BybitReadonlyAPISecret   *string  `json:"bybit_readonly_api_secret,omitempty"`
 	BinanceReadonlyAPIKey    *string  `json:"binance_readonly_api_key,omitempty"`
 	BinanceReadonlyAPISecret *string  `json:"binance_readonly_api_secret,omitempty"`
 }
@@ -178,7 +181,7 @@ type EquityPoint struct {
 	DrawdownPct float64  `json:"drawdown_pct"`
 }
 
-// WalletReconciliation reconciles TradingBankroll + realized net PnL against Binance wallet balance.
+// WalletReconciliation reconciles TradingBankroll + realized net PnL against exchange wallet balance.
 type WalletReconciliation struct {
 	TradingBankrollUSD  float64 `json:"trading_bankroll_usd"`
 	RealizedPnLUSD      float64 `json:"realized_pnl_usd"`

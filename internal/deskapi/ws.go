@@ -197,7 +197,7 @@ func (h *wsHub) broadcastDiscrete(payload any) {
 func (h *wsHub) onUpstreamKline(sym, tf string, candle types.Candle, closed bool) {
 	if h.server != nil && h.server.cache != nil && closed {
 		ctx, cancel := context.WithTimeout(h.ctx, 2*time.Second)
-		_ = h.server.cache.UpsertKline(ctx, sym, tf, "binance", candle)
+		_ = h.server.cache.UpsertKline(ctx, sym, tf, h.server.activeExchange(), candle)
 		cancel()
 	}
 	if h.hasNoClients() {
@@ -329,7 +329,7 @@ func (h *wsHub) acquireKlineLocked(key klineSubKey) {
 				}
 			}
 		}
-		_ = exchange.SubscribeKline(subCtx, sym, tf, cb)
+		_ = exchange.SubscribeKlineForExchange(subCtx, h.server.activeExchange(), sym, tf, cb)
 	}()
 }
 

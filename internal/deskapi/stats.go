@@ -46,7 +46,7 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 
 	var trades []cache.SyncedTrade
 	if s.cache != nil {
-		trades, _ = s.cache.ListSyncedTrades(ctx, "")
+		trades, _ = s.cache.ListSyncedTradesForExchange(ctx, s.activeExchange(), "")
 	}
 
 	rowByTicket := make(map[string]evaluation.TicketRow, len(rows))
