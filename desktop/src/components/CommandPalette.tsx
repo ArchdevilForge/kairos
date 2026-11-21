@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { useI18n } from '../i18n';
 import type { BootstrapPayload } from '../types/kairos';
+import { formatExchangeLabel, resolveAccountExchange } from '../utils/doctrine';
 import type { WorkspaceTab } from './TopStatusBar';
 
 export interface CommandPaletteProps {
@@ -68,6 +69,8 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
   onOpenSettings,
 }) => {
   const { locale, toggleLocale, t } = useI18n();
+  const activeExchange = resolveAccountExchange(bootstrap.status);
+  const exchangeLabel = formatExchangeLabel(activeExchange, locale);
   const [query, setQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -156,7 +159,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       {
         id: 'action:sync',
         group: actionsGroup,
-        label: t('palette.action.syncLabel'),
+        label: t('palette.action.syncLabel', { exchange: exchangeLabel }),
         icon: <RefreshCw className="h-3.5 w-3.5" />,
         run: () => {
           onSyncAccount();
@@ -256,6 +259,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
     bootstrap.status.available_symbols,
     bootstrap.status.symbols,
     bootstrap.tickets,
+    exchangeLabel,
     locale,
     onChangeView,
     onClose,

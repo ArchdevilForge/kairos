@@ -497,6 +497,16 @@ export interface CooldownEntry {
   remaining_sec: number;
 }
 
+export interface AccountStatusView {
+  exchange?: string;
+  configured: boolean;
+  api_key_masked: string;
+  wallet_balance_usd: number;
+  unrealized_pnl_usd: number;
+  last_sync_at: number;
+  sync_error?: string;
+}
+
 export interface DeskStatus {
   exchange: string;
   symbols: string[];
@@ -521,14 +531,7 @@ export interface DeskStatus {
     max_alt_leverage: number;
     cooldown_minutes: number;
   };
-  account: {
-    configured: boolean;
-    api_key_masked: string;
-    wallet_balance_usd: number;
-    unrealized_pnl_usd: number;
-    last_sync_at: number;
-    sync_error?: string;
-  };
+  account: AccountStatusView;
   proxy_url?: string;
 }
 
@@ -595,6 +598,8 @@ export interface UpdateSettingsRequest {
   max_loss_usd?: number;
   timezone?: string;
   proxy_url?: string;
+  bybit_readonly_api_key?: string;
+  bybit_readonly_api_secret?: string;
   binance_readonly_api_key?: string;
   binance_readonly_api_secret?: string;
 }
