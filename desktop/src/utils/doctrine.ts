@@ -1,5 +1,28 @@
-import { t } from '../i18n';
-import type { WavePhase } from '../types/kairos';
+import { t, type Locale } from '../i18n';
+import type { DeskStatus, WavePhase } from '../types/kairos';
+
+export type AccountExchange = 'bybit' | 'binance';
+
+/** Resolve active read-only account exchange, defaulting to Bybit. */
+export function resolveAccountExchange(
+  status?: Pick<DeskStatus, 'exchange' | 'account'> | null,
+): AccountExchange {
+  const raw = (status?.account?.exchange || status?.exchange || 'bybit')
+    .trim()
+    .toLowerCase();
+  return raw === 'binance' ? 'binance' : 'bybit';
+}
+
+/** Return localized display name for an exchange. */
+export function formatExchangeLabel(
+  exchange: AccountExchange,
+  locale: Locale,
+): string {
+  if (exchange === 'binance') {
+    return locale === 'zh' ? '币安' : 'Binance';
+  }
+  return 'Bybit';
+}
 
 const WAVE_PHASES: readonly WavePhase[] = ['spring', 'summer', 'autumn', 'winter'];
 

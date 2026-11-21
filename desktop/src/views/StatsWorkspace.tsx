@@ -3,10 +3,13 @@ import { AlertTriangle, RefreshCw } from 'lucide-react';
 import EquityCurve from '../chart/EquityCurve';
 import { useI18n } from '../i18n';
 import type { StatsPayload, StatsWorkspaceProps } from '../types/kairos';
+import { formatExchangeLabel, resolveAccountExchange } from '../utils/doctrine';
 import { fmtR, fmtRatioPct, fmtUsd } from '../utils/format';
 
-export function StatsWorkspace({ client }: StatsWorkspaceProps) {
-  const { t } = useI18n();
+export function StatsWorkspace({ client, bootstrap }: StatsWorkspaceProps) {
+  const { t, locale } = useI18n();
+  const activeExchange = resolveAccountExchange(bootstrap.status);
+  const exchangeLabel = formatExchangeLabel(activeExchange, locale);
   const [stats, setStats] = useState<StatsPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [errorState, setErrorState] = useState<{ raw: string | null } | null>(null);
@@ -101,7 +104,7 @@ export function StatsWorkspace({ client }: StatsWorkspaceProps) {
               {t('stats.title')}
             </h1>
             <p className="mt-0.5 text-xs" style={{ color: 'var(--text-secondary)' }}>
-              {t('stats.subtitle')}
+              {t('stats.subtitle', { exchange: exchangeLabel })}
             </p>
           </div>
           <button
@@ -126,7 +129,7 @@ export function StatsWorkspace({ client }: StatsWorkspaceProps) {
             value={fmtUsd(recon.net_pnl_usd, true)}
             sub={t('stats.metric.netPnlSub', {
               bankroll: fmtUsd(recon.trading_bankroll_usd),
-              fee: fmtUsd(-Math.abs(recon.fee_usd), true),
+              fee: fmtUsd(recon.fee_usd === 0 ? 0 : -recon.fee_usd, true),
             })}
             tone={recon.net_pnl_usd >= 0 ? 'pos' : 'neg'}
           />
@@ -164,6 +167,7 @@ export function StatsWorkspace({ client }: StatsWorkspaceProps) {
           points={stats.equity_curve ?? []}
           height={240}
           walletSummary={t('stats.walletSummary', {
+            exchange: exchangeLabel,
             balance: fmtUsd(recon.wallet_balance_usd),
             unrealized: fmtUsd(recon.unrealized_pnl_usd, true),
           })}

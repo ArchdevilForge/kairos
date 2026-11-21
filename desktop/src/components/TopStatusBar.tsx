@@ -9,7 +9,11 @@ import {
 } from 'lucide-react';
 import type { DeskStatus, SymbolMove } from '../types/kairos';
 import { useI18n } from '../i18n';
-import { sameSymbol } from '../utils/doctrine';
+import {
+  formatExchangeLabel,
+  resolveAccountExchange,
+  sameSymbol,
+} from '../utils/doctrine';
 
 export type WorkspaceTab = 'watch' | 'review' | 'stats';
 
@@ -46,6 +50,8 @@ export const TopStatusBar: React.FC<TopStatusBarProps> = ({
   onSelectSymbol,
 }) => {
   const { locale, toggleLocale, t } = useI18n();
+  const activeExchange = resolveAccountExchange(status);
+  const exchangeLabel = formatExchangeLabel(activeExchange, locale);
   const pulse = status.pulse;
   const lockedList = status.gate_health?.locked_24h_symbols ?? [];
   const cooldownList = status.gate_health?.active_cooldowns ?? [];
@@ -300,7 +306,7 @@ export const TopStatusBar: React.FC<TopStatusBarProps> = ({
           onClick={onOpenSettings}
           className="flex h-7 w-7 items-center justify-center rounded-[6px] transition-colors hover:opacity-80"
           style={{ color: 'var(--text-secondary)' }}
-          title={t('top.settingsTitle')}
+          title={t('top.settingsTitle', { exchange: exchangeLabel })}
           aria-label={t('top.settingsAria')}
         >
           <Settings className="h-3.5 w-3.5" />
