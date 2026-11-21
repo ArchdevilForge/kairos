@@ -1,7 +1,8 @@
 package cache
 
-// TradeFill mirrors a single Binance USDT-M execution fill cached in desktop-cache.db.
+// TradeFill mirrors a single perpetual futures execution fill cached in desktop-cache.db.
 type TradeFill struct {
+	Exchange        string  `json:"exchange"`
 	FillID          string  `json:"fill_id"`
 	OrderID         string  `json:"order_id"`
 	Symbol          string  `json:"symbol"`
@@ -18,10 +19,11 @@ type TradeFill struct {
 }
 
 // SyncedTrade represents a FIFO-aggregated position lifecycle (open or closed)
-// keyed by (symbol, position_side). FundingUSD uses Binance signed cashflow
+// keyed by (exchange, symbol, position_side). FundingUSD uses signed cashflow
 // convention (negative = paid, positive = received), so
 // NetPnL = RealizedPnL - FeeUSD + FundingUSD.
 type SyncedTrade struct {
+	Exchange       string      `json:"exchange"`
 	ID             string      `json:"id"`
 	Symbol         string      `json:"symbol"`
 	Direction      string      `json:"direction"`
@@ -45,8 +47,9 @@ type SyncedTrade struct {
 	Fills          []TradeFill `json:"fills,omitempty"`
 }
 
-// OpenPosition holds a live USDT-M position snapshot from Binance /fapi/v2/positionRisk.
+// OpenPosition holds a live perpetual futures position snapshot.
 type OpenPosition struct {
+	Exchange       string  `json:"exchange"`
 	Symbol         string  `json:"symbol"`
 	PositionSide   string  `json:"position_side"`
 	MarginMode     string  `json:"margin_mode"`
@@ -78,8 +81,9 @@ type ChartDrawing struct {
 	UpdatedAt int64               `json:"updated_at"`
 }
 
-// IncomeRecord caches raw Binance USDT-M income ledger entries (e.g. FUNDING_FEE).
+// IncomeRecord caches raw perpetual futures income ledger entries (e.g. FUNDING_FEE).
 type IncomeRecord struct {
+	Exchange   string  `json:"exchange"`
 	TranID     string  `json:"tran_id"`
 	Symbol     string  `json:"symbol"`
 	IncomeType string  `json:"income_type"`
