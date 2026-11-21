@@ -15,14 +15,17 @@ func TestLoadString_Defaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadString empty: %v", err)
 	}
-	if cfg.Exchange != "binance" {
-		t.Fatalf("exchange: got %q want binance", cfg.Exchange)
+	if cfg.Exchange != "bybit" {
+		t.Fatalf("exchange: got %q want bybit", cfg.Exchange)
 	}
 	if cfg.DataManager.TopSymbols != 30 {
 		t.Fatalf("topSymbols: got %d want 30", cfg.DataManager.TopSymbols)
 	}
-	if cfg.Exchanges.Primary != "binance" {
-		t.Fatalf("primary: got %q", cfg.Exchanges.Primary)
+	if cfg.Exchanges.Primary != "bybit" {
+		t.Fatalf("primary: got %q want bybit", cfg.Exchanges.Primary)
+	}
+	if len(cfg.DataManager.Exchanges) != 1 || cfg.DataManager.Exchanges[0] != "bybit" {
+		t.Fatalf("dataManager.exchanges: got %v want [bybit]", cfg.DataManager.Exchanges)
 	}
 }
 
@@ -176,6 +179,21 @@ func TestValidate_RejectsBrokenConfigs(t *testing.T) {
 			yaml: "exchanges:\n  wsEndpoints:\n    okx: \"https://ws.okx.com/ws/v5/public\"\n",
 			want: "must start with ws:// or wss://",
 		},
+		{
+			name: "bybit ws endpoint without scheme",
+			yaml: "exchanges:\n  wsEndpoints:\n    bybit: \"stream.bybit.com/v5/public/linear\"\n",
+			want: "must start with ws:// or wss://",
+		},
+		{
+			name: "bybit ws endpoint with scheme but no host",
+			yaml: "exchanges:\n  wsEndpoints:\n    bybit: \"wss://\"\n",
+			want: "must include a host",
+		},
+		{
+			name: "bybit ws endpoint with wrong scheme",
+			yaml: "exchanges:\n  wsEndpoints:\n    bybit: \"https://stream.bybit.com/v5/public/linear\"\n",
+			want: "must start with ws:// or wss://",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -208,6 +226,25 @@ func TestLoadString_OKXWSEndpointOverride(t *testing.T) {
 	}
 	if cfg.Exchanges.WSEndpoints.OKX != custom {
 		t.Fatalf("wsEndpoints.okx override: got %q, want %q", cfg.Exchanges.WSEndpoints.OKX, custom)
+	}
+}
+
+func TestLoadString_BybitWSEndpointOverride(t *testing.T) {
+	cfg, err := LoadString("")
+	if err != nil {
+		t.Fatalf("LoadString empty: %v", err)
+	}
+	if cfg.Exchanges.WSEndpoints.Bybit != "" {
+		t.Fatalf("wsEndpoints.bybit default: got %q, want empty (adapter default)", cfg.Exchanges.WSEndpoints.Bybit)
+	}
+
+	custom := "wss://stream-testnet.bybit.com/v5/public/linear"
+	cfg, err = LoadString("exchanges:\n  wsEndpoints:\n    bybit: " + custom + "\n")
+	if err != nil {
+		t.Fatalf("LoadString override: %v", err)
+	}
+	if cfg.Exchanges.WSEndpoints.Bybit != custom {
+		t.Fatalf("wsEndpoints.bybit override: got %q, want %q", cfg.Exchanges.WSEndpoints.Bybit, custom)
 	}
 }
 
@@ -354,6 +391,12 @@ func TestLoad_ExampleConfigAlignsWithTypes(t *testing.T) {
 	}
 	if len(cfg.AlertPolicy.LiquidityWeight.MajorSymbols) < 2 {
 		t.Fatalf("majorSymbols: %v", cfg.AlertPolicy.LiquidityWeight.MajorSymbols)
+	}
+	if cfg.Exchanges.Primary != "bybit" {
+		t.Fatalf("example exchanges.primary: got %q want bybit", cfg.Exchanges.Primary)
+	}
+	if len(cfg.DataManager.Exchanges) != 1 || cfg.DataManager.Exchanges[0] != "bybit" {
+		t.Fatalf("example dataManager.exchanges: got %v want [bybit]", cfg.DataManager.Exchanges)
 	}
 	// Example keeps marketPulse disabled (Phase 1 opt-in).
 	if cfg.MarketPulse.Enabled {
