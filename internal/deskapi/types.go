@@ -73,13 +73,18 @@ type RiskConfigView struct {
 
 // AccountStatusView holds redacted read-only account state (never exposes secrets).
 type AccountStatusView struct {
-	Exchange         string  `json:"exchange,omitempty"`
-	Configured       bool    `json:"configured"`
-	APIKeyMasked     string  `json:"api_key_masked"`
-	WalletBalanceUSD float64 `json:"wallet_balance_usd"`
-	UnrealizedPnLUSD float64 `json:"unrealized_pnl_usd"`
-	LastSyncAt       int64   `json:"last_sync_at"`
-	SyncError        string  `json:"sync_error,omitempty"`
+	Exchange            string  `json:"exchange,omitempty"`
+	AccountType         string  `json:"account_type,omitempty"`
+	MarginMode          string  `json:"margin_mode,omitempty"`
+	Configured          bool    `json:"configured"`
+	APIKeyMasked        string  `json:"api_key_masked"`
+	WalletBalanceUSD    float64 `json:"wallet_balance_usd"`
+	TotalEquityUSD      float64 `json:"total_equity_usd,omitempty"`
+	AvailableBalanceUSD float64 `json:"available_balance_usd,omitempty"`
+	InitialMarginUSD    float64 `json:"initial_margin_usd,omitempty"`
+	UnrealizedPnLUSD    float64 `json:"unrealized_pnl_usd"`
+	LastSyncAt          int64   `json:"last_sync_at"`
+	SyncError           string  `json:"sync_error,omitempty"`
 }
 
 // DeskStatus is status inside BootstrapPayload.
@@ -183,6 +188,9 @@ type EquityPoint struct {
 
 // WalletReconciliation reconciles TradingBankroll + realized net PnL against exchange wallet balance.
 type WalletReconciliation struct {
+	Exchange            string  `json:"exchange,omitempty"`
+	AccountType         string  `json:"account_type,omitempty"`
+	MarginMode          string  `json:"margin_mode,omitempty"`
 	TradingBankrollUSD  float64 `json:"trading_bankroll_usd"`
 	RealizedPnLUSD      float64 `json:"realized_pnl_usd"`
 	FeeUSD              float64 `json:"fee_usd"`
@@ -190,9 +198,37 @@ type WalletReconciliation struct {
 	NetPnLUSD           float64 `json:"net_pnl_usd"`
 	ExpectedBankrollUSD float64 `json:"expected_bankroll_usd"`
 	WalletBalanceUSD    float64 `json:"wallet_balance_usd"`
+	TotalEquityUSD      float64 `json:"total_equity_usd,omitempty"`
+	AvailableBalanceUSD float64 `json:"available_balance_usd,omitempty"`
+	InitialMarginUSD    float64 `json:"initial_margin_usd,omitempty"`
 	UnrealizedPnLUSD    float64 `json:"unrealized_pnl_usd"`
 	DiscrepancyUSD      float64 `json:"discrepancy_usd"`
+	ClosedTradesCount   int     `json:"closed_trades_count"`
+	OpenPositionsCount  int     `json:"open_positions_count"`
+	WinCount            int     `json:"win_count"`
+	LossCount           int     `json:"loss_count"`
+	GrossProfitUSD      float64 `json:"gross_profit_usd"`
+	GrossLossUSD        float64 `json:"gross_loss_usd"`
+	AvgLeverage         float64 `json:"avg_leverage"`
 	LastSyncAt          int64   `json:"last_sync_at"`
+}
+
+// SymbolStatsRow aggregates realized & live performance per symbol (crypto & stock perpetuals).
+type SymbolStatsRow struct {
+	Symbol         string  `json:"symbol"`
+	ClosedCount    int     `json:"closed_count"`
+	OpenCount      int     `json:"open_count"`
+	Wins           int     `json:"wins"`
+	WinRate        float64 `json:"win_rate"`
+	RealizedPnLUSD float64 `json:"realized_pnl_usd"`
+	FeeUSD         float64 `json:"fee_usd"`
+	FundingUSD     float64 `json:"funding_usd"`
+	NetPnLUSD      float64 `json:"net_pnl_usd"`
+	UnrealizedPnL  float64 `json:"unrealized_pnl_usd"`
+	TotalNotional  float64 `json:"total_notional_usd"`
+	AvgLeverage    float64 `json:"avg_leverage"`
+	LastTimeMs     int64   `json:"last_time_ms"`
+	SampleTradeID  string  `json:"sample_trade_id,omitempty"`
 }
 
 // RBucket represents one bin of the realized R histogram.
@@ -270,4 +306,5 @@ type StatsPayload struct {
 	GateCompliance       GateComplianceReport     `json:"gate_compliance"`
 	HourlyUTC8           []HourlyBucket           `json:"hourly_utc8"`
 	TagBreakdown         TagBreakdown             `json:"tag_breakdown"`
+	BySymbol             []SymbolStatsRow         `json:"by_symbol"`
 }

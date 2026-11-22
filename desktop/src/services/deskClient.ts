@@ -368,6 +368,7 @@ export class DeskClient {
         grades: res.tag_breakdown?.grades ?? [],
         emotions: res.tag_breakdown?.emotions ?? [],
       },
+      by_symbol: res.by_symbol ?? [],
     };
   }
 

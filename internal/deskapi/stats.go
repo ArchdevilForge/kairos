@@ -44,9 +44,12 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		summary.ByDirection = map[string]evaluation.GroupStats{}
 	}
 
+	exName := s.activeExchange()
 	var trades []cache.SyncedTrade
+	var openPositions []cache.OpenPosition
 	if s.cache != nil {
-		trades, _ = s.cache.ListSyncedTradesForExchange(ctx, s.activeExchange(), "")
+		trades, _ = s.cache.ListSyncedTradesForExchange(ctx, exName, "")
+		openPositions, _ = s.cache.ListOpenPositionsForExchange(ctx, exName)
 	}
 
 	rowByTicket := make(map[string]evaluation.TicketRow, len(rows))
@@ -56,7 +59,8 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 
 	// Build closed trades sorted chronologically for equity curve and R stats.
 	closedTrades := make([]cache.SyncedTrade, 0, len(trades))
-	var totalRealized, totalFee, totalFunding, totalNet float64
+	openTrades := make([]cache.SyncedTrade, 0)
+	var totalRealized, totalFee, totalFunding, totalNet, closedNet float64
 	unplannedCount := 0
 	for _, tr := range trades {
 		totalRealized += tr.RealizedPnL
@@ -68,6 +72,9 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		}
 		if tr.Status == "closed" {
 			closedTrades = append(closedTrades, tr)
+			closedNet += tr.NetPnL
+		} else {
+			openTrades = append(openTrades, tr)
 		}
 	}
 	sort.Slice(closedTrades, func(i, k int) bool {
@@ -120,28 +127,70 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	if acct.LastSyncAt > 0 {
 		discrepancy = round4(acct.WalletBalanceUSD - expectedBankroll)
 	}
-	reconciliation := WalletReconciliation{
-		TradingBankrollUSD:  round4(bankroll),
-		RealizedPnLUSD:      round4(totalRealized),
-		FeeUSD:              round4(totalFee),
-		FundingUSD:          round4(totalFunding),
-		NetPnLUSD:           round4(totalNet),
-		ExpectedBankrollUSD: expectedBankroll,
-		WalletBalanceUSD:    round4(acct.WalletBalanceUSD),
-		UnrealizedPnLUSD:    round4(acct.UnrealizedPnLUSD),
-		DiscrepancyUSD:      discrepancy,
-		LastSyncAt:          acct.LastSyncAt,
-	}
 
 	// Equity curve & R-multiple stats.
-	equityCurve := make([]EquityPoint, 0, len(closedTrades)+1)
-	curEq := bankroll
-	peakEq := bankroll
+	startEq := bankroll
+	if acct.LastSyncAt > 0 && acct.WalletBalanceUSD > 0 {
+		if derived := acct.WalletBalanceUSD - closedNet; derived > 0 {
+			startEq = derived
+		}
+	}
+	equityCurve := make([]EquityPoint, 0, len(closedTrades)+2)
+	curEq := startEq
+	peakEq := startEq
 	cumR := 0.0
 	var rValues []float64
 	withoutStop := 0
 	var posPnL, negPnL float64
 	winCount := 0
+	lossCount := 0
+	var levSum float64
+	levCount := 0
+
+	if len(closedTrades) > 0 {
+		first := closedTrades[0]
+		firstTS := first.EntryTimeMs / 1000
+		firstExit := first.ExitTimeMs / 1000
+		if firstTS <= 0 || (firstExit > 0 && firstTS >= firstExit) {
+			if firstExit > 60 {
+				firstTS = firstExit - 60
+			} else {
+				firstTS = time.Now().Unix() - 60
+			}
+		}
+		equityCurve = append(equityCurve, EquityPoint{
+			Time:        firstTS,
+			BankrollUSD: round4(startEq),
+			TradePnLUSD: 0,
+			CumulativeR: 0,
+			DrawdownPct: 0,
+		})
+	}
+
+	type symAcc struct {
+		closedCount   int
+		openCount     int
+		wins          int
+		realized      float64
+		fee           float64
+		funding       float64
+		net           float64
+		unrealized    float64
+		notional      float64
+		levSum        float64
+		levCnt        int
+		lastTimeMs    int64
+		sampleTradeID string
+	}
+	bySymMap := make(map[string]*symAcc)
+	getSymAcc := func(sym string) *symAcc {
+		a, ok := bySymMap[sym]
+		if !ok {
+			a = &symAcc{}
+			bySymMap[sym] = a
+		}
+		return a
+	}
 
 	buckets := []RBucket{
 		{Label: "<-2R", MinR: -1e9, MaxR: -2},
@@ -177,7 +226,35 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 			winCount++
 			posPnL += tr.NetPnL
 		} else if tr.NetPnL < 0 {
+			lossCount++
 			negPnL += math.Abs(tr.NetPnL)
+		}
+		if tr.Leverage > 0 {
+			levSum += tr.Leverage
+			levCount++
+		}
+
+		sa := getSymAcc(tr.Symbol)
+		sa.closedCount++
+		if tr.NetPnL > 0 {
+			sa.wins++
+		}
+		sa.realized += tr.RealizedPnL
+		sa.fee += tr.FeeUSD
+		sa.funding += tr.FundingUSD
+		sa.net += tr.NetPnL
+		sa.notional += math.Abs(tr.EntryPrice * tr.Qty)
+		if tr.Leverage > 0 {
+			sa.levSum += tr.Leverage
+			sa.levCnt++
+		}
+		tMs := tr.ExitTimeMs
+		if tMs <= 0 {
+			tMs = tr.EntryTimeMs
+		}
+		if tMs >= sa.lastTimeMs {
+			sa.lastTimeMs = tMs
+			sa.sampleTradeID = tr.ID
 		}
 
 		r1, hasStop := tradeOneRUSD(tr)
@@ -204,6 +281,9 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		tsSec := tr.ExitTimeMs / 1000
 		if tsSec <= 0 {
 			tsSec = tr.EntryTimeMs / 1000
+		}
+		if len(equityCurve) > 0 && tsSec <= equityCurve[len(equityCurve)-1].Time {
+			tsSec = equityCurve[len(equityCurve)-1].Time + 1
 		}
 		var walletPtr *float64
 		if idx == len(closedTrades)-1 && acct.LastSyncAt > 0 {
@@ -234,6 +314,108 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	for _, tr := range openTrades {
+		if tr.Symbol == "" {
+			continue
+		}
+		sa := getSymAcc(tr.Symbol)
+		sa.fee += tr.FeeUSD
+		sa.funding += tr.FundingUSD
+	}
+
+	for _, pos := range openPositions {
+		if pos.Symbol == "" {
+			continue
+		}
+		sa := getSymAcc(pos.Symbol)
+		sa.openCount++
+		sa.unrealized += pos.UnrealizedPnL
+		posNotional := pos.PositionValue
+		if posNotional <= 0 {
+			posNotional = math.Abs(pos.Qty * pos.EntryPrice)
+		}
+		sa.notional += posNotional
+		if pos.Leverage > 0 {
+			sa.levSum += pos.Leverage
+			sa.levCnt++
+			levSum += pos.Leverage
+			levCount++
+		}
+		if pos.UpdatedAt*1000 > sa.lastTimeMs {
+			sa.lastTimeMs = pos.UpdatedAt * 1000
+		}
+	}
+
+	avgLeverage := 0.0
+	if levCount > 0 {
+		avgLeverage = round2(levSum / float64(levCount))
+	}
+
+	reconciliation := WalletReconciliation{
+		Exchange:            exName,
+		AccountType:         acct.AccountType,
+		MarginMode:          acct.MarginMode,
+		TradingBankrollUSD:  round4(bankroll),
+		RealizedPnLUSD:      round4(totalRealized),
+		FeeUSD:              round4(totalFee),
+		FundingUSD:          round4(totalFunding),
+		NetPnLUSD:           round4(totalNet),
+		ExpectedBankrollUSD: expectedBankroll,
+		WalletBalanceUSD:    round4(acct.WalletBalanceUSD),
+		TotalEquityUSD:      round4(acct.TotalEquityUSD),
+		AvailableBalanceUSD: round4(acct.AvailableBalanceUSD),
+		InitialMarginUSD:    round4(acct.InitialMarginUSD),
+		UnrealizedPnLUSD:    round4(acct.UnrealizedPnLUSD),
+		DiscrepancyUSD:      discrepancy,
+		ClosedTradesCount:   len(closedTrades),
+		OpenPositionsCount:  len(openPositions),
+		WinCount:            winCount,
+		LossCount:           lossCount,
+		GrossProfitUSD:      round4(posPnL),
+		GrossLossUSD:        round4(negPnL),
+		AvgLeverage:         avgLeverage,
+		LastSyncAt:          acct.LastSyncAt,
+	}
+
+	bySymbol := make([]SymbolStatsRow, 0, len(bySymMap))
+	for sym, sa := range bySymMap {
+		wr := 0.0
+		if sa.closedCount > 0 {
+			wr = round4(float64(sa.wins) / float64(sa.closedCount))
+		}
+		avgLev := 0.0
+		if sa.levCnt > 0 {
+			avgLev = round2(sa.levSum / float64(sa.levCnt))
+		}
+		bySymbol = append(bySymbol, SymbolStatsRow{
+			Symbol:         sym,
+			ClosedCount:    sa.closedCount,
+			OpenCount:      sa.openCount,
+			Wins:           sa.wins,
+			WinRate:        wr,
+			RealizedPnLUSD: round4(sa.realized),
+			FeeUSD:         round4(sa.fee),
+			FundingUSD:     round4(sa.funding),
+			NetPnLUSD:      round4(sa.net),
+			UnrealizedPnL:  round4(sa.unrealized),
+			TotalNotional:  round4(sa.notional),
+			AvgLeverage:    avgLev,
+			LastTimeMs:     sa.lastTimeMs,
+			SampleTradeID:  sa.sampleTradeID,
+		})
+	}
+	sort.Slice(bySymbol, func(i, j int) bool {
+		ai := math.Abs(bySymbol[i].NetPnLUSD + bySymbol[i].UnrealizedPnL)
+		aj := math.Abs(bySymbol[j].NetPnLUSD + bySymbol[j].UnrealizedPnL)
+		if ai != aj {
+			return ai > aj
+		}
+		if bySymbol[i].LastTimeMs != bySymbol[j].LastTimeMs {
+			return bySymbol[i].LastTimeMs > bySymbol[j].LastTimeMs
+		}
+		return bySymbol[i].Symbol < bySymbol[j].Symbol
+	})
+
 	if len(equityCurve) == 0 {
 		var walletPtr *float64
 		if acct.LastSyncAt > 0 {
@@ -242,7 +424,7 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		}
 		equityCurve = append(equityCurve, EquityPoint{
 			Time:        time.Now().Unix(),
-			BankrollUSD: round4(bankroll),
+			BankrollUSD: round4(startEq),
 			WalletUSD:   walletPtr,
 		})
 	}
@@ -327,6 +509,7 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		GateCompliance:       gateCompliance,
 		HourlyUTC8:           hourly,
 		TagBreakdown:         tagBreakdown,
+		BySymbol:             bySymbol,
 	})
 }
 

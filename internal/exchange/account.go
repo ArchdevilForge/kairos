@@ -209,6 +209,7 @@ type PositionMeta struct {
 // ClosedTradeHint carries per-order leverage and net PnL metadata from exchange
 // closed-PnL endpoints (e.g. Bybit /v5/position/closed-pnl) to enrich closed trades.
 type ClosedTradeHint struct {
+	TradeID     string
 	Symbol      string
 	OrderID     string
 	Leverage    float64
@@ -496,12 +497,22 @@ func AggregateTrades(in AggregateTradesInput) ([]cache.SyncedTrade, []cache.Trad
 			closeFee := feeUSD * closeRatio
 			openFee := feeUSD - closeFee
 
-			consumeFIFOLots(&acc.lots, closeQty)
+			costNotional := consumeFIFOLots(&acc.lots, closeQty)
 			acc.openQty -= closeQty
 			acc.totalClosedQty += closeQty
 			acc.totalExitNotional += closeQty * f.Price
 			acc.exitTimeMs = f.TimeMs
-			acc.realizedPnL += f.RealizedPnL
+			fillRealized := f.RealizedPnL
+			if fillRealized == 0 && closeQty > 0 && costNotional > 0 && f.Price > 0 {
+				// Bybit /v5/execution/list omits execPnl on closing fills; derive exact
+				// gross realized PnL directly from FIFO consumed entry lots.
+				if acc.direction == "long" {
+					fillRealized = closeQty*f.Price - costNotional
+				} else {
+					fillRealized = costNotional - closeQty*f.Price
+				}
+			}
+			acc.realizedPnL += fillRealized
 			acc.feeUSD += closeFee
 
 			if remOpenQty <= 1e-10 {
@@ -641,7 +652,12 @@ func applyClosedTradeHints(trades []cache.SyncedTrade, linkedFills []cache.Trade
 			continue
 		}
 		targetIdx := -1
-		if h.OrderID != "" {
+		if h.TradeID != "" {
+			if idx, ok := tradeIdxByID[h.TradeID]; ok && trades[idx].Status == "closed" {
+				targetIdx = idx
+			}
+		}
+		if targetIdx < 0 && h.OrderID != "" {
 			if idx, ok := closedIdxByOrder[h.Symbol+"|"+h.OrderID]; ok {
 				targetIdx = idx
 			}
@@ -685,20 +701,25 @@ func fillSideDirection(posSide, side string) string {
 	}
 }
 
-func consumeFIFOLots(lots *[]fifoLot, qty float64) {
+func consumeFIFOLots(lots *[]fifoLot, qty float64) float64 {
 	rem := qty
 	arr := *lots
 	idx := 0
+	costNotional := 0.0
 	for idx < len(arr) && rem > 1e-12 {
 		if arr[idx].qty <= rem+1e-12 {
-			rem -= arr[idx].qty
+			take := arr[idx].qty
+			costNotional += take * arr[idx].price
+			rem -= take
 			idx++
 		} else {
+			costNotional += rem * arr[idx].price
 			arr[idx].qty -= rem
 			rem = 0
 		}
 	}
 	*lots = arr[idx:]
+	return costNotional
 }
 
 func fillFeeUSD(f cache.TradeFill, bnbPriceUSD float64) float64 {

@@ -218,12 +218,12 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 		pulseView.State = types.MarketStateQuiet
 	}
 	availCtx, availCancel := context.WithTimeout(ctx, 4*time.Second)
-	availableSymbols, cryptoAllow, availErr := exchange.FetchCryptoPerpSymbols(availCtx, exName)
+	availableSymbols, tradableAllow, availErr := exchange.FetchTradablePerpSymbols(availCtx, exName)
 	availCancel()
-	if availErr == nil && len(cryptoAllow) > 0 {
+	if availErr == nil && len(tradableAllow) > 0 {
 		filtered := make([]string, 0, len(symbols))
 		for _, sym := range symbols {
-			if cryptoAllow[sym] {
+			if tradableAllow[sym] {
 				filtered = append(filtered, sym)
 			}
 		}
@@ -286,6 +286,24 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 	for i := range openPositions {
 		pos := &openPositions[i]
 		pos.LinkedTicketID = openTradeTicketByKey[pos.Symbol+"|"+pos.PositionSide]
+	}
+
+	// Ensure all symbols from open positions and synced trades are selectable in UI search/review.
+	availSet := make(map[string]bool, len(availableSymbols))
+	for _, sym := range availableSymbols {
+		availSet[sym] = true
+	}
+	for _, pos := range openPositions {
+		if pos.Symbol != "" && !availSet[pos.Symbol] {
+			availSet[pos.Symbol] = true
+			availableSymbols = append(availableSymbols, pos.Symbol)
+		}
+	}
+	for _, st := range syncedTrades {
+		if st.Symbol != "" && !availSet[st.Symbol] {
+			availSet[st.Symbol] = true
+			availableSymbols = append(availableSymbols, st.Symbol)
+		}
 	}
 
 	var mktCycle *types.CycleMap
@@ -731,8 +749,23 @@ func (s *Server) accountStatus(ctx context.Context) AccountStatusView {
 	if err != nil {
 		return view
 	}
+	if v, ok := meta["account_type"]; ok {
+		view.AccountType = v
+	}
+	if v, ok := meta["margin_mode"]; ok {
+		view.MarginMode = v
+	}
 	if v, ok := meta["wallet_balance_usd"]; ok {
 		view.WalletBalanceUSD, _ = strconv.ParseFloat(v, 64)
+	}
+	if v, ok := meta["total_equity_usd"]; ok {
+		view.TotalEquityUSD, _ = strconv.ParseFloat(v, 64)
+	}
+	if v, ok := meta["available_balance_usd"]; ok {
+		view.AvailableBalanceUSD, _ = strconv.ParseFloat(v, 64)
+	}
+	if v, ok := meta["initial_margin_usd"]; ok {
+		view.InitialMarginUSD, _ = strconv.ParseFloat(v, 64)
 	}
 	if v, ok := meta["unrealized_pnl_usd"]; ok {
 		view.UnrealizedPnLUSD, _ = strconv.ParseFloat(v, 64)

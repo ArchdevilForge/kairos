@@ -131,11 +131,11 @@ export const shellZh = {
 
   // CommandPalette
   'palette.ariaLabel': '快捷指令面板',
-  'palette.searchPlaceholder': '搜索标的（如 BTC、SOL）、候选票或指令…',
+  'palette.searchPlaceholder': '搜索标的（如 BTC、ETH、NVDA）、候选票或指令…',
   'palette.empty': '没有匹配的标的、候选票或指令。',
   'palette.group.views': '视图',
   'palette.group.actions': '操作',
-  'palette.group.symbols': 'Crypto 永续',
+  'palette.group.symbols': '永续合约',
   'palette.group.tickets': '候选票',
   'palette.group.jump': '跳转标的',
   'palette.action.watchLabel': '看盘视图',
@@ -306,11 +306,11 @@ export const shellEn: Record<keyof typeof shellZh, string> = {
 
   // CommandPalette
   'palette.ariaLabel': 'Command Palette',
-  'palette.searchPlaceholder': 'Search symbol (e.g. BTC, SOL), ticket, or command...',
+  'palette.searchPlaceholder': 'Search symbol (e.g. BTC, ETH, NVDA), ticket, or command...',
   'palette.empty': 'No matching symbols, tickets, or commands.',
   'palette.group.views': 'Views',
   'palette.group.actions': 'Actions',
-  'palette.group.symbols': 'Crypto Perps',
+  'palette.group.symbols': 'Perpetuals',
   'palette.group.tickets': 'Tickets',
   'palette.group.jump': 'Jump to Symbol',
   'palette.action.watchLabel': 'Watch View',

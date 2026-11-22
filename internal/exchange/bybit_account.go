@@ -110,6 +110,11 @@ type BybitPositionRow struct {
 	TradeMode       int    `json:"tradeMode"`
 	PositionIM      string `json:"positionIM"`
 	PositionBalance string `json:"positionBalance"`
+	PositionValue   string `json:"positionValue"`
+	StopLoss        string `json:"stopLoss"`
+	TakeProfit      string `json:"takeProfit"`
+	BreakEvenPrice  string `json:"breakEvenPrice"`
+	CurRealisedPnl  string `json:"curRealisedPnl"`
 	PositionIdx     int    `json:"positionIdx"`
 	UpdatedTime     string `json:"updatedTime"`
 }
@@ -572,6 +577,11 @@ func (c *BybitAccountClient) getRawPositions(ctx context.Context, rawSymbol stri
 				TradeMode       flexInt `json:"tradeMode"`
 				PositionIM      string  `json:"positionIM"`
 				PositionBalance string  `json:"positionBalance"`
+				PositionValue   string  `json:"positionValue"`
+				StopLoss        string  `json:"stopLoss"`
+				TakeProfit      string  `json:"takeProfit"`
+				BreakEvenPrice  string  `json:"breakEvenPrice"`
+				CurRealisedPnl  string  `json:"curRealisedPnl"`
 				PositionIdx     flexInt `json:"positionIdx"`
 				UpdatedTime     string  `json:"updatedTime"`
 			} `json:"list"`
@@ -592,6 +602,11 @@ func (c *BybitAccountClient) getRawPositions(ctx context.Context, rawSymbol stri
 				TradeMode:       int(r.TradeMode),
 				PositionIM:      r.PositionIM,
 				PositionBalance: r.PositionBalance,
+				PositionValue:   r.PositionValue,
+				StopLoss:        r.StopLoss,
+				TakeProfit:      r.TakeProfit,
+				BreakEvenPrice:  r.BreakEvenPrice,
+				CurRealisedPnl:  r.CurRealisedPnl,
 				PositionIdx:     int(r.PositionIdx),
 				UpdatedTime:     r.UpdatedTime,
 			})
@@ -897,6 +912,7 @@ func (c *BybitAccountClient) SyncToCache(
 	if err != nil {
 		return nil, err
 	}
+	existingTrades, _ := store.ListSyncedTradesForExchange(ctx, ex, "")
 
 	nowMs := time.Now().UnixMilli()
 	defaultStartMs := nowMs - int64(bybitLookbackDays)*24*3600*1000
@@ -912,6 +928,17 @@ func (c *BybitAccountClient) SyncToCache(
 		fillStartMs = latestFillMs - 1000
 		if fillStartMs < 0 {
 			fillStartMs = 0
+		}
+	}
+	// If any previously synced closed trade lost its leverage (<= 1x), widen the
+	// closed-PnL lookback to defaultStartMs so historical leverage heals automatically.
+	closedStartMs := fillStartMs
+	for _, tr := range existingTrades {
+		if tr.Status == "closed" && tr.Leverage <= 1 {
+			if defaultStartMs < closedStartMs {
+				closedStartMs = defaultStartMs
+			}
+			break
 		}
 	}
 
@@ -945,7 +972,7 @@ func (c *BybitAccountClient) SyncToCache(
 	}()
 	go func() {
 		defer wg.Done()
-		closedRows, closedErr = c.GetClosedPnL(ctx, fillStartMs, nowMs)
+		closedRows, closedErr = c.GetClosedPnL(ctx, closedStartMs, nowMs)
 	}()
 	go func() {
 		defer wg.Done()
@@ -1055,7 +1082,20 @@ func (c *BybitAccountClient) SyncToCache(
 	}
 
 	posMeta := bybitPositionsToMeta(rawPos, acctInfo)
-	closedHints := bybitClosedPnLToHints(closedRows)
+	// Preserve historical closed-trade leverage across incremental syncs, then let
+	// freshly fetched /v5/position/closed-pnl hints take precedence.
+	closedHints := make([]ClosedTradeHint, 0, len(existingTrades)+len(closedRows))
+	for _, tr := range existingTrades {
+		if tr.Status == "closed" && tr.Leverage > 1 {
+			closedHints = append(closedHints, ClosedTradeHint{
+				TradeID:     tr.ID,
+				Symbol:      tr.Symbol,
+				Leverage:    tr.Leverage,
+				UpdatedAtMs: tr.ExitTimeMs,
+			})
+		}
+	}
+	closedHints = append(closedHints, bybitClosedPnLToHints(closedRows)...)
 	defaultMM := acctInfo.ResolvedMarginMode()
 	if defaultMM == "" {
 		defaultMM = "cross"
@@ -1085,6 +1125,10 @@ func (c *BybitAccountClient) SyncToCache(
 	if wallet.AccountType != "" {
 		_ = store.SetExchangeMeta(ctx, ex, "account_type", wallet.AccountType)
 	}
+	_ = store.SetExchangeMeta(ctx, ex, "total_equity_usd", strconv.FormatFloat(wallet.TotalEquity, 'f', 6, 64))
+	_ = store.SetExchangeMeta(ctx, ex, "available_balance_usd", strconv.FormatFloat(wallet.AvailableBalance, 'f', 6, 64))
+	_ = store.SetExchangeMeta(ctx, ex, "initial_margin_usd", strconv.FormatFloat(wallet.InitialMarginUSD, 'f', 6, 64))
+	_ = store.SetExchangeMeta(ctx, ex, "margin_balance_usd", strconv.FormatFloat(wallet.MarginBalanceUSD, 'f', 6, 64))
 
 	return &AccountSyncOutcome{
 		SyncedTrades:     len(trades),
@@ -1226,6 +1270,11 @@ func buildBybitOpenPositions(rows []BybitPositionRow, info *BybitAccountInfo, fa
 		if _, exists := dedup[k]; !exists {
 			keys = append(keys, k)
 		}
+		entryPx := parseFloat(r.AvgPrice)
+		posVal := parseFloat(r.PositionValue)
+		if posVal == 0 && entryPx > 0 {
+			posVal = size * entryPx
+		}
 		dedup[k] = cache.OpenPosition{
 			Exchange:       "bybit",
 			Symbol:         sym,
@@ -1233,11 +1282,16 @@ func buildBybitOpenPositions(rows []BybitPositionRow, info *BybitAccountInfo, fa
 			MarginMode:     bybitResolvedRowMarginMode(r.TradeMode, info),
 			Leverage:       lev,
 			Qty:            qty,
-			EntryPrice:     parseFloat(r.AvgPrice),
+			EntryPrice:     entryPx,
 			MarkPrice:      parseFloat(r.MarkPrice),
 			UnrealizedPnL:  parseFloat(r.UnrealisedPnl),
 			LiqPrice:       parseFloat(r.LiqPrice),
 			IsolatedWallet: isoWallet,
+			StopLoss:       parseFloat(r.StopLoss),
+			TakeProfit:     parseFloat(r.TakeProfit),
+			PositionValue:  posVal,
+			BreakEvenPrice: parseFloat(r.BreakEvenPrice),
+			CurRealisedPnL: parseFloat(r.CurRealisedPnl),
 			UpdatedAt:      updatedSec,
 		}
 	}

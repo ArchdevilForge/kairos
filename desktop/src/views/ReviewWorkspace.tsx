@@ -2,8 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Time } from 'lightweight-charts';
 import {
   Anchor,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
   List,
   SkipBack,
   SkipForward,
@@ -35,12 +37,14 @@ import {
   TIMEFRAME_SECONDS,
   fmtDateTimeSec,
   fmtDateTimeWithSec,
+  fmtDurationSec,
+  fmtPctPoints,
   fmtPrice,
   fmtR,
   fmtUsd,
 } from '../utils/format';
 
-type SelectorTab = 'all' | 'executed' | 'skipped';
+type SelectorTab = 'all' | 'positions' | 'closed' | 'tickets';
 
 const REVIEW_TIMEFRAMES: readonly Timeframe[] = ['1m', '5m', '15m', '1h', '4h'];
 
@@ -60,23 +64,54 @@ function cleanSymbol(sym: string): string {
   return sym.replace(/:USDT$/, '');
 }
 
+function baseCoin(sym: string): string {
+  return sym.replace(/\/USDT(:USDT)?$/i, '').replace(/USDT$/i, '');
+}
+
+function fmtCompactQty(v: number | null | undefined): string {
+  if (v == null || !Number.isFinite(v)) return '—';
+  const abs = Math.abs(v);
+  if (abs === 0) return '0';
+  const decimals = abs >= 1000 ? 1 : abs >= 10 ? 2 : abs >= 1 ? 3 : 4;
+  return Number(abs.toFixed(decimals)).toString();
+}
+
+function fmtLev(lev: number | null | undefined): string {
+  if (lev == null || !Number.isFinite(lev) || lev <= 0) return '1x';
+  return `${Number(lev.toFixed(2))}x`;
+}
+
+function findMatchingOpenTrade(
+  bootstrap: BootstrapPayload,
+  pos: PositionSnapshot,
+): SyncedTrade | null {
+  return (
+    (bootstrap.unplanned_trades ?? []).find(
+      (tr) =>
+        tr.status === 'open' &&
+        sameSymbol(tr.symbol, pos.symbol) &&
+        (!pos.position_side ||
+          !tr.position_side ||
+          tr.position_side === pos.position_side),
+    ) ?? null
+  );
+}
+
 function buildReviewSubjects(bootstrap: BootstrapPayload): SelectedSubject[] {
-  const items: Array<{ ts: number; subj: SelectedSubject }> = [];
-  for (const b of bootstrap.tickets ?? []) {
-    items.push({
-      ts: b.ticket.signal_at || b.ticket.created_at,
-      subj: { kind: 'ticket', id: b.ticket.id, bundle: b },
-    });
-  }
-  for (const tr of bootstrap.unplanned_trades ?? []) {
-    items.push({
-      ts: Math.floor(tr.entry_time_ms / 1000),
-      subj: { kind: 'trade', id: tr.id, trade: tr },
-    });
-  }
+  const items: Array<{ ts: number; priority: number; subj: SelectedSubject }> = [];
+  const openPosKeys = new Set<string>();
   for (const pos of bootstrap.open_positions ?? []) {
+    openPosKeys.add(`${pos.symbol}|${pos.position_side}`);
+    const linkedOpen = findMatchingOpenTrade(bootstrap, pos);
+    const ts =
+      (linkedOpen && linkedOpen.entry_time_ms > 0
+        ? Math.floor(linkedOpen.entry_time_ms / 1000)
+        : 0) ||
+      pos.updated_at ||
+      Math.floor(Date.now() / 1000);
     items.push({
-      ts: pos.updated_at || Math.floor(Date.now() / 1000),
+      ts,
+      priority: 1,
       subj: {
         kind: 'position',
         id: `${pos.symbol}:${pos.position_side}`,
@@ -84,7 +119,27 @@ function buildReviewSubjects(bootstrap: BootstrapPayload): SelectedSubject[] {
       },
     });
   }
-  items.sort((a, b) => b.ts - a.ts);
+  for (const b of bootstrap.tickets ?? []) {
+    items.push({
+      ts: b.ticket.signal_at || b.ticket.created_at,
+      priority: 0,
+      subj: { kind: 'ticket', id: b.ticket.id, bundle: b },
+    });
+  }
+  for (const tr of bootstrap.unplanned_trades ?? []) {
+    if (tr.status === 'open' && openPosKeys.has(`${tr.symbol}|${tr.position_side}`)) {
+      continue;
+    }
+    items.push({
+      ts: Math.floor((tr.exit_time_ms || tr.entry_time_ms) / 1000),
+      priority: 0,
+      subj: { kind: 'trade', id: tr.id, trade: tr },
+    });
+  }
+  items.sort((a, b) => {
+    if (a.priority !== b.priority) return b.priority - a.priority;
+    return b.ts - a.ts;
+  });
   return items.map((x) => x.subj);
 }
 
@@ -94,7 +149,10 @@ function subjectSymbol(subj: SelectedSubject): string {
   return subj.position.symbol;
 }
 
-function subjectTimeBounds(subj: SelectedSubject): { entrySec: number; exitSec: number } {
+function subjectTimeBounds(
+  subj: SelectedSubject,
+  bootstrap?: BootstrapPayload,
+): { entrySec: number; exitSec: number } {
   if (subj.kind === 'ticket') {
     const entrySec =
       subj.bundle.ticket.entry_triggered_at ||
@@ -114,8 +172,13 @@ function subjectTimeBounds(subj: SelectedSubject): { entrySec: number; exitSec: 
       subj.trade.exit_time_ms > 0 ? Math.floor(subj.trade.exit_time_ms / 1000) : entrySec;
     return { entrySec, exitSec };
   }
-  const ts = subj.position.updated_at || 0;
-  return { entrySec: ts, exitSec: ts };
+  const matched = bootstrap ? findMatchingOpenTrade(bootstrap, subj.position) : null;
+  const entrySec =
+    matched && matched.entry_time_ms > 0
+      ? Math.floor(matched.entry_time_ms / 1000)
+      : subj.position.updated_at || 0;
+  const exitSec = subj.position.updated_at || entrySec;
+  return { entrySec, exitSec };
 }
 
 function resolveInitialReviewTarget(
@@ -131,18 +194,31 @@ function resolveInitialReviewTarget(
       (s) => s.kind === initialSubjectKind && s.id === initialSubjectId,
     );
     if (exact) {
-      const bounds = subjectTimeBounds(exact);
+      const bounds = subjectTimeBounds(exact, bootstrap);
       return {
         symbol: subjectSymbol(exact),
         selectedKey: `${exact.kind}:${exact.id}`,
         anchorSec: bounds.entrySec > 0 ? bounds.entrySec : null,
       };
     }
+    if (initialSubjectKind === 'trade') {
+      const rawTrade = (bootstrap.unplanned_trades ?? []).find(
+        (tr) => tr.id === initialSubjectId,
+      );
+      if (rawTrade) {
+        return {
+          symbol: rawTrade.symbol,
+          selectedKey: `trade:${rawTrade.id}`,
+          anchorSec:
+            rawTrade.entry_time_ms > 0 ? Math.floor(rawTrade.entry_time_ms / 1000) : null,
+        };
+      }
+    }
   }
   if (initialTicketId) {
     const match = subjects.find((s) => s.kind === 'ticket' && s.id === initialTicketId);
     if (match) {
-      const bounds = subjectTimeBounds(match);
+      const bounds = subjectTimeBounds(match, bootstrap);
       return {
         symbol: subjectSymbol(match),
         selectedKey: `ticket:${match.id}`,
@@ -153,7 +229,7 @@ function resolveInitialReviewTarget(
   if (initialSymbol) {
     const sameSymSubj = subjects.find((s) => sameSymbol(subjectSymbol(s), initialSymbol));
     if (sameSymSubj) {
-      const bounds = subjectTimeBounds(sameSymSubj);
+      const bounds = subjectTimeBounds(sameSymSubj, bootstrap);
       return {
         symbol: subjectSymbol(sameSymSubj),
         selectedKey: `${sameSymSubj.kind}:${sameSymSubj.id}`,
@@ -163,7 +239,7 @@ function resolveInitialReviewTarget(
   }
   if (subjects.length > 0) {
     const first = subjects[0];
-    const bounds = subjectTimeBounds(first);
+    const bounds = subjectTimeBounds(first, bootstrap);
     return {
       symbol: subjectSymbol(first),
       selectedKey: `${first.kind}:${first.id}`,
@@ -190,6 +266,7 @@ export function ReviewWorkspace({
   const { t } = useI18n();
   const [selectorOpen, setSelectorOpen] = useState(false);
   const [selectorTab, setSelectorTab] = useState<SelectorTab>('all');
+  const [detailExpanded, setDetailExpanded] = useState(true);
   const selectorToggleBtnRef = useRef<HTMLButtonElement | null>(null);
   const selectorCloseBtnRef = useRef<HTMLButtonElement | null>(null);
   const selectorDrawerRef = useRef<HTMLElement | null>(null);
@@ -275,22 +352,17 @@ export function ReviewWorkspace({
 
   const filteredSubjects = useMemo(() => {
     if (selectorTab === 'all') return allSubjects;
-    if (selectorTab === 'executed') {
-      return allSubjects.filter((s) => {
-        if (s.kind === 'position') return true;
-        if (s.kind === 'trade') return false;
-        const dec = s.bundle.decision?.decision ?? s.bundle.ticket.status;
-        return dec === 'accepted' || s.bundle.ticket.status === 'closed';
-      });
+    if (selectorTab === 'positions') {
+      return allSubjects.filter(
+        (s) => s.kind === 'position' || (s.kind === 'trade' && s.trade.status === 'open'),
+      );
     }
-    return allSubjects.filter((s) => {
-      if (s.kind === 'trade') return true;
-      if (s.kind === 'ticket') {
-        const dec = s.bundle.decision?.decision ?? s.bundle.ticket.status;
-        return dec === 'rejected' || dec === 'missed' || dec === 'waiting';
-      }
-      return false;
-    });
+    if (selectorTab === 'closed') {
+      return allSubjects.filter(
+        (s) => s.kind === 'trade' && s.trade.status !== 'open',
+      );
+    }
+    return allSubjects.filter((s) => s.kind === 'ticket');
   }, [allSubjects, selectorTab]);
 
   // Resolve current SelectedSubject
@@ -338,13 +410,27 @@ export function ReviewWorkspace({
       setSelectedKey(`${initialSubjectKind}:${initialSubjectId}`);
       if (exact) {
         setSymbol(subjectSymbol(exact));
-        const bounds = subjectTimeBounds(exact);
+        const bounds = subjectTimeBounds(exact, bootstrap);
         const anchor =
           initialCursorTs && Number.isFinite(initialCursorTs) && initialCursorTs > 0
             ? initialCursorTs
             : bounds.entrySec;
         if (anchor > 0) setCursorTs(anchor);
         return;
+      }
+      if (initialSubjectKind === 'trade') {
+        const rawTrade = (bootstrap.unplanned_trades ?? []).find(
+          (tr) => tr.id === initialSubjectId,
+        );
+        if (rawTrade) {
+          setSymbol(rawTrade.symbol);
+          const anchor =
+            (initialCursorTs && Number.isFinite(initialCursorTs) && initialCursorTs > 0
+              ? initialCursorTs
+              : 0) || Math.floor(rawTrade.entry_time_ms / 1000);
+          if (anchor > 0) setCursorTs(anchor);
+          return;
+        }
       }
     }
 
@@ -378,9 +464,12 @@ export function ReviewWorkspace({
     allSubjects,
   ]);
 
-  const anchorTimestampFor = useCallback((subj: SelectedSubject): number => {
-    return subjectTimeBounds(subj).entrySec || Math.floor(Date.now() / 1000);
-  }, []);
+  const anchorTimestampFor = useCallback(
+    (subj: SelectedSubject): number => {
+      return subjectTimeBounds(subj, bootstrap).entrySec || Math.floor(Date.now() / 1000);
+    },
+    [bootstrap],
+  );
 
   const handleSelectSubject = useCallback(
     (subj: SelectedSubject) => {
@@ -417,9 +506,9 @@ export function ReviewWorkspace({
   const selectedBounds = useMemo(
     () =>
       subjectMatchesSymbol && selectedSubject
-        ? subjectTimeBounds(selectedSubject)
+        ? subjectTimeBounds(selectedSubject, bootstrap)
         : { entrySec: 0, exitSec: 0 },
-    [subjectMatchesSymbol, selectedSubject],
+    [subjectMatchesSymbol, selectedSubject, bootstrap],
   );
   const windowTag =
     subjectMatchesSymbol && selectedSubject && selectedBounds.entrySec > 0
@@ -761,8 +850,11 @@ export function ReviewWorkspace({
     if (selectedSubject?.kind === 'trade') {
       return selectedSubject.trade.fills ?? [];
     }
+    if (selectedSubject?.kind === 'position') {
+      return findMatchingOpenTrade(bootstrap, selectedSubject.position)?.fills ?? [];
+    }
     return [];
-  }, [hideFuture, replayState, selectedSubject, subjectMatchesSymbol, chartBars.length]);
+  }, [hideFuture, replayState, selectedSubject, subjectMatchesSymbol, chartBars.length, bootstrap]);
 
   const futureCount = useMemo(() => {
     if (!hideFuture || fullBars.length === 0) return null;
@@ -816,6 +908,15 @@ export function ReviewWorkspace({
           dashed: true,
         });
       }
+      if (tr.status === 'open' && tr.liq_price > 0) {
+        lines.push({
+          id: 'liq',
+          price: tr.liq_price,
+          title: t('review.priceLine.liq'),
+          color: '#D49B4B',
+          dashed: true,
+        });
+      }
     } else if (selectedSubject.kind === 'position') {
       const pos = selectedSubject.position;
       if (pos.entry_price > 0) {
@@ -824,6 +925,33 @@ export function ReviewWorkspace({
           price: pos.entry_price,
           title: t('review.priceLine.avg'),
           color: '#D97757',
+        });
+      }
+      if (pos.stop_loss != null && pos.stop_loss > 0) {
+        lines.push({
+          id: 'stop',
+          price: pos.stop_loss,
+          title: t('review.priceLine.stop'),
+          color: '#B85450',
+          dashed: true,
+        });
+      }
+      if (pos.take_profit != null && pos.take_profit > 0) {
+        lines.push({
+          id: 'tp',
+          price: pos.take_profit,
+          title: t('review.priceLine.takeProfit'),
+          color: '#5D9670',
+          dashed: true,
+        });
+      }
+      if (pos.liq_price > 0) {
+        lines.push({
+          id: 'liq',
+          price: pos.liq_price,
+          title: t('review.priceLine.liq'),
+          color: '#D49B4B',
+          dashed: true,
         });
       }
     }
@@ -988,6 +1116,10 @@ export function ReviewWorkspace({
       : activeTicket?.linked_trade ?? null;
   const activePosition =
     selectedSubject?.kind === 'position' ? selectedSubject.position : null;
+  const activePositionOpenTrade = useMemo(
+    () => (activePosition ? findMatchingOpenTrade(bootstrap, activePosition) : null),
+    [activePosition, bootstrap],
+  );
 
   // Compact active subject summary badge
   const summaryBadge = useMemo(() => {
@@ -998,7 +1130,7 @@ export function ReviewWorkspace({
           ? t('review.dir.short')
           : t('review.dir.long');
       return {
-        text: `${dir} ${fmtUsd(activeTrade.net_pnl, true)}`,
+        text: `${dir} ${fmtLev(activeTrade.leverage)} ${fmtUsd(activeTrade.net_pnl, true)}`,
         positive: activeTrade.net_pnl >= 0,
       };
     }
@@ -1014,10 +1146,10 @@ export function ReviewWorkspace({
       };
     }
     if (activePosition) {
+      const dir =
+        activePosition.qty < 0 ? t('review.dir.short') : t('review.dir.long');
       return {
-        text: t('review.badge.positionPnl', {
-          pnl: fmtUsd(activePosition.unrealized_pnl, true),
-        }),
+        text: `${dir} ${fmtLev(activePosition.leverage)} ${fmtUsd(activePosition.unrealized_pnl, true)}`,
         positive: activePosition.unrealized_pnl >= 0,
       };
     }
@@ -1027,13 +1159,9 @@ export function ReviewWorkspace({
   const selectorTabOptions = useMemo<ReadonlyArray<SegmentedOption<SelectorTab>>>(
     () => [
       { value: 'all', label: t('review.selector.tabAll'), activeColor: 'var(--accent-brand)' },
-      { value: 'executed', label: t('review.selector.tabExecuted'), activeColor: 'var(--accent-brand)' },
-      {
-        value: 'skipped',
-        label: t('review.selector.tabSkipped'),
-        title: t('review.selector.tabSkippedHint'),
-        activeColor: 'var(--accent-brand)',
-      },
+      { value: 'positions', label: t('review.selector.tabPositions'), activeColor: 'var(--accent-info)' },
+      { value: 'closed', label: t('review.selector.tabClosed'), activeColor: 'var(--accent-brand)' },
+      { value: 'tickets', label: t('review.selector.tabTickets'), activeColor: 'var(--accent-brand)' },
     ],
     [t],
   );
@@ -1238,10 +1366,15 @@ export function ReviewWorkspace({
               }
               if (subj.kind === 'trade') {
                 const tr = subj.trade;
-                const dir =
-                  tr.direction === 'short' || tr.direction === 'down'
-                    ? t('review.dir.short')
-                    : t('review.dir.long');
+                const isShort = tr.direction === 'short' || tr.direction === 'down';
+                const dir = isShort ? t('review.dir.short') : t('review.dir.long');
+                const marginUsd =
+                  tr.margin > 0
+                    ? tr.margin
+                    : tr.entry_price > 0 && tr.qty > 0
+                      ? (tr.entry_price * tr.qty) / Math.max(1, tr.leverage)
+                      : 0;
+                const roePct = marginUsd > 0 ? (tr.net_pnl / marginUsd) * 100 : null;
                 return (
                   <button
                     key={subjKey}
@@ -1254,11 +1387,11 @@ export function ReviewWorkspace({
                         ? 'var(--bg-elevated)'
                         : 'var(--bg-canvas)',
                       borderColor: active
-                        ? 'var(--state-warn)'
+                        ? 'var(--accent-brand)'
                         : 'var(--border-hairline)',
                     }}
                   >
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between gap-1">
                       <span
                         className="font-mono text-xs font-semibold tabular-nums"
                         style={{ color: 'var(--text-primary)' }}
@@ -1266,13 +1399,15 @@ export function ReviewWorkspace({
                         {cleanSymbol(tr.symbol)}
                       </span>
                       <span
-                        className="rounded px-1.5 py-0.5 text-[10px]"
+                        className="rounded px-1.5 py-0.5 font-mono text-[10px] font-medium tabular-nums"
                         style={{
-                          backgroundColor: 'var(--state-warn-soft)',
-                          color: 'var(--state-warn)',
+                          backgroundColor: isShort
+                            ? 'var(--candle-bear-soft)'
+                            : 'var(--candle-bull-soft)',
+                          color: isShort ? 'var(--pnl-neg)' : 'var(--pnl-pos)',
                         }}
                       >
-                        {t('review.card.unplanned')}
+                        {dir} {fmtLev(tr.leverage)}
                       </span>
                     </div>
                     <div
@@ -1280,16 +1415,37 @@ export function ReviewWorkspace({
                       style={{ color: 'var(--text-secondary)' }}
                     >
                       <span>
-                        {dir} {tr.leverage}x
+                        {fmtCompactQty(tr.qty)} {baseCoin(tr.symbol)}
                       </span>
                       <span style={{ color: tr.net_pnl >= 0 ? 'var(--pnl-pos)' : 'var(--pnl-neg)' }}>
                         {fmtUsd(tr.net_pnl, true)}
+                        {roePct != null ? ` (${fmtPctPoints(roePct, 1)})` : ''}
+                      </span>
+                    </div>
+                    <div
+                      className="mt-0.5 flex items-center justify-between font-mono text-[10px] tabular-nums"
+                      style={{ color: 'var(--text-muted)' }}
+                    >
+                      <span>{fmtDateTimeSec(Math.floor((tr.exit_time_ms || tr.entry_time_ms) / 1000))}</span>
+                      <span>
+                        {tr.status === 'open' ? t('review.card.open') : t('review.card.closed')}
                       </span>
                     </div>
                   </button>
                 );
               }
               const pos = subj.position;
+              const isShort = pos.qty < 0;
+              const dir = isShort ? t('review.dir.short') : t('review.dir.long');
+              const posVal =
+                pos.position_value && pos.position_value > 0
+                  ? pos.position_value
+                  : Math.abs(pos.qty * pos.entry_price);
+              const posMargin =
+                pos.isolated_wallet > 0
+                  ? pos.isolated_wallet
+                  : posVal / Math.max(1, pos.leverage);
+              const posRoe = posMargin > 0 ? (pos.unrealized_pnl / posMargin) * 100 : null;
               return (
                 <button
                   key={subjKey}
@@ -1306,7 +1462,7 @@ export function ReviewWorkspace({
                       : 'var(--border-hairline)',
                   }}
                 >
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between gap-1">
                     <span
                       className="font-mono text-xs font-semibold tabular-nums"
                       style={{ color: 'var(--text-primary)' }}
@@ -1314,23 +1470,40 @@ export function ReviewWorkspace({
                       {cleanSymbol(pos.symbol)}
                     </span>
                     <span
-                      className="font-mono text-[10px] tabular-nums"
-                      style={{ color: 'var(--accent-info)' }}
+                      className="rounded px-1.5 py-0.5 font-mono text-[10px] font-medium tabular-nums"
+                      style={{
+                        backgroundColor: isShort
+                          ? 'var(--candle-bear-soft)'
+                          : 'var(--candle-bull-soft)',
+                        color: isShort ? 'var(--pnl-neg)' : 'var(--pnl-pos)',
+                      }}
                     >
-                      {t('review.card.positionLev', { leverage: pos.leverage })}
+                      {dir} {fmtLev(pos.leverage)}
                     </span>
                   </div>
                   <div
                     className="mt-1 flex items-center justify-between font-mono text-[10px] tabular-nums"
                     style={{ color: 'var(--text-secondary)' }}
                   >
-                    <span>{t('review.card.avgEntry', { price: fmtPrice(pos.entry_price) })}</span>
+                    <span>
+                      {fmtCompactQty(pos.qty)} {baseCoin(pos.symbol)} · {fmtUsd(posVal)}
+                    </span>
                     <span
                       style={{
                         color: pos.unrealized_pnl >= 0 ? 'var(--pnl-pos)' : 'var(--pnl-neg)',
                       }}
                     >
                       {fmtUsd(pos.unrealized_pnl, true)}
+                      {posRoe != null ? ` (${fmtPctPoints(posRoe, 1)})` : ''}
+                    </span>
+                  </div>
+                  <div
+                    className="mt-0.5 flex items-center justify-between font-mono text-[10px] tabular-nums"
+                    style={{ color: 'var(--text-muted)' }}
+                  >
+                    <span>{t('review.card.avgEntry', { price: fmtPrice(pos.entry_price) })}</span>
+                    <span style={{ color: 'var(--accent-info)' }}>
+                      {t('review.detail.openPosition')}
                     </span>
                   </div>
                 </button>
@@ -1342,6 +1515,293 @@ export function ReviewWorkspace({
 
       {/* Main Full-Bleed Replay Chart */}
       <section className="flex min-w-0 flex-1 flex-col">
+        {/* Bybit Trade / Live Position Detail Bar */}
+        {(activePosition || activeTrade) && subjectMatchesSymbol ? (
+          <div
+            className="shrink-0 border-b px-3 py-1.5 text-[11px]"
+            style={{
+              backgroundColor: 'var(--bg-surface)',
+              borderColor: 'var(--border-hairline)',
+            }}
+          >
+            {activePosition ? (
+              (() => {
+                const pos = activePosition;
+                const isShort = pos.qty < 0;
+                const dirLabel = isShort ? t('review.dir.short') : t('review.dir.long');
+                const notional =
+                  pos.position_value && pos.position_value > 0
+                    ? pos.position_value
+                    : Math.abs(pos.qty * pos.entry_price);
+                const margin =
+                  pos.isolated_wallet > 0
+                    ? pos.isolated_wallet
+                    : notional / Math.max(1, pos.leverage);
+                const roe = margin > 0 ? (pos.unrealized_pnl / margin) * 100 : null;
+                const mmLabel =
+                  pos.margin_mode === 'isolated'
+                    ? t('review.detail.marginIsolated')
+                    : t('review.detail.marginCross');
+                const entrySec = activePositionOpenTrade?.entry_time_ms
+                  ? Math.floor(activePositionOpenTrade.entry_time_ms / 1000)
+                  : 0;
+                const holdSec =
+                  entrySec > 0 ? Math.max(0, Math.floor(Date.now() / 1000) - entrySec) : null;
+                return (
+                  <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span
+                        className="rounded px-1.5 py-0.5 font-mono text-[10px] font-semibold"
+                        style={{
+                          backgroundColor: isShort
+                            ? 'var(--candle-bear-soft)'
+                            : 'var(--candle-bull-soft)',
+                          color: isShort ? 'var(--pnl-neg)' : 'var(--pnl-pos)',
+                        }}
+                      >
+                        {dirLabel} {fmtLev(pos.leverage)}
+                      </span>
+                      <span
+                        className="rounded border px-1.5 py-0.5 text-[10px]"
+                        style={{
+                          borderColor: 'var(--border-hairline)',
+                          color: 'var(--text-secondary)',
+                        }}
+                      >
+                        {mmLabel}
+                      </span>
+                      <span
+                        className="rounded px-1.5 py-0.5 text-[10px] font-medium"
+                        style={{
+                          backgroundColor: 'var(--accent-info-soft, var(--bg-elevated))',
+                          color: 'var(--accent-info)',
+                        }}
+                      >
+                        {t('review.detail.openPosition')}
+                      </span>
+                      {detailExpanded ? (
+                        <div className="ml-1 flex flex-wrap items-center gap-x-3.5 gap-y-1 font-mono tabular-nums">
+                          <DetailDatum
+                            label={t('review.detail.qty')}
+                            value={`${fmtCompactQty(pos.qty)} ${baseCoin(pos.symbol)}`}
+                          />
+                          <DetailDatum
+                            label={t('review.detail.notional')}
+                            value={fmtUsd(notional)}
+                          />
+                          <DetailDatum
+                            label={t('review.detail.margin')}
+                            value={fmtUsd(margin)}
+                          />
+                          <DetailDatum
+                            label={t('review.detail.entry')}
+                            value={fmtPrice(pos.entry_price)}
+                          />
+                          {pos.mark_price > 0 ? (
+                            <DetailDatum
+                              label={t('review.detail.mark')}
+                              value={fmtPrice(pos.mark_price)}
+                            />
+                          ) : null}
+                          {pos.take_profit != null && pos.take_profit > 0 ? (
+                            <DetailDatum
+                              label={t('review.detail.tp')}
+                              value={fmtPrice(pos.take_profit)}
+                              color="var(--pnl-pos)"
+                            />
+                          ) : null}
+                          {pos.stop_loss != null && pos.stop_loss > 0 ? (
+                            <DetailDatum
+                              label={t('review.detail.sl')}
+                              value={fmtPrice(pos.stop_loss)}
+                              color="var(--pnl-neg)"
+                            />
+                          ) : null}
+                          {pos.liq_price > 0 ? (
+                            <DetailDatum
+                              label={t('review.detail.liq')}
+                              value={fmtPrice(pos.liq_price)}
+                              color="var(--state-warn)"
+                            />
+                          ) : null}
+                          {pos.break_even_price != null && pos.break_even_price > 0 ? (
+                            <DetailDatum
+                              label={t('review.detail.breakEven')}
+                              value={fmtPrice(pos.break_even_price)}
+                            />
+                          ) : null}
+                          <DetailDatum
+                            label={t('review.detail.unrealizedPnl')}
+                            value={`${fmtUsd(pos.unrealized_pnl, true)}${roe != null ? ` (${fmtPctPoints(roe, 1)})` : ''}`}
+                            color={pos.unrealized_pnl >= 0 ? 'var(--pnl-pos)' : 'var(--pnl-neg)'}
+                            bold
+                          />
+                          {holdSec != null ? (
+                            <DetailDatum
+                              label={t('review.detail.holdTime')}
+                              value={fmtDurationSec(holdSec)}
+                            />
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setDetailExpanded((v) => !v)}
+                      title={detailExpanded ? t('review.detail.toggleHide') : t('review.detail.toggleShow')}
+                      aria-label={detailExpanded ? t('review.detail.toggleHide') : t('review.detail.toggleShow')}
+                      className="kairos-btn rounded p-0.5"
+                      style={{ color: 'var(--text-muted)' }}
+                    >
+                      {detailExpanded ? (
+                        <ChevronUp className="h-3.5 w-3.5" />
+                      ) : (
+                        <ChevronDown className="h-3.5 w-3.5" />
+                      )}
+                    </button>
+                  </div>
+                );
+              })()
+            ) : activeTrade ? (
+              (() => {
+                const tr = activeTrade;
+                const isShort = tr.direction === 'short' || tr.direction === 'down';
+                const dirLabel = isShort ? t('review.dir.short') : t('review.dir.long');
+                const notional = Math.abs(tr.entry_price * tr.qty);
+                const margin =
+                  tr.margin > 0 ? tr.margin : notional / Math.max(1, tr.leverage);
+                const roe = margin > 0 ? (tr.net_pnl / margin) * 100 : null;
+                const mmLabel =
+                  tr.margin_mode === 'isolated'
+                    ? t('review.detail.marginIsolated')
+                    : t('review.detail.marginCross');
+                const holdSec =
+                  tr.exit_time_ms > tr.entry_time_ms && tr.entry_time_ms > 0
+                    ? Math.floor((tr.exit_time_ms - tr.entry_time_ms) / 1000)
+                    : null;
+                const fillCount = tr.fills?.length ?? 0;
+                return (
+                  <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span
+                        className="rounded px-1.5 py-0.5 font-mono text-[10px] font-semibold"
+                        style={{
+                          backgroundColor: isShort
+                            ? 'var(--candle-bear-soft)'
+                            : 'var(--candle-bull-soft)',
+                          color: isShort ? 'var(--pnl-neg)' : 'var(--pnl-pos)',
+                        }}
+                      >
+                        {dirLabel} {fmtLev(tr.leverage)}
+                      </span>
+                      <span
+                        className="rounded border px-1.5 py-0.5 text-[10px]"
+                        style={{
+                          borderColor: 'var(--border-hairline)',
+                          color: 'var(--text-secondary)',
+                        }}
+                      >
+                        {mmLabel}
+                      </span>
+                      <span
+                        className="rounded px-1.5 py-0.5 text-[10px]"
+                        style={{
+                          backgroundColor: 'var(--bg-elevated)',
+                          color: 'var(--text-secondary)',
+                        }}
+                      >
+                        {tr.status === 'open'
+                          ? t('review.detail.openTrade')
+                          : t('review.detail.closedTrade')}
+                      </span>
+                      {detailExpanded ? (
+                        <div className="ml-1 flex flex-wrap items-center gap-x-3.5 gap-y-1 font-mono tabular-nums">
+                          <DetailDatum
+                            label={t('review.detail.qty')}
+                            value={`${fmtCompactQty(tr.qty)} ${baseCoin(tr.symbol)}`}
+                          />
+                          <DetailDatum
+                            label={t('review.detail.notional')}
+                            value={fmtUsd(notional)}
+                          />
+                          <DetailDatum
+                            label={t('review.detail.margin')}
+                            value={fmtUsd(margin)}
+                          />
+                          <DetailDatum
+                            label={t('review.detail.entry')}
+                            value={fmtPrice(tr.entry_price)}
+                          />
+                          {tr.exit_price > 0 ? (
+                            <DetailDatum
+                              label={t('review.detail.exit')}
+                              value={fmtPrice(tr.exit_price)}
+                            />
+                          ) : null}
+                          <DetailDatum
+                            label={t('review.detail.grossPnl')}
+                            value={fmtUsd(tr.realized_pnl, true)}
+                            color={
+                              tr.realized_pnl > 0
+                                ? 'var(--pnl-pos)'
+                                : tr.realized_pnl < 0
+                                  ? 'var(--pnl-neg)'
+                                  : undefined
+                            }
+                          />
+                          <DetailDatum
+                            label={t('review.detail.fee')}
+                            value={fmtUsd(tr.fee_usd === 0 ? 0 : -tr.fee_usd, true)}
+                          />
+                          {Math.abs(tr.funding_usd) > 1e-6 ? (
+                            <DetailDatum
+                              label={t('review.detail.funding')}
+                              value={fmtUsd(tr.funding_usd, true)}
+                              color={tr.funding_usd >= 0 ? 'var(--pnl-pos)' : 'var(--pnl-neg)'}
+                            />
+                          ) : null}
+                          <DetailDatum
+                            label={t('review.detail.netPnl')}
+                            value={`${fmtUsd(tr.net_pnl, true)}${roe != null ? ` (${fmtPctPoints(roe, 1)})` : ''}`}
+                            color={tr.net_pnl >= 0 ? 'var(--pnl-pos)' : 'var(--pnl-neg)'}
+                            bold
+                          />
+                          {holdSec != null ? (
+                            <DetailDatum
+                              label={t('review.detail.holdTime')}
+                              value={fmtDurationSec(holdSec)}
+                            />
+                          ) : null}
+                          {fillCount > 0 ? (
+                            <DetailDatum
+                              label={t('review.detail.fills')}
+                              value={t('review.detail.fillsCount', { count: fillCount })}
+                            />
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setDetailExpanded((v) => !v)}
+                      title={detailExpanded ? t('review.detail.toggleHide') : t('review.detail.toggleShow')}
+                      aria-label={detailExpanded ? t('review.detail.toggleHide') : t('review.detail.toggleShow')}
+                      className="kairos-btn rounded p-0.5"
+                      style={{ color: 'var(--text-muted)' }}
+                    >
+                      {detailExpanded ? (
+                        <ChevronUp className="h-3.5 w-3.5" />
+                      ) : (
+                        <ChevronDown className="h-3.5 w-3.5" />
+                      )}
+                    </button>
+                  </div>
+                );
+              })()
+            ) : null}
+          </div>
+        ) : null}
+
         {hideFuture ? (
           <div
             className="kairos-animate-view flex shrink-0 flex-wrap items-center gap-2 border-b px-3 py-1.5 text-[11px]"
@@ -1434,7 +1894,11 @@ export function ReviewWorkspace({
                 ? activeTrade.direction === 'short' || activeTrade.direction === 'down'
                   ? 'down'
                   : 'up'
-                : undefined
+                : activePosition
+                  ? activePosition.qty < 0
+                    ? 'down'
+                    : 'up'
+                  : undefined
           }
           priceLines={reviewPriceLines}
           tradeSegment={reviewTradeSegment}
@@ -1469,5 +1933,31 @@ export function ReviewWorkspace({
         />
       </section>
     </div>
+  );
+}
+
+function DetailDatum({
+  label,
+  value,
+  color,
+  bold,
+}: {
+  label: string;
+  value: string;
+  color?: string;
+  bold?: boolean;
+}) {
+  return (
+    <span className="inline-flex items-baseline gap-1 whitespace-nowrap">
+      <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+        {label}
+      </span>
+      <span
+        className={bold ? 'font-semibold' : 'font-medium'}
+        style={{ color: color ?? 'var(--text-primary)' }}
+      >
+        {value}
+      </span>
+    </span>
   );
 }

@@ -24,9 +24,11 @@ func (s *Server) handleMarketBars(w http.ResponseWriter, r *http.Request) {
 	beforeTS, _ := strconv.ParseInt(r.URL.Query().Get("before_ts"), 10, 64)
 
 	exName := s.activeExchange()
-	if _, allow, err := exchange.FetchCryptoPerpSymbols(ctx, exName); err == nil && len(allow) > 0 && !allow[sym] {
-		writeError(w, http.StatusBadRequest, "仅支持 Crypto 永续合约: "+sym, "NON_CRYPTO_SYMBOL")
-		return
+	if _, allow, err := exchange.FetchTradablePerpSymbols(ctx, exName); err == nil && len(allow) > 0 && !allow[sym] {
+		if !s.isAccountSymbol(ctx, exName, sym) {
+			writeError(w, http.StatusBadRequest, "不支持的永续合约: "+sym, "UNSUPPORTED_SYMBOL")
+			return
+		}
 	}
 
 	candles := s.loadBarsWithFallback(ctx, sym, tf, limit, beforeTS)
@@ -64,6 +66,25 @@ func (s *Server) handleMarketBars(w http.ResponseWriter, r *http.Request) {
 		Box:         nil,
 		Metrics:     []exchange.MetricsPoint{},
 	})
+}
+
+// isAccountSymbol reports whether sym exists in the user's synced trade history or
+// open positions for exName, ensuring historical/held contracts can always be reviewed.
+func (s *Server) isAccountSymbol(ctx context.Context, exName, sym string) bool {
+	if s.cache == nil || sym == "" {
+		return false
+	}
+	if trades, err := s.cache.ListSyncedTradesForExchange(ctx, exName, sym); err == nil && len(trades) > 0 {
+		return true
+	}
+	if positions, err := s.cache.ListOpenPositionsForExchange(ctx, exName); err == nil {
+		for _, pos := range positions {
+			if pos.Symbol == sym {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (s *Server) handleReplayState(w http.ResponseWriter, r *http.Request) {

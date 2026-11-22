@@ -420,6 +420,7 @@ export interface SyncedTrade {
 }
 
 export interface PositionSnapshot {
+  exchange?: string;
   symbol: string;
   position_side: string;
   margin_mode: MarginMode;
@@ -430,6 +431,11 @@ export interface PositionSnapshot {
   unrealized_pnl: number;
   liq_price: number;
   isolated_wallet: number;
+  stop_loss?: number;
+  take_profit?: number;
+  position_value?: number;
+  break_even_price?: number;
+  cur_realised_pnl?: number;
   updated_at: number;
   linked_ticket_id?: string;
   review?: ReviewAnnotation | null;
@@ -499,9 +505,14 @@ export interface CooldownEntry {
 
 export interface AccountStatusView {
   exchange?: string;
+  account_type?: string;
+  margin_mode?: string;
   configured: boolean;
   api_key_masked: string;
   wallet_balance_usd: number;
+  total_equity_usd?: number;
+  available_balance_usd?: number;
+  initial_margin_usd?: number;
   unrealized_pnl_usd: number;
   last_sync_at: number;
   sync_error?: string;
@@ -655,6 +666,9 @@ export interface EquityPoint {
 }
 
 export interface WalletReconciliation {
+  exchange?: string;
+  account_type?: string;
+  margin_mode?: string;
   trading_bankroll_usd: number;
   realized_pnl_usd: number;
   fee_usd: number;
@@ -662,9 +676,36 @@ export interface WalletReconciliation {
   net_pnl_usd: number;
   expected_bankroll_usd: number;
   wallet_balance_usd: number;
+  total_equity_usd?: number;
+  available_balance_usd?: number;
+  initial_margin_usd?: number;
   unrealized_pnl_usd: number;
   discrepancy_usd: number;
+  closed_trades_count?: number;
+  open_positions_count?: number;
+  win_count?: number;
+  loss_count?: number;
+  gross_profit_usd?: number;
+  gross_loss_usd?: number;
+  avg_leverage?: number;
   last_sync_at: number;
+}
+
+export interface SymbolStatsRow {
+  symbol: string;
+  closed_count: number;
+  open_count: number;
+  wins: number;
+  win_rate: number;
+  realized_pnl_usd: number;
+  fee_usd: number;
+  funding_usd: number;
+  net_pnl_usd: number;
+  unrealized_pnl_usd: number;
+  total_notional_usd: number;
+  avg_leverage: number;
+  last_time_ms: number;
+  sample_trade_id?: string;
 }
 
 export interface RBucket {
@@ -733,6 +774,7 @@ export interface StatsPayload {
     grades: TagMetricRow[];
     emotions: TagMetricRow[];
   };
+  by_symbol?: SymbolStatsRow[];
 }
 
 export type WsEvent =

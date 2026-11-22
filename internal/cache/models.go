@@ -60,6 +60,11 @@ type OpenPosition struct {
 	UnrealizedPnL  float64 `json:"unrealized_pnl"`
 	LiqPrice       float64 `json:"liq_price"`
 	IsolatedWallet float64 `json:"isolated_wallet"`
+	StopLoss       float64 `json:"stop_loss"`
+	TakeProfit     float64 `json:"take_profit"`
+	PositionValue  float64 `json:"position_value"`
+	BreakEvenPrice float64 `json:"break_even_price"`
+	CurRealisedPnL float64 `json:"cur_realised_pnl"`
 	UpdatedAt      int64   `json:"updated_at"`
 	LinkedTicketID string  `json:"linked_ticket_id,omitempty"`
 }

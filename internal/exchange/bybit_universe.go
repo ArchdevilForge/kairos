@@ -33,6 +33,13 @@ var bybitCryptoCache = struct {
 	sorted    []string
 }{}
 
+var bybitTradableCache = struct {
+	mu        sync.Mutex
+	fetchedAt time.Time
+	allow     map[string]bool
+	sorted    []string
+}{}
+
 var bybitUniverseInfoCache = struct {
 	mu        sync.Mutex
 	fetchedAt time.Time
@@ -54,6 +61,94 @@ func FetchCryptoPerpSymbols(ctx context.Context, exchangeName string) ([]string,
 	default:
 		return FetchBybitCryptoPerpSymbols(ctx)
 	}
+}
+
+// FetchTradablePerpSymbols returns all active USDT linear perpetual symbols
+// supported for charting, search, and trade review on the given exchange.
+// On Bybit this includes crypto, stock, ETF, commodity, and forex linear perpetuals,
+// while MarketPulse / Top-100 discovery continues to use FetchCryptoPerpSymbols.
+func FetchTradablePerpSymbols(ctx context.Context, exchangeName string) ([]string, map[string]bool, error) {
+	switch strings.ToLower(strings.TrimSpace(exchangeName)) {
+	case "binance":
+		return FetchBinanceCryptoPerpSymbols(ctx)
+	default:
+		return FetchBybitTradablePerpSymbols(ctx)
+	}
+}
+
+// FetchBybitTradablePerpSymbols returns all active Bybit USDT linear perpetual
+// symbols (including crypto, stock, ETF, commodity, and forex perpetuals) sorted
+// by 24h quote turnover descending, along with an O(1) allowlist map (cached 1h).
+func FetchBybitTradablePerpSymbols(ctx context.Context) ([]string, map[string]bool, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	bybitTradableCache.mu.Lock()
+	if len(bybitTradableCache.allow) > 0 && time.Since(bybitTradableCache.fetchedAt) < cryptoCacheTTL {
+		allowCopy := make(map[string]bool, len(bybitTradableCache.allow))
+		for k, v := range bybitTradableCache.allow {
+			allowCopy[k] = v
+		}
+		sortedCopy := append([]string(nil), bybitTradableCache.sorted...)
+		bybitTradableCache.mu.Unlock()
+		return sortedCopy, allowCopy, nil
+	}
+	bybitTradableCache.mu.Unlock()
+
+	cli := newBybitPooledHTTPClient(bybitExchangeInfoTimeout)
+	restBase := strings.TrimRight(currentBybitRESTEndpoint(), "/")
+
+	meta, err := fetchBybitPerpMetaFiltered(ctx, cli, restBase, false)
+	if err != nil {
+		return nil, nil, err
+	}
+	allow := make(map[string]bool, len(meta))
+	for sym := range meta {
+		allow[sym] = true
+	}
+
+	vols := make(map[string]float64, len(allow))
+	var tickerResp struct {
+		RetCode int `json:"retCode"`
+		Result  struct {
+			List []struct {
+				Symbol      string `json:"symbol"`
+				Turnover24h string `json:"turnover24h"`
+			} `json:"list"`
+		} `json:"result"`
+	}
+	if err := httpGetJSON(ctx, cli, restBase+"/v5/market/tickers?category=linear", &tickerResp); err == nil && tickerResp.RetCode == 0 {
+		for _, r := range tickerResp.Result.List {
+			if canon := toCanonicalBybit(r.Symbol); canon != "" && allow[canon] {
+				vols[canon] = parseFloat(r.Turnover24h)
+			}
+		}
+	}
+
+	sorted := make([]string, 0, len(allow))
+	for sym := range allow {
+		sorted = append(sorted, sym)
+	}
+	sort.Slice(sorted, func(i, j int) bool {
+		vi, vj := vols[sorted[i]], vols[sorted[j]]
+		if vi != vj {
+			return vi > vj
+		}
+		return sorted[i] < sorted[j]
+	})
+
+	bybitTradableCache.mu.Lock()
+	bybitTradableCache.allow = allow
+	bybitTradableCache.sorted = sorted
+	bybitTradableCache.fetchedAt = time.Now()
+	bybitTradableCache.mu.Unlock()
+
+	allowCopy := make(map[string]bool, len(allow))
+	for k, v := range allow {
+		allowCopy[k] = v
+	}
+	return append([]string(nil), sorted...), allowCopy, nil
 }
 
 // FetchBybitCryptoPerpSymbols returns active Bybit USDT linear crypto perpetual
@@ -352,6 +447,10 @@ func loadBybitPerpMeta(ctx context.Context, cli *http.Client) (map[string]bybitP
 }
 
 func fetchBybitPerpMetaFrom(ctx context.Context, cli *http.Client, restBase string) (map[string]bybitPerpMeta, error) {
+	return fetchBybitPerpMetaFiltered(ctx, cli, restBase, true)
+}
+
+func fetchBybitPerpMetaFiltered(ctx context.Context, cli *http.Client, restBase string, cryptoOnly bool) (map[string]bybitPerpMeta, error) {
 	base := strings.TrimRight(restBase, "/")
 	meta := make(map[string]bybitPerpMeta)
 	seenCursors := make(map[string]bool)
@@ -400,7 +499,7 @@ func fetchBybitPerpMetaFrom(ctx context.Context, cli *http.Client, restBase stri
 				inst.QuoteCoin != "USDT" || inst.SettleCoin != "USDT" || inst.IsPreListing {
 				continue
 			}
-			if !isBybitCryptoSymbolType(inst.SymbolType) {
+			if cryptoOnly && !isBybitCryptoSymbolType(inst.SymbolType) {
 				continue
 			}
 			canon := toCanonicalBybit(inst.Symbol)
@@ -420,7 +519,7 @@ func fetchBybitPerpMetaFrom(ctx context.Context, cli *http.Client, restBase stri
 	}
 
 	if len(meta) == 0 {
-		return nil, fmt.Errorf("bybit instruments-info: zero crypto perpetuals")
+		return nil, fmt.Errorf("bybit instruments-info: zero linear perpetuals")
 	}
 	return meta, nil
 }

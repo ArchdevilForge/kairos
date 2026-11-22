@@ -155,6 +155,11 @@ func (s *Store) initSchema(ctx context.Context) error {
 			unrealized_pnl REAL NOT NULL,
 			liq_price REAL NOT NULL,
 			isolated_wallet REAL NOT NULL,
+			stop_loss REAL NOT NULL DEFAULT 0,
+			take_profit REAL NOT NULL DEFAULT 0,
+			position_value REAL NOT NULL DEFAULT 0,
+			break_even_price REAL NOT NULL DEFAULT 0,
+			cur_realised_pnl REAL NOT NULL DEFAULT 0,
 			updated_at INTEGER NOT NULL,
 			PRIMARY KEY (exchange, symbol, position_side)
 		);`,
@@ -286,6 +291,20 @@ func (s *Store) migrateSchema(ctx context.Context) error {
 	if exCol, hasEx := opCols["exchange"]; !hasEx || exCol.pk == 0 {
 		if err := s.migrateOpenPositionsPK(ctx, hasEx); err != nil {
 			return err
+		}
+		opCols, err = s.tableColumns(ctx, "open_positions")
+		if err != nil {
+			return err
+		}
+	}
+	// d) open_positions: add Bybit/enriched position fields non-destructively.
+	for _, col := range []string{"stop_loss", "take_profit", "position_value", "break_even_price", "cur_realised_pnl"} {
+		if _, ok := opCols[col]; !ok {
+			if _, err := s.db.ExecContext(ctx, fmt.Sprintf(
+				"ALTER TABLE open_positions ADD COLUMN %s REAL NOT NULL DEFAULT 0;", col,
+			)); err != nil {
+				return fmt.Errorf("cache migrate open_positions add %s: %w", col, err)
+			}
 		}
 	}
 	return nil
@@ -1236,8 +1255,10 @@ func (s *Store) replaceOpenPositions(ctx context.Context, forcedExchange string,
 	stmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO open_positions (
 			exchange, symbol, position_side, margin_mode, leverage, qty,
-			entry_price, mark_price, unrealized_pnl, liq_price, isolated_wallet, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			entry_price, mark_price, unrealized_pnl, liq_price, isolated_wallet,
+			stop_loss, take_profit, position_value, break_even_price, cur_realised_pnl,
+			updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return err
@@ -1251,7 +1272,9 @@ func (s *Store) replaceOpenPositions(ctx context.Context, forcedExchange string,
 		}
 		if _, err := stmt.ExecContext(ctx,
 			ex, p.Symbol, p.PositionSide, p.MarginMode, p.Leverage, p.Qty,
-			p.EntryPrice, p.MarkPrice, p.UnrealizedPnL, p.LiqPrice, p.IsolatedWallet, p.UpdatedAt,
+			p.EntryPrice, p.MarkPrice, p.UnrealizedPnL, p.LiqPrice, p.IsolatedWallet,
+			p.StopLoss, p.TakeProfit, p.PositionValue, p.BreakEvenPrice, p.CurRealisedPnL,
+			p.UpdatedAt,
 		); err != nil {
 			return err
 		}
@@ -1280,7 +1303,9 @@ func (s *Store) listOpenPositions(ctx context.Context, exchange string) ([]OpenP
 	if exchange != "" {
 		rows, err = s.db.QueryContext(ctx, `
 			SELECT exchange, symbol, position_side, margin_mode, leverage, qty,
-				entry_price, mark_price, unrealized_pnl, liq_price, isolated_wallet, updated_at
+				entry_price, mark_price, unrealized_pnl, liq_price, isolated_wallet,
+				stop_loss, take_profit, position_value, break_even_price, cur_realised_pnl,
+				updated_at
 			FROM open_positions
 			WHERE exchange = ?
 			ORDER BY symbol ASC, position_side ASC
@@ -1288,7 +1313,9 @@ func (s *Store) listOpenPositions(ctx context.Context, exchange string) ([]OpenP
 	} else {
 		rows, err = s.db.QueryContext(ctx, `
 			SELECT exchange, symbol, position_side, margin_mode, leverage, qty,
-				entry_price, mark_price, unrealized_pnl, liq_price, isolated_wallet, updated_at
+				entry_price, mark_price, unrealized_pnl, liq_price, isolated_wallet,
+				stop_loss, take_profit, position_value, break_even_price, cur_realised_pnl,
+				updated_at
 			FROM open_positions
 			ORDER BY exchange ASC, symbol ASC, position_side ASC
 		`)
@@ -1303,7 +1330,9 @@ func (s *Store) listOpenPositions(ctx context.Context, exchange string) ([]OpenP
 		var p OpenPosition
 		if err := rows.Scan(
 			&p.Exchange, &p.Symbol, &p.PositionSide, &p.MarginMode, &p.Leverage, &p.Qty,
-			&p.EntryPrice, &p.MarkPrice, &p.UnrealizedPnL, &p.LiqPrice, &p.IsolatedWallet, &p.UpdatedAt,
+			&p.EntryPrice, &p.MarkPrice, &p.UnrealizedPnL, &p.LiqPrice, &p.IsolatedWallet,
+			&p.StopLoss, &p.TakeProfit, &p.PositionValue, &p.BreakEvenPrice, &p.CurRealisedPnL,
+			&p.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
