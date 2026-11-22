@@ -6,6 +6,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
+import { createPortal } from 'react-dom';
 import {
   CandlestickSeries,
   ColorType,
@@ -25,17 +26,25 @@ import {
   type Time,
 } from 'lightweight-charts';
 import {
+  ArrowUpRight,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Eye,
   EyeOff,
+  Magnet,
   Minus,
   Pause,
+  Pencil,
   Play,
   Ruler,
+  SlidersHorizontal,
+  Square,
   Trash2,
+  TrendingUp,
   X,
 } from 'lucide-react';
+import { SegmentedControl, type SegmentedOption } from '../components/SegmentedControl';
 import { useI18n, type Locale, type TranslateFn, type TranslationKey } from '../i18n';
 import {
   TIMEFRAMES,
@@ -408,6 +417,7 @@ export default function KairosChart({
   onDragPriceLine,
   onUserDrawing,
   onUpdateDrawing,
+  onDeleteDrawing,
   onEraseDrawings,
   onChartReady,
 }: KairosChartProps) {
@@ -436,7 +446,27 @@ export default function KairosChart({
   const themeRef = useRef(theme);
   themeRef.current = theme;
 
+  const [magnetEnabled, setMagnetEnabled] = useState(false);
   const magnetRef = useRef(false);
+  magnetRef.current = magnetEnabled;
+
+  const [drawMenuOpen, setDrawMenuOpen] = useState(false);
+  const [drawMenuPos, setDrawMenuPos] = useState<{
+    top: number;
+    left: number;
+    maxHeight: number;
+  } | null>(null);
+  const drawMenuTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const drawMenuPopupRef = useRef<HTMLDivElement | null>(null);
+  const drawMenuItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const lastPointerRef = useRef<{
+    clientX: number;
+    clientY: number;
+    shiftKey: boolean;
+    ctrlOrMeta: boolean;
+  } | null>(null);
+  const onDeleteDrawingRef = useRef(onDeleteDrawing);
+  onDeleteDrawingRef.current = onDeleteDrawing;
 
   const [selectedDrawingId, setSelectedDrawingId] = useState<number | null>(null);
   const selectedDrawingIdRef = useRef<number | null>(null);
@@ -854,6 +884,14 @@ export default function KairosChart({
     rulerCornerRef.current = null;
     rulerPreviewRef.current = null;
     rulerResultRef.current = null;
+    hoverPreviewRef.current = null;
+    magnetRingRef.current = null;
+    drawPressStartRef.current = null;
+    quickRulerActiveRef.current = false;
+    quickRulerStartRef.current = null;
+    editDragRef.current = null;
+    dragLineRef.current = null;
+    cursorDragRef.current = false;
     setRulerHintKey(null);
     paintOverlayRef.current();
   }, []);
@@ -1572,6 +1610,36 @@ export default function KairosChart({
     const onPointerMove = (e: PointerEvent) => {
       const bundle = bundleRef.current;
       if (!bundle) return;
+
+      const isActiveInteraction =
+        cursorDragRef.current ||
+        dragLineRef.current != null ||
+        editDragRef.current != null ||
+        quickRulerActiveRef.current ||
+        drawModeRef.current !== 'none';
+
+      // Fast-path skip layout measurement when idle and pointer is outside this chart pane
+      if (!isActiveInteraction) {
+        const target = e.target as Node | null;
+        if (!target || !el.contains(target)) {
+          if (hoveredHitRef.current || magnetRingRef.current || hoverPreviewRef.current) {
+            hoveredHitRef.current = null;
+            magnetRingRef.current = null;
+            hoverPreviewRef.current = null;
+            if (el.style.cursor !== '') el.style.cursor = '';
+            paintOverlayRef.current();
+          }
+          return;
+        }
+      }
+
+      lastPointerRef.current = {
+        clientX: e.clientX,
+        clientY: e.clientY,
+        shiftKey: e.shiftKey,
+        ctrlOrMeta: e.ctrlKey || e.metaKey,
+      };
+
       const rect = el.getBoundingClientRect();
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
@@ -1674,8 +1742,12 @@ export default function KairosChart({
         const inside = isInsidePlot(x, y, plotWidth, pane0Height);
         el.style.cursor = inside ? 'crosshair' : '';
         if (!inside) {
-          magnetRingRef.current = null;
-          hoverPreviewRef.current = null;
+          if (magnetRingRef.current || hoverPreviewRef.current) {
+            magnetRingRef.current = null;
+            hoverPreviewRef.current = null;
+            if (moveRaf) cancelAnimationFrame(moveRaf);
+            moveRaf = requestAnimationFrame(() => paintOverlayRef.current());
+          }
           return;
         }
         const allowAngle = e.shiftKey && (mode === 'trend' || mode === 'ray');
@@ -1684,6 +1756,7 @@ export default function KairosChart({
           shiftAnchor: rulerCornerRef.current,
           allowAngleLock: allowAngle,
         });
+        const hadMagnetRing = magnetRingRef.current != null;
         magnetRingRef.current = pt?.snapped ? { x: pt.x, y: pt.y } : null;
         if (mode === 'hline') {
           hoverPreviewRef.current = pt;
@@ -1693,7 +1766,7 @@ export default function KairosChart({
           rulerPreviewRef.current = pt;
           if (moveRaf) cancelAnimationFrame(moveRaf);
           moveRaf = requestAnimationFrame(() => paintOverlayRef.current());
-        } else if (useMagnet) {
+        } else if (useMagnet || hadMagnetRing) {
           if (moveRaf) cancelAnimationFrame(moveRaf);
           moveRaf = requestAnimationFrame(() => paintOverlayRef.current());
         }
@@ -1827,6 +1900,39 @@ export default function KairosChart({
       }
     };
 
+    const onPointerCancel = () => {
+      if (
+        cursorDragRef.current ||
+        dragLineRef.current ||
+        editDragRef.current ||
+        quickRulerActiveRef.current ||
+        drawPressStartRef.current ||
+        magnetRingRef.current ||
+        hoverPreviewRef.current
+      ) {
+        clearTransientRuler();
+        el.style.cursor = '';
+      }
+    };
+
+    const onPointerLeave = () => {
+      lastPointerRef.current = null;
+      if (
+        !editDragRef.current &&
+        !dragLineRef.current &&
+        !cursorDragRef.current &&
+        !quickRulerActiveRef.current
+      ) {
+        if (hoveredHitRef.current || magnetRingRef.current || hoverPreviewRef.current) {
+          hoveredHitRef.current = null;
+          magnetRingRef.current = null;
+          hoverPreviewRef.current = null;
+          el.style.cursor = '';
+          paintOverlayRef.current();
+        }
+      }
+    };
+
     const onContextMenu = (e: MouseEvent) => {
       if (
         drawModeRef.current !== 'none' ||
@@ -1843,6 +1949,8 @@ export default function KairosChart({
     window.addEventListener('pointerdown', onPointerDown, { capture: true });
     window.addEventListener('pointermove', onPointerMove);
     window.addEventListener('pointerup', onPointerUp);
+    window.addEventListener('pointercancel', onPointerCancel);
+    el.addEventListener('pointerleave', onPointerLeave);
     el.addEventListener('contextmenu', onContextMenu);
 
     return () => {
@@ -1855,13 +1963,72 @@ export default function KairosChart({
       } as EventListenerOptions);
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', onPointerUp);
+      window.removeEventListener('pointercancel', onPointerCancel);
+      el.removeEventListener('pointerleave', onPointerLeave);
       el.removeEventListener('contextmenu', onContextMenu);
     };
   }, [mapDrawingPoint, priceToY, timeToContinuousX, xToContinuousPoint, clearTransientRuler]);
 
-  // Escape exits active drawing/selection
+  // Recompute magnet preview immediately when magnet toggle or Ctrl/Meta modifier changes
+  const refreshMagnetPreview = useCallback(
+    (ctrlOrMetaOverride?: boolean) => {
+      const lp = lastPointerRef.current;
+      const el = containerRef.current;
+      const bundle = bundleRef.current;
+      if (!lp || !el || !bundle) return;
+      const mode = drawModeRef.current;
+      if (mode === 'none' && !quickRulerActiveRef.current && !editDragRef.current && !dragLineRef.current) {
+        if (magnetRingRef.current) {
+          magnetRingRef.current = null;
+          paintOverlayRef.current();
+        }
+        return;
+      }
+      const rect = el.getBoundingClientRect();
+      const x = lp.clientX - rect.left;
+      const y = lp.clientY - rect.top;
+      const plotWidth =
+        bundle.chart.timeScale().width() || Math.max(1, rect.width - RIGHT_PRICE_SCALE_MIN_WIDTH);
+      const pane0Height = bundle.chart.panes()[0]?.getHeight?.() ?? rect.height;
+      if (x < 0 || x > plotWidth || y < 0 || y > pane0Height) {
+        magnetRingRef.current = null;
+        hoverPreviewRef.current = null;
+        paintOverlayRef.current();
+        return;
+      }
+      const ctrlOrMeta = ctrlOrMetaOverride ?? lp.ctrlOrMeta;
+      const useMagnet = magnetRef.current !== ctrlOrMeta;
+      const allowAngle = lp.shiftKey && (mode === 'trend' || mode === 'ray');
+      const pt = xToContinuousPoint(x, y, {
+        forceMagnet: useMagnet,
+        shiftAnchor: rulerCornerRef.current,
+        allowAngleLock: allowAngle,
+      });
+      magnetRingRef.current = pt?.snapped ? { x: pt.x, y: pt.y } : null;
+      if (mode === 'hline') {
+        hoverPreviewRef.current = pt;
+      } else if (rulerCornerRef.current && pt) {
+        rulerPreviewRef.current = pt;
+      }
+      paintOverlayRef.current();
+    },
+    [xToContinuousPoint],
+  );
+
+  useEffect(() => {
+    refreshMagnetPreview();
+  }, [magnetEnabled, refreshMagnetPreview]);
+
+  // Escape exits active drawing/selection; Delete/Backspace removes selected drawing; Ctrl/Meta updates magnet preview
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Control' || e.key === 'Meta') {
+        if (lastPointerRef.current) {
+          lastPointerRef.current.ctrlOrMeta = true;
+          refreshMagnetPreview(true);
+        }
+        return;
+      }
       const active = document.activeElement;
       if (
         active instanceof HTMLInputElement ||
@@ -1875,33 +2042,155 @@ export default function KairosChart({
         if (
           drawModeRef.current !== 'none' ||
           rulerCornerRef.current ||
-          rulerResultRef.current
+          rulerResultRef.current ||
+          editDragRef.current ||
+          dragLineRef.current ||
+          quickRulerActiveRef.current
         ) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
           clearTransientRuler();
           setDrawMode('none');
           return;
         }
         if (selectedDrawingIdRef.current != null) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
           selectedDrawingIdRef.current = null;
           setSelectedDrawingId(null);
           paintOverlayRef.current();
         }
+        return;
+      }
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedDrawingIdRef.current != null) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        const targetId = selectedDrawingIdRef.current;
+        selectedDrawingIdRef.current = null;
+        setSelectedDrawingId(null);
+        hoveredHitRef.current = null;
+        onDeleteDrawingRef.current?.(targetId);
+        paintOverlayRef.current();
+      }
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.key === 'Control' || e.key === 'Meta') {
+        if (lastPointerRef.current) {
+          lastPointerRef.current.ctrlOrMeta = false;
+          refreshMagnetPreview(false);
+        }
       }
     };
     window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [clearTransientRuler]);
+    window.addEventListener('keyup', onKeyUp);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+    };
+  }, [clearTransientRuler, refreshMagnetPreview]);
+
+  const closeDrawMenu = useCallback((returnFocus = false) => {
+    setDrawMenuOpen(false);
+    setDrawMenuPos(null);
+    if (returnFocus) {
+      requestAnimationFrame(() => drawMenuTriggerRef.current?.focus());
+    }
+  }, []);
 
   const toggleDrawTool = (next: DrawMode) => {
-    rulerCornerRef.current = null;
-    rulerPreviewRef.current = null;
-    drawPressStartRef.current = null;
-    hoverPreviewRef.current = null;
-    magnetRingRef.current = null;
-    rulerResultRef.current = null;
-    setRulerHintKey(null);
+    clearTransientRuler();
+    setDrawMenuOpen(false);
+    setDrawMenuPos(null);
     setDrawMode((prev) => (prev === next ? 'none' : next));
   };
+
+  const updateDrawMenuPosition = useCallback(() => {
+    const trigger = drawMenuTriggerRef.current;
+    if (!trigger) return;
+    const rect = trigger.getBoundingClientRect();
+    const menuWidth = 152;
+    const estimatedHeight = 148;
+    const margin = 8;
+    const spaceBelow = window.innerHeight - rect.bottom - margin;
+    const spaceAbove = rect.top - margin;
+    const openUp = spaceBelow < estimatedHeight && spaceAbove > spaceBelow;
+    const maxHeight = Math.max(
+      96,
+      Math.min(240, openUp ? spaceAbove - 4 : spaceBelow - 4),
+    );
+    const actualHeight = Math.min(estimatedHeight, maxHeight);
+    const top = openUp
+      ? Math.max(margin, rect.top - actualHeight - 6)
+      : Math.min(window.innerHeight - margin - actualHeight, rect.bottom + 6);
+    const left = Math.max(
+      margin,
+      Math.min(window.innerWidth - menuWidth - margin, rect.right - menuWidth),
+    );
+    setDrawMenuPos({ top, left, maxHeight });
+  }, []);
+
+  useEffect(() => {
+    if (!drawMenuOpen) return;
+    updateDrawMenuPosition();
+    const focusTimer = window.setTimeout(() => {
+      drawMenuItemRefs.current[0]?.focus();
+    }, 10);
+
+    const onPointerDown = (e: MouseEvent) => {
+      const target = e.target as Node | null;
+      if (
+        (drawMenuPopupRef.current && target && drawMenuPopupRef.current.contains(target)) ||
+        (drawMenuTriggerRef.current && target && drawMenuTriggerRef.current.contains(target))
+      ) {
+        return;
+      }
+      closeDrawMenu(false);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        closeDrawMenu(true);
+      }
+    };
+    const onViewportChange = () => updateDrawMenuPosition();
+
+    window.addEventListener('mousedown', onPointerDown);
+    window.addEventListener('keydown', onKeyDown, { capture: true });
+    window.addEventListener('resize', onViewportChange);
+    window.addEventListener('scroll', onViewportChange, true);
+    return () => {
+      window.clearTimeout(focusTimer);
+      window.removeEventListener('mousedown', onPointerDown);
+      window.removeEventListener('keydown', onKeyDown, { capture: true });
+      window.removeEventListener('resize', onViewportChange);
+      window.removeEventListener('scroll', onViewportChange, true);
+    };
+  }, [drawMenuOpen, updateDrawMenuPosition, closeDrawMenu]);
+
+  const timeframeOptions = useMemo<ReadonlyArray<SegmentedOption<Timeframe>>>(
+    () =>
+      availableTimeframes.map((tf) => ({
+        value: tf,
+        label: tf,
+        activeColor: 'var(--accent-brand)',
+      })),
+    [availableTimeframes],
+  );
+
+  const extraDrawTools = useMemo<
+    Array<{ mode: DrawMode; label: string; icon: ReactNode }>
+  >(
+    () => [
+      { mode: 'trend', label: t('chart.toolTrend'), icon: <TrendingUp className="h-3.5 w-3.5" /> },
+      { mode: 'ray', label: t('chart.toolRay'), icon: <ArrowUpRight className="h-3.5 w-3.5" /> },
+      { mode: 'region', label: t('chart.toolRegion'), icon: <Square className="h-3.5 w-3.5" /> },
+      { mode: 'fib', label: t('chart.toolFib'), icon: <SlidersHorizontal className="h-3.5 w-3.5" /> },
+    ],
+    [t],
+  );
+  const isExtraDrawActive =
+    drawMode === 'trend' || drawMode === 'ray' || drawMode === 'region' || drawMode === 'fib';
 
   const displaySymbol = symbol ? symbol.replace(/:USDT$/, '') : '—';
   const twoPointHintKey = TWO_POINT_HINT_KEYS[drawMode];
@@ -1926,7 +2215,7 @@ export default function KairosChart({
     >
       {/* Toolbar */}
       <div
-        className="flex min-h-[34px] shrink-0 flex-wrap items-center justify-between gap-x-2 gap-y-1 border-b px-2 py-1 lg:h-[34px] lg:flex-nowrap lg:px-3 lg:py-0"
+        className="flex min-h-[36px] shrink-0 flex-wrap items-center justify-between gap-x-2 gap-y-1 border-b px-2 py-1 lg:h-[36px] lg:flex-nowrap lg:px-3 lg:py-0"
         style={{
           backgroundColor: 'var(--bg-surface)',
           borderColor: 'var(--border-hairline)',
@@ -1965,25 +2254,13 @@ export default function KairosChart({
           ) : null}
 
           {showTimeframeTabs ? (
-            <div className="flex shrink-0 items-center gap-0.5 rounded p-0.5" style={{ backgroundColor: 'var(--bg-canvas)' }}>
-              {availableTimeframes.map((tf) => {
-                const active = tf === timeframe;
-                return (
-                  <button
-                    key={tf}
-                    type="button"
-                    onClick={() => onTimeframeChange?.(tf)}
-                    className="rounded px-1.5 py-0.5 font-mono text-[11px] transition-colors tabular-nums"
-                    style={{
-                      backgroundColor: active ? 'var(--bg-elevated)' : 'transparent',
-                      color: active ? 'var(--accent-brand)' : 'var(--text-secondary)',
-                    }}
-                  >
-                    {tf}
-                  </button>
-                );
-              })}
-            </div>
+            <SegmentedControl<Timeframe>
+              options={timeframeOptions}
+              value={timeframe}
+              onChange={(tf) => onTimeframeChange?.(tf)}
+              size="xs"
+              mono
+            />
           ) : (
             <span
               className="font-mono text-xs tabular-nums"
@@ -1994,11 +2271,25 @@ export default function KairosChart({
           )}
 
           {loading ? (
-            <span className="shrink-0 whitespace-nowrap text-[11px]" style={{ color: 'var(--text-muted)' }}>
+            <span
+              className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap text-[11px]"
+              style={{ color: 'var(--text-muted)' }}
+            >
+              <span
+                className="inline-block h-1.5 w-1.5 animate-pulse rounded-full"
+                style={{ backgroundColor: 'var(--accent-brand)' }}
+              />
               {t('chart.loading')}
             </span>
           ) : loadingMore ? (
-            <span className="shrink-0 whitespace-nowrap text-[11px]" style={{ color: 'var(--text-muted)' }}>
+            <span
+              className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap text-[11px]"
+              style={{ color: 'var(--text-muted)' }}
+            >
+              <span
+                className="inline-block h-1.5 w-1.5 animate-pulse rounded-full"
+                style={{ backgroundColor: 'var(--accent-info)' }}
+              />
               {t('chart.loadingMore')}
             </span>
           ) : null}
@@ -2017,7 +2308,7 @@ export default function KairosChart({
             <span
               className="shrink-0 whitespace-nowrap rounded px-1.5 py-0.5 font-mono text-[11px] tabular-nums"
               style={{
-                backgroundColor: 'var(--bg-elevated)',
+                backgroundColor: 'var(--accent-brand-soft)',
                 color: 'var(--accent-brand)',
               }}
             >
@@ -2034,18 +2325,18 @@ export default function KairosChart({
           />
         </div>
 
-        {/* Right tools & replay bar */}
-        <div className="flex shrink-0 flex-nowrap items-center gap-1">
+        {/* Right tools & replay bar (wraps cleanly on narrow viewports so all controls stay reachable) */}
+        <div className="flex min-w-0 flex-wrap items-center gap-1 lg:shrink-0 lg:flex-nowrap">
           {onStepCursor ? (
             <div
-              className="mr-1 flex items-center gap-1 border-r pr-2"
+              className="flex flex-wrap items-center gap-1 border-r pr-1.5 sm:mr-1 sm:pr-2"
               style={{ borderColor: 'var(--border-hairline)' }}
             >
               <button
                 type="button"
                 title={t('chart.stepBackTitle')}
                 onClick={() => onStepCursor(-1)}
-                className="rounded p-1 transition-colors hover:opacity-80"
+                className="kairos-btn rounded border border-transparent p-1"
                 style={{ color: 'var(--text-secondary)' }}
               >
                 <ChevronLeft className="h-3.5 w-3.5" />
@@ -2055,9 +2346,10 @@ export default function KairosChart({
                   type="button"
                   title={playing ? t('chart.pauseTitle') : t('chart.playTitle')}
                   onClick={onTogglePlay}
-                  className="rounded p-1 transition-colors"
+                  className="kairos-btn rounded border p-1"
                   style={{
-                    backgroundColor: playing ? 'var(--bg-elevated)' : 'transparent',
+                    backgroundColor: playing ? 'var(--accent-brand-soft)' : 'transparent',
+                    borderColor: playing ? 'var(--accent-brand)' : 'transparent',
                     color: playing ? 'var(--accent-brand)' : 'var(--text-primary)',
                   }}
                 >
@@ -2072,7 +2364,7 @@ export default function KairosChart({
                 type="button"
                 title={t('chart.stepForwardTitle')}
                 onClick={() => onStepCursor(1)}
-                className="rounded p-1 transition-colors hover:opacity-80"
+                className="kairos-btn rounded border border-transparent p-1"
                 style={{ color: 'var(--text-secondary)' }}
               >
                 <ChevronRight className="h-3.5 w-3.5" />
@@ -2083,7 +2375,7 @@ export default function KairosChart({
                   aria-label={t('chart.stepSizeAria')}
                   value={stepBars}
                   onChange={(e) => onStepBarsChange(Number(e.target.value))}
-                  className="rounded border px-1.5 py-0.5 font-mono text-[11px] tabular-nums"
+                  className="rounded border px-1.5 py-0.5 font-mono text-[11px] tabular-nums outline-none transition-colors hover:border-[var(--border-hover)]"
                   style={{
                     backgroundColor: 'var(--bg-canvas)',
                     borderColor: 'var(--border-hairline)',
@@ -2103,7 +2395,7 @@ export default function KairosChart({
                   aria-label={t('chart.playSpeedAria')}
                   value={playSpeed}
                   onChange={(e) => onPlaySpeedChange(Number(e.target.value))}
-                  className="rounded border px-1.5 py-0.5 font-mono text-[11px] tabular-nums"
+                  className="rounded border px-1.5 py-0.5 font-mono text-[11px] tabular-nums outline-none transition-colors hover:border-[var(--border-hover)]"
                   style={{
                     backgroundColor: 'var(--bg-canvas)',
                     borderColor: 'var(--border-hairline)',
@@ -2125,9 +2417,9 @@ export default function KairosChart({
               type="button"
               onClick={onToggleHideFuture}
               title={hideFuture ? t('chart.showFullBarsTitle') : t('chart.hideFutureTitle')}
-              className="flex items-center gap-1 rounded border px-2 py-0.5 text-[11px] font-medium transition-colors"
+              className="kairos-btn flex items-center gap-1 rounded-[5px] border px-2 py-0.5 text-[11px] font-medium"
               style={{
-                backgroundColor: hideFuture ? 'var(--bg-elevated)' : 'transparent',
+                backgroundColor: hideFuture ? 'var(--accent-brand-soft)' : 'transparent',
                 borderColor: hideFuture ? 'var(--accent-brand)' : 'var(--border-hairline)',
                 color: hideFuture ? 'var(--accent-brand)' : 'var(--text-secondary)',
               }}
@@ -2142,15 +2434,23 @@ export default function KairosChart({
             aria-pressed={smcOpen}
             onClick={() => setSmcOpen((v) => !v)}
             title={t('chart.smcTitle')}
-            className="rounded border px-1.5 py-0.5 font-mono text-[10px] font-medium transition-colors"
+            className="kairos-btn rounded-[5px] border px-1.5 py-0.5 font-mono text-[10px] font-medium"
             style={{
-              backgroundColor: smcOpen ? 'var(--bg-elevated)' : 'transparent',
+              backgroundColor: smcOpen ? 'var(--accent-brand-soft)' : 'transparent',
               borderColor: smcOpen ? 'var(--accent-brand)' : 'var(--border-hairline)',
               color: smcOpen ? 'var(--accent-brand)' : 'var(--text-secondary)',
             }}
           >
             SMC
           </button>
+
+          <ToolButton
+            active={magnetEnabled}
+            title={t('chart.magnetTitle')}
+            onClick={() => setMagnetEnabled((v) => !v)}
+          >
+            <Magnet className="h-3.5 w-3.5" />
+          </ToolButton>
 
           <ToolButton
             active={drawMode === 'ruler'}
@@ -2166,6 +2466,108 @@ export default function KairosChart({
           >
             <Minus className="h-3.5 w-3.5" />
           </ToolButton>
+
+          {/* Compact portal popover menu for Trend / Ray / Region / Fib drawing tools */}
+          <div className="relative">
+            <button
+              ref={drawMenuTriggerRef}
+              type="button"
+              title={t('chart.moreToolsTitle')}
+              aria-expanded={drawMenuOpen}
+              aria-haspopup="menu"
+              onClick={() => setDrawMenuOpen((v) => !v)}
+              className="kairos-btn flex items-center gap-0.5 rounded-[5px] border px-1 py-1"
+              style={{
+                backgroundColor:
+                  isExtraDrawActive || drawMenuOpen
+                    ? 'var(--accent-brand-soft)'
+                    : 'transparent',
+                borderColor:
+                  isExtraDrawActive || drawMenuOpen
+                    ? 'var(--accent-brand)'
+                    : 'transparent',
+                color:
+                  isExtraDrawActive || drawMenuOpen
+                    ? 'var(--accent-brand-text)'
+                    : 'var(--text-secondary)',
+              }}
+            >
+              <Pencil className="h-3.5 w-3.5" />
+              <ChevronDown className="h-2.5 w-2.5 opacity-75" />
+            </button>
+
+            {drawMenuOpen && drawMenuPos && typeof document !== 'undefined'
+              ? createPortal(
+                  <div
+                    ref={drawMenuPopupRef}
+                    role="menu"
+                    aria-label={t('chart.moreToolsTitle')}
+                    className="kairos-floating kairos-animate-popover fixed z-[70] w-[152px] overflow-y-auto rounded-[8px] p-1"
+                    style={{
+                      top: `${drawMenuPos.top}px`,
+                      left: `${drawMenuPos.left}px`,
+                      maxHeight: `${drawMenuPos.maxHeight}px`,
+                    }}
+                    onKeyDown={(e) => {
+                      const total = extraDrawTools.length;
+                      if (total === 0) return;
+                      const currentIdx = drawMenuItemRefs.current.findIndex(
+                        (btn) => btn === document.activeElement,
+                      );
+                      if (e.key === 'ArrowDown') {
+                        e.preventDefault();
+                        const next = currentIdx < 0 ? 0 : (currentIdx + 1) % total;
+                        drawMenuItemRefs.current[next]?.focus();
+                      } else if (e.key === 'ArrowUp') {
+                        e.preventDefault();
+                        const next = currentIdx < 0 ? total - 1 : (currentIdx - 1 + total) % total;
+                        drawMenuItemRefs.current[next]?.focus();
+                      } else if (e.key === 'Home') {
+                        e.preventDefault();
+                        drawMenuItemRefs.current[0]?.focus();
+                      } else if (e.key === 'End') {
+                        e.preventDefault();
+                        drawMenuItemRefs.current[total - 1]?.focus();
+                      } else if (e.key === 'Tab') {
+                        closeDrawMenu(false);
+                      }
+                    }}
+                  >
+                    {extraDrawTools.map((tool, idx) => {
+                      const active = drawMode === tool.mode;
+                      return (
+                        <button
+                          key={tool.mode}
+                          ref={(btn) => {
+                            drawMenuItemRefs.current[idx] = btn;
+                          }}
+                          type="button"
+                          role="menuitemradio"
+                          aria-checked={active}
+                          onClick={() => toggleDrawTool(tool.mode)}
+                          className="kairos-press flex w-full items-center gap-2 rounded-[5px] px-2 py-1.5 text-left text-[11px] font-medium transition-colors hover:bg-[var(--bg-hover)]"
+                          style={{
+                            backgroundColor: active ? 'var(--bg-elevated)' : 'transparent',
+                            color: active ? 'var(--accent-brand-text)' : 'var(--text-primary)',
+                          }}
+                        >
+                          <span
+                            style={{
+                              color: active ? 'var(--accent-brand-text)' : 'var(--text-muted)',
+                            }}
+                          >
+                            {tool.icon}
+                          </span>
+                          <span>{tool.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>,
+                  document.body,
+                )
+              : null}
+          </div>
+
           {drawings.length > 0 && onEraseDrawings ? (
             <ToolButton
               active={false}
@@ -2201,24 +2603,45 @@ export default function KairosChart({
           style={{ zIndex: 4 }}
           aria-hidden
         />
+        {loading && bars.length === 0 ? (
+          <div
+            className="pointer-events-none absolute inset-0 z-[5] flex items-center justify-center"
+            style={{ backgroundColor: withAlpha(theme.bgCanvas, 0.55) }}
+          >
+            <div className="flex flex-col items-center gap-2.5">
+              <div className="flex items-end gap-1">
+                <span className="kairos-shimmer inline-block h-4 w-1.5 rounded-full" />
+                <span className="kairos-shimmer inline-block h-7 w-1.5 rounded-full" />
+                <span className="kairos-shimmer inline-block h-5 w-1.5 rounded-full" />
+                <span className="kairos-shimmer inline-block h-9 w-1.5 rounded-full" />
+                <span className="kairos-shimmer inline-block h-6 w-1.5 rounded-full" />
+              </div>
+              <span className="text-[11px]" style={{ color: 'var(--text-secondary)' }}>
+                {t('chart.loading')}
+              </span>
+            </div>
+          </div>
+        ) : null}
         {activeToolHint ? (
           <div
-            className="pointer-events-none absolute top-2 left-3 z-10 rounded border px-2 py-0.5 text-[11px] whitespace-nowrap"
+            className="kairos-floating kairos-animate-popover pointer-events-none absolute top-2.5 left-3 z-10 flex items-center gap-1.5 rounded-[6px] px-2.5 py-1 text-[11px] whitespace-nowrap"
             style={{
-              backgroundColor: withAlpha(theme.bgSurface, 0.9),
-              borderColor: 'var(--border-hairline)',
+              backgroundColor: withAlpha(theme.bgSurface, 0.92),
               color: 'var(--accent-brand)',
             }}
           >
+            <span
+              className="inline-block h-1.5 w-1.5 rounded-full"
+              style={{ backgroundColor: 'var(--accent-brand)' }}
+            />
             {activeToolHint}
           </div>
         ) : null}
         {pinTooltip ? (
           <div
-            className="pointer-events-none absolute bottom-2 left-2 z-10 max-w-md rounded border px-2.5 py-1.5 text-[11px]"
+            className="kairos-floating kairos-animate-popover pointer-events-none absolute bottom-2.5 left-2.5 z-10 max-w-md rounded-[8px] px-2.5 py-2 text-[11px]"
             style={{
-              backgroundColor: withAlpha(theme.bgElevated, 0.94),
-              borderColor: 'var(--border-hairline)',
+              backgroundColor: withAlpha(theme.bgElevated, 0.95),
               color: 'var(--text-primary)',
             }}
           >
@@ -2257,11 +2680,11 @@ function ToolButton({
       title={title}
       aria-pressed={active}
       onClick={onClick}
-      className="rounded border p-1 transition-colors"
+      className="kairos-btn rounded-[5px] border p-1"
       style={{
-        backgroundColor: active ? 'var(--bg-elevated)' : 'transparent',
+        backgroundColor: active ? 'var(--accent-brand-soft)' : 'transparent',
         borderColor: active ? 'var(--accent-brand)' : 'transparent',
-        color: active ? 'var(--accent-brand)' : 'var(--text-secondary)',
+        color: active ? 'var(--accent-brand-text)' : 'var(--text-secondary)',
       }}
     >
       {children}

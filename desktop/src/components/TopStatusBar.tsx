@@ -1,8 +1,12 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import {
   Activity,
-  Command,
+  BarChart3,
+  Eye,
+  History,
+  Keyboard,
   Moon,
+  Search,
   Settings,
   ShieldAlert,
   Sun,
@@ -14,6 +18,7 @@ import {
   resolveAccountExchange,
   sameSymbol,
 } from '../utils/doctrine';
+import { SegmentedControl, type SegmentedOption } from './SegmentedControl';
 
 export type WorkspaceTab = 'watch' | 'review' | 'stats';
 
@@ -27,6 +32,7 @@ export interface TopStatusBarProps {
   onToggleTheme: () => void;
   onOpenCommandPalette: () => void;
   onOpenSettings: () => void;
+  onOpenShortcuts?: () => void;
   onSelectSymbol?: (symbol: string) => void;
 }
 
@@ -43,10 +49,12 @@ export const TopStatusBar: React.FC<TopStatusBarProps> = ({
   onChangeView,
   status,
   activeSymbol,
+  wsConnected = false,
   theme,
   onToggleTheme,
   onOpenCommandPalette,
   onOpenSettings,
+  onOpenShortcuts,
   onSelectSymbol,
 }) => {
   const { locale, toggleLocale, t } = useI18n();
@@ -73,32 +81,65 @@ export const TopStatusBar: React.FC<TopStatusBarProps> = ({
           .slice(0, 3)
       : [];
 
-  const tabs: Array<{ id: WorkspaceTab; label: string }> = [
-    { id: 'watch', label: t('top.tab.watch') },
-    { id: 'review', label: t('top.tab.review') },
-    { id: 'stats', label: t('top.tab.stats') },
-  ];
+  const tabOptions = useMemo<ReadonlyArray<SegmentedOption<WorkspaceTab>>>(
+    () => [
+      {
+        value: 'watch',
+        label: (
+          <>
+            <Eye className="hidden h-3 w-3 sm:inline-block" />
+            <span>{t('top.tab.watch')}</span>
+          </>
+        ),
+      },
+      {
+        value: 'review',
+        label: (
+          <>
+            <History className="hidden h-3 w-3 sm:inline-block" />
+            <span>{t('top.tab.review')}</span>
+          </>
+        ),
+      },
+      {
+        value: 'stats',
+        label: (
+          <>
+            <BarChart3 className="hidden h-3 w-3 sm:inline-block" />
+            <span>{t('top.tab.stats')}</span>
+          </>
+        ),
+      },
+    ],
+    [t],
+  );
 
   let alertPill: {
     text: string;
+    shortText: string;
     color: string;
     bg: string;
     title: string;
     quiet?: boolean;
+    live?: boolean;
   };
   if (lockedCount > 0) {
     alertPill = {
       text: t('top.pulse.lockedText'),
+      shortText: t('top.pulse.lockedText'),
       color: 'var(--pnl-neg)',
       bg: 'var(--candle-bear-soft)',
       title: t('top.pulse.lockedTitle', { symbols: lockedList.join(', ') }),
+      live: true,
     };
   } else if (cooldownCount > 0) {
     alertPill = {
       text: t('top.pulse.cooldownText'),
+      shortText: t('top.pulse.cooldownText'),
       color: 'var(--state-warn)',
       bg: 'var(--state-warn-soft)',
       title: t('top.pulse.cooldownTitle', { count: cooldownCount }),
+      live: true,
     };
   } else if (hasActivePulse) {
     const med60 =
@@ -116,13 +157,16 @@ export const TopStatusBar: React.FC<TopStatusBarProps> = ({
     const side = isDownPulse ? t('top.pulse.sideBear') : t('top.pulse.sideBull');
     alertPill = {
       text: t('top.pulse.activeText', { regime: regimePrefix, breadth: breadthPct }),
+      shortText: `${breadthPct}%`,
       color: isDownPulse ? 'var(--pnl-neg)' : 'var(--pnl-pos)',
       bg: isDownPulse ? 'var(--candle-bear-soft)' : 'var(--candle-bull-soft)',
       title: t('top.pulse.activeTitle', { med, side, breadth: breadthPct }),
+      live: true,
     };
   } else {
     alertPill = {
       text: t('top.pulse.quietText'),
+      shortText: t('top.pulse.quietText'),
       color: 'var(--text-muted)',
       bg: 'transparent',
       title:
@@ -130,19 +174,39 @@ export const TopStatusBar: React.FC<TopStatusBarProps> = ({
           ? t('top.pulse.decayTitle')
           : t('top.pulse.quietTitle'),
       quiet: true,
+      live: false,
     };
   }
 
   return (
     <header
-      className="flex h-[38px] shrink-0 items-center justify-between gap-1.5 border-b px-2 select-none sm:gap-2 sm:px-3"
+      className="flex h-[40px] shrink-0 items-center justify-between gap-1.5 border-b px-2 select-none sm:gap-2.5 sm:px-3"
       style={{
         backgroundColor: 'var(--bg-surface)',
         borderColor: 'var(--border-hairline)',
+        boxShadow: 'var(--inset-highlight)',
       }}
     >
+      {/* Left: Brand + WS Link + Sliding Workspace Switcher + Command Trigger */}
       <div className="flex min-w-0 items-center gap-1.5 sm:gap-2.5">
-        <div className="hidden items-center pr-0.5 min-[420px]:flex sm:pr-1">
+        <div
+          className="hidden items-center gap-2 pr-0.5 min-[440px]:flex sm:pr-1"
+          title={wsConnected ? t('top.wsConnectedTitle') : t('top.wsDisconnectedTitle')}
+        >
+          <span className="relative flex h-2 w-2 shrink-0 items-center justify-center">
+            {!wsConnected ? (
+              <span
+                className="kairos-pulse-ring absolute inline-flex h-full w-full rounded-full"
+                style={{ backgroundColor: 'var(--state-warn)' }}
+              />
+            ) : null}
+            <span
+              className="relative inline-flex h-2 w-2 rounded-full transition-colors duration-300"
+              style={{
+                backgroundColor: wsConnected ? 'var(--pnl-pos)' : 'var(--state-warn)',
+              }}
+            />
+          </span>
           <span
             className="font-editorial text-[15px] font-medium tracking-tight"
             style={{ color: 'var(--text-primary)' }}
@@ -151,37 +215,19 @@ export const TopStatusBar: React.FC<TopStatusBarProps> = ({
           </span>
         </div>
 
-        <nav
-          aria-label={t('top.workspaceSwitcherAria')}
-          className="flex shrink-0 items-center rounded-[6px] border p-0.5"
-          style={{
-            backgroundColor: 'var(--bg-canvas)',
-            borderColor: 'var(--border-hairline)',
-          }}
-        >
-          {tabs.map((tab) => {
-            const active = activeView === tab.id;
-            return (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() => onChangeView(tab.id)}
-                className="shrink-0 whitespace-nowrap rounded-[4px] px-2 py-0.5 text-[12px] font-medium transition-colors sm:px-2.5"
-                style={{
-                  backgroundColor: active ? 'var(--bg-elevated)' : 'transparent',
-                  color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
-                }}
-              >
-                {tab.label}
-              </button>
-            );
-          })}
-        </nav>
+        <SegmentedControl<WorkspaceTab>
+          options={tabOptions}
+          value={activeView}
+          onChange={onChangeView}
+          ariaLabel={t('top.workspaceSwitcherAria')}
+          variant="tabs"
+          size="sm"
+        />
 
         <button
           type="button"
           onClick={onOpenCommandPalette}
-          className="flex min-w-0 items-center gap-1.5 rounded-[6px] border px-2 py-0.5 text-[12px] transition-colors"
+          className="kairos-btn flex h-[27px] min-w-0 items-center gap-1.5 rounded-[6px] border px-2 text-[12px]"
           style={{
             backgroundColor: 'var(--bg-canvas)',
             borderColor: 'var(--border-hairline)',
@@ -189,33 +235,67 @@ export const TopStatusBar: React.FC<TopStatusBarProps> = ({
           }}
           title={t('top.commandPaletteTitle')}
         >
+          <Search
+            className="hidden h-3 w-3 shrink-0 sm:inline-block"
+            style={{ color: 'var(--text-muted)' }}
+          />
           <span className="tabular-nums truncate font-medium">
             {cleanSymbol(activeSymbol)}
           </span>
-          <span
-            className="hidden shrink-0 items-center gap-0.5 rounded px-1 text-[10px] sm:flex"
-            style={{
-              backgroundColor: 'var(--bg-elevated)',
-              color: 'var(--text-muted)',
-            }}
-          >
-            <Command className="h-2.5 w-2.5" />K
-          </span>
+          <kbd className="kairos-kbd hidden shrink-0 sm:inline-flex">⌘K</kbd>
         </button>
       </div>
 
-      {/* Center: Quiet breathing space or active MarketPulse + Top-3 Leaders/Laggards */}
-      <div className="hidden min-w-0 items-center justify-center gap-1.5 md:flex">
+      {/* Center: Compact pulse indicator on narrow viewports + full MarketPulse & Top-3 movers on md+ */}
+      <div className="flex min-w-0 items-center justify-center gap-1.5">
+        {/* Compact pulse badge for < md viewports when active or locked */}
+        {alertPill.live ? (
+          <div
+            className="flex shrink-0 items-center gap-1 rounded-[6px] px-2 py-0.5 text-[11px] font-medium tabular-nums md:hidden"
+            style={{
+              backgroundColor: alertPill.bg,
+              color: alertPill.color,
+            }}
+            title={alertPill.title}
+          >
+            <span className="relative flex h-1.5 w-1.5 shrink-0">
+              <span
+                className="kairos-pulse-ring absolute inline-flex h-full w-full rounded-full"
+                style={{ backgroundColor: alertPill.color }}
+              />
+              <span
+                className="relative inline-flex h-1.5 w-1.5 rounded-full"
+                style={{ backgroundColor: alertPill.color }}
+              />
+            </span>
+            <span className="whitespace-nowrap">{alertPill.shortText}</span>
+          </div>
+        ) : null}
+
+        {/* Full pulse capsule on md+ */}
         <div
-          className="flex shrink-0 items-center gap-1.5 rounded-[6px] px-2.5 py-0.5 text-[11px] font-medium tabular-nums"
+          className="hidden shrink-0 items-center gap-1.5 rounded-[6px] px-2.5 py-0.5 text-[11px] font-medium tabular-nums transition-colors duration-200 md:flex"
           style={{
             backgroundColor: alertPill.bg,
             color: alertPill.color,
-            border: alertPill.quiet ? '1px solid var(--border-hairline)' : undefined,
+            border: alertPill.quiet
+              ? '1px solid var(--border-hairline)'
+              : '1px solid transparent',
           }}
           title={alertPill.title}
         >
-          {lockedCount > 0 || cooldownCount > 0 ? (
+          {alertPill.live ? (
+            <span className="relative flex h-2 w-2 shrink-0 items-center justify-center">
+              <span
+                className="kairos-pulse-ring absolute inline-flex h-full w-full rounded-full"
+                style={{ backgroundColor: alertPill.color }}
+              />
+              <span
+                className="relative inline-flex h-1.5 w-1.5 rounded-full"
+                style={{ backgroundColor: alertPill.color }}
+              />
+            </span>
+          ) : lockedCount > 0 || cooldownCount > 0 ? (
             <ShieldAlert className="h-3 w-3 shrink-0" />
           ) : (
             <Activity className="h-3 w-3 shrink-0" />
@@ -233,7 +313,7 @@ export const TopStatusBar: React.FC<TopStatusBarProps> = ({
                   key={chip.symbol}
                   type="button"
                   onClick={() => onSelectSymbol?.(chip.symbol)}
-                  className="tabular-nums flex shrink-0 items-center gap-1 rounded-[5px] border px-1.5 py-0.5 text-[11px] transition-colors hover:opacity-85"
+                  className="kairos-btn tabular-nums flex shrink-0 items-center gap-1 rounded-[5px] border px-1.5 py-0.5 text-[11px]"
                   style={{
                     backgroundColor: isSelected ? 'var(--bg-elevated)' : 'var(--bg-canvas)',
                     borderColor: isSelected ? 'var(--accent-brand)' : 'var(--border-hairline)',
@@ -256,12 +336,12 @@ export const TopStatusBar: React.FC<TopStatusBarProps> = ({
         ) : null}
       </div>
 
-      {/* Right: Language, Theme & Settings */}
+      {/* Right: Language, Shortcuts, Theme & Settings */}
       <div className="flex shrink-0 items-center gap-1">
         <button
           type="button"
           onClick={toggleLocale}
-          className="flex h-7 items-center gap-0.5 rounded-[6px] border px-1.5 text-[11px] font-medium transition-colors hover:opacity-85"
+          className="kairos-btn flex h-7 items-center gap-0.5 rounded-[6px] border px-1.5 text-[11px] font-medium"
           style={{
             backgroundColor: 'var(--bg-canvas)',
             borderColor: 'var(--border-hairline)',
@@ -271,25 +351,38 @@ export const TopStatusBar: React.FC<TopStatusBarProps> = ({
         >
           <span
             style={{
-              color: locale === 'zh' ? 'var(--text-primary)' : 'var(--text-secondary)',
+              color: locale === 'zh' ? 'var(--text-primary)' : 'var(--text-muted)',
             }}
           >
             中
           </span>
-          <span style={{ color: 'var(--text-muted)' }}>/</span>
+          <span style={{ color: 'var(--border-strong)' }}>/</span>
           <span
             style={{
-              color: locale === 'en' ? 'var(--text-primary)' : 'var(--text-secondary)',
+              color: locale === 'en' ? 'var(--text-primary)' : 'var(--text-muted)',
             }}
           >
             EN
           </span>
         </button>
 
+        {onOpenShortcuts ? (
+          <button
+            type="button"
+            onClick={onOpenShortcuts}
+            className="kairos-btn hidden h-7 w-7 items-center justify-center rounded-[6px] border border-transparent sm:flex"
+            style={{ color: 'var(--text-secondary)' }}
+            title={t('top.shortcutsTitle')}
+            aria-label={t('top.shortcutsAria')}
+          >
+            <Keyboard className="h-3.5 w-3.5" />
+          </button>
+        ) : null}
+
         <button
           type="button"
           onClick={onToggleTheme}
-          className="flex h-7 w-7 items-center justify-center rounded-[6px] transition-colors hover:opacity-80"
+          className="kairos-btn flex h-7 w-7 items-center justify-center rounded-[6px] border border-transparent"
           style={{ color: 'var(--text-secondary)' }}
           title={theme === 'dark' ? t('top.themeToLight') : t('top.themeToDark')}
           aria-label={t('top.themeAria')}
@@ -304,7 +397,7 @@ export const TopStatusBar: React.FC<TopStatusBarProps> = ({
         <button
           type="button"
           onClick={onOpenSettings}
-          className="flex h-7 w-7 items-center justify-center rounded-[6px] transition-colors hover:opacity-80"
+          className="kairos-btn flex h-7 w-7 items-center justify-center rounded-[6px] border border-transparent"
           style={{ color: 'var(--text-secondary)' }}
           title={t('top.settingsTitle', { exchange: exchangeLabel })}
           aria-label={t('top.settingsAria')}

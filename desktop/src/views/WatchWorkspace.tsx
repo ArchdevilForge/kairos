@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, Columns2, Search, X } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { ChevronDown, Columns2, GripHorizontal, Search, X } from 'lucide-react';
 import KairosChart from '../chart/KairosChart';
 import { syncChartGroup, type SyncChartHandle } from '../chart/syncCharts';
+import { SegmentedControl, type SegmentedOption } from '../components/SegmentedControl';
+import { useToast } from '../components/ToastViewport';
 import {
   type AnomalyItem,
   type Bar,
@@ -306,11 +309,156 @@ export function WatchWorkspace({
   onSelectTf,
 }: WatchWorkspaceProps) {
   const { t, locale } = useI18n();
+  const { pushToast } = useToast();
 
   // Queue drawer closed by default for 100% chart breathing room
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [queueTab, setQueueTab] = useState<QueueTab>('all');
   const [selectedQueueId, setSelectedQueueId] = useState<string>('');
+  const queueToggleBtnRef = useRef<HTMLButtonElement | null>(null);
+  const queueCloseBtnRef = useRef<HTMLButtonElement | null>(null);
+  const queueDrawerRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (drawerOpen) {
+      const timer = window.setTimeout(() => queueCloseBtnRef.current?.focus(), 10);
+      return () => window.clearTimeout(timer);
+    }
+    if (
+      queueDrawerRef.current &&
+      document.activeElement &&
+      queueDrawerRef.current.contains(document.activeElement)
+    ) {
+      queueToggleBtnRef.current?.focus();
+    }
+    return undefined;
+  }, [drawerOpen]);
+
+  // Resizable split ratio (primary pane fraction, persisted on drag end / key adjust)
+  const splitContainerRef = useRef<HTMLDivElement | null>(null);
+  const splitRatioRef = useRef<number>(0.55);
+  const [splitRatio, setSplitRatio] = useState<number>(() => {
+    try {
+      const raw = Number(localStorage.getItem('kairos.desk.splitRatio'));
+      if (Number.isFinite(raw) && raw >= 0.25 && raw <= 0.75) {
+        splitRatioRef.current = raw;
+        return raw;
+      }
+    } catch {
+      // ignore storage errors
+    }
+    return 0.55;
+  });
+  splitRatioRef.current = splitRatio;
+  const [draggingSplit, setDraggingSplit] = useState(false);
+  const splitDragCleanupRef = useRef<(() => void) | null>(null);
+
+  const persistSplitRatio = useCallback((ratio: number) => {
+    try {
+      localStorage.setItem('kairos.desk.splitRatio', String(ratio));
+    } catch {
+      // ignore storage errors
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!splitMode) {
+      splitDragCleanupRef.current?.();
+      splitDragCleanupRef.current = null;
+    }
+  }, [splitMode]);
+
+  useEffect(() => {
+    return () => {
+      splitDragCleanupRef.current?.();
+      splitDragCleanupRef.current = null;
+    };
+  }, []);
+
+  const handleSplitDividerPointerDown = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (e.button !== 0) return;
+      const container = splitContainerRef.current;
+      if (!container) return;
+      e.preventDefault();
+
+      splitDragCleanupRef.current?.();
+      const handleEl = e.currentTarget;
+      const pointerId = e.pointerId;
+      try {
+        handleEl.setPointerCapture(pointerId);
+      } catch {
+        // Ignore if pointer capture is unsupported.
+      }
+      setDraggingSplit(true);
+
+      let rafId = 0;
+      let pendingRatio: number | null = null;
+      const rect = container.getBoundingClientRect();
+
+      const onMove = (ev: PointerEvent) => {
+        if (ev.pointerId !== pointerId || rect.height <= 0) return;
+        pendingRatio = Math.min(0.75, Math.max(0.25, (ev.clientY - rect.top) / rect.height));
+        if (!rafId) {
+          rafId = requestAnimationFrame(() => {
+            rafId = 0;
+            if (pendingRatio != null) {
+              setSplitRatio(pendingRatio);
+            }
+          });
+        }
+      };
+
+      const finish = (ev?: PointerEvent) => {
+        if (ev && ev.pointerId !== pointerId) return;
+        if (rafId) {
+          cancelAnimationFrame(rafId);
+          rafId = 0;
+        }
+        if (pendingRatio != null) {
+          setSplitRatio(pendingRatio);
+          persistSplitRatio(pendingRatio);
+          pendingRatio = null;
+        } else {
+          persistSplitRatio(splitRatioRef.current);
+        }
+        setDraggingSplit(false);
+        try {
+          if (handleEl.hasPointerCapture(pointerId)) {
+            handleEl.releasePointerCapture(pointerId);
+          }
+        } catch {
+          // Ignore release errors.
+        }
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', finish);
+        window.removeEventListener('pointercancel', finish);
+        window.removeEventListener('blur', onBlur);
+        handleEl.removeEventListener('lostpointercapture', onLostCapture);
+        splitDragCleanupRef.current = null;
+      };
+
+      const onBlur = () => finish();
+      const onLostCapture = () => finish();
+
+      splitDragCleanupRef.current = () => finish();
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', finish);
+      window.addEventListener('pointercancel', finish);
+      window.addEventListener('blur', onBlur);
+      handleEl.addEventListener('lostpointercapture', onLostCapture);
+    },
+    [persistSplitRatio],
+  );
+
+  const queueTabOptions = useMemo<ReadonlyArray<SegmentedOption<QueueTab>>>(
+    () => [
+      { value: 'all', label: t('watch.queue.tabAll'), activeColor: 'var(--accent-brand)' },
+      { value: 'pulse', label: t('watch.queue.tabPulse'), activeColor: 'var(--accent-brand)' },
+      { value: 'major', label: t('watch.queue.tabMajor'), activeColor: 'var(--accent-brand)' },
+    ],
+    [t],
+  );
 
   // Bottom comparison chart independent symbol & timeframe
   const [compareSymbol, setCompareSymbol] = useState<string>(() =>
@@ -982,10 +1130,11 @@ export function WatchWorkspace({
     setDrawings([]);
     try {
       await client.deleteDrawingsForSymbol(activeSymbol);
+      pushToast({ tone: 'info', title: t('toast.drawingsCleared'), durationMs: 2200 });
     } catch (err) {
       console.warn('清空画线失败', err);
     }
-  }, [client, activeSymbol]);
+  }, [client, activeSymbol, pushToast, t]);
 
   const handleCompareDrawing = useCallback(
     async (kind: DrawingKind, points: ChartDrawingPoint[]) => {
@@ -1047,10 +1196,11 @@ export function WatchWorkspace({
     setCompareDrawings([]);
     try {
       await client.deleteDrawingsForSymbol(compareSymbol);
+      pushToast({ tone: 'info', title: t('toast.drawingsCleared'), durationMs: 2200 });
     } catch (err) {
       console.warn('清空画线失败', err);
     }
-  }, [client, compareSymbol]);
+  }, [client, compareSymbol, pushToast, t]);
 
   const selectQueueItem = useCallback(
     (item: QueueItem) => {
@@ -1092,6 +1242,7 @@ export function WatchWorkspace({
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       if (e.key === 'Escape' && hotkeyRef.current.drawerOpen) {
         e.preventDefault();
+        e.stopImmediatePropagation();
         setDrawerOpen(false);
         return;
       }
@@ -1190,9 +1341,9 @@ export function WatchWorkspace({
         type="button"
         onClick={onToggleSplit}
         title={t('watch.split.tooltip')}
-        className="flex items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] transition-colors"
+        className="kairos-btn flex items-center gap-1 rounded-[5px] border px-1.5 py-0.5 text-[11px] font-medium"
         style={{
-          backgroundColor: splitMode ? 'var(--bg-elevated)' : 'transparent',
+          backgroundColor: splitMode ? 'var(--accent-brand-soft)' : 'transparent',
           borderColor: splitMode ? 'var(--accent-brand)' : 'var(--border-hairline)',
           color: splitMode ? 'var(--accent-brand)' : 'var(--text-secondary)',
         }}
@@ -1202,20 +1353,21 @@ export function WatchWorkspace({
       </button>
 
       <button
+        ref={queueToggleBtnRef}
         type="button"
         onClick={() => setDrawerOpen((v) => !v)}
         title={t('watch.queue.toggleTooltip')}
-        className="flex items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] transition-colors"
+        className="kairos-btn flex items-center gap-1.5 rounded-[5px] border px-1.5 py-0.5 text-[11px] font-medium"
         style={{
-          backgroundColor: drawerOpen ? 'var(--bg-elevated)' : 'transparent',
+          backgroundColor: drawerOpen ? 'var(--accent-brand-soft)' : 'transparent',
           borderColor: drawerOpen ? 'var(--accent-brand)' : 'var(--border-hairline)',
-          color: drawerOpen ? 'var(--accent-brand)' : 'var(--text-secondary)',
+          color: drawerOpen ? 'var(--accent-brand-text)' : 'var(--text-secondary)',
         }}
       >
         <span>{t('watch.queue.toggleLabel')}</span>
         {queueItems.length > 0 ? (
           <span
-            className="inline-block h-1.5 w-1.5 rounded-full"
+            className="inline-flex h-1.5 w-1.5 rounded-full"
             style={{ backgroundColor: 'var(--accent-brand)' }}
           />
         ) : null}
@@ -1228,336 +1380,434 @@ export function WatchWorkspace({
       className="relative flex h-full min-h-0 w-full overflow-hidden"
       style={{ backgroundColor: 'var(--bg-canvas)' }}
     >
-      {/* Left Slide-Over Queue Drawer (Hidden by default) */}
-      {drawerOpen ? (
-        <>
-          <div
-            className="absolute inset-0 z-10 sm:hidden"
-            style={{ backgroundColor: 'var(--bg-overlay)' }}
-            onClick={() => setDrawerOpen(false)}
-            aria-hidden
+      {/* Left Slide-Over Queue Drawer (GPU slide transition, inert when closed) */}
+      <div
+        data-open={drawerOpen}
+        className="kairos-drawer-scrim kairos-glass-backdrop absolute inset-0 z-10 sm:hidden"
+        onClick={() => setDrawerOpen(false)}
+        aria-hidden="true"
+      />
+      <aside
+        ref={queueDrawerRef}
+        data-open={drawerOpen}
+        aria-hidden={!drawerOpen}
+        inert={!drawerOpen ? true : undefined}
+        className="kairos-drawer-left kairos-contain-panel absolute top-0 bottom-0 left-0 z-20 flex w-[min(86vw,280px)] flex-col border-r sm:w-[272px]"
+        style={{
+          backgroundColor: 'var(--bg-surface)',
+          borderColor: 'var(--border-strong)',
+          boxShadow: drawerOpen ? 'var(--shadow-floating)' : 'none',
+        }}
+      >
+        <div
+          className="flex items-center justify-between gap-2 border-b px-2.5 py-2"
+          style={{ borderColor: 'var(--border-hairline)' }}
+        >
+          <SegmentedControl<QueueTab>
+            options={queueTabOptions}
+            value={queueTab}
+            onChange={setQueueTab}
+            size="xs"
+            fullWidth
           />
-          <aside
-            className="kairos-contain-panel absolute top-0 bottom-0 left-0 z-20 flex w-[min(86vw,272px)] flex-col border-r shadow-xl sm:w-[260px]"
-            style={{
-              backgroundColor: 'var(--bg-surface)',
-              borderColor: 'var(--border-strong)',
-            }}
+          <button
+            ref={queueCloseBtnRef}
+            type="button"
+            onClick={() => setDrawerOpen(false)}
+            className="kairos-btn shrink-0 rounded-[5px] border border-transparent p-1"
+            style={{ color: 'var(--text-muted)' }}
+            aria-label={t('watch.queue.closeAria')}
           >
-          <div
-            className="flex items-center justify-between border-b px-3 py-2"
-            style={{ borderColor: 'var(--border-hairline)' }}
-          >
-            <div className="flex gap-1 text-[11px]">
-              {(
-                [
-                  ['all', t('watch.queue.tabAll')],
-                  ['pulse', t('watch.queue.tabPulse')],
-                  ['major', t('watch.queue.tabMajor')],
-                ] as const
-              ).map(([id, label]) => (
-                <button
-                  key={id}
-                  type="button"
-                  onClick={() => setQueueTab(id)}
-                  className="rounded px-2 py-0.5 transition-colors"
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+
+        <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto p-2">
+          {!drawerOpen ? null : queueItems.length === 0 ? (
+            <div
+              className="px-3 py-10 text-center text-xs"
+              style={{ color: 'var(--text-muted)' }}
+            >
+              {t('watch.queue.empty')}
+            </div>
+          ) : (
+            queueItems.map((item) => {
+              const isSelected = item.id === selectedQueueId;
+              const marketMeta =
+                item.kind === 'anomaly' && isMarketAnomaly(item.anomaly)
+                  ? marketAnomalyMeta(item.anomaly, t)
+                  : null;
+              const stripeColor =
+                item.kind === 'notice'
+                  ? 'var(--accent-brand)'
+                  : marketMeta
+                    ? marketMeta.tone === 'bear'
+                      ? 'var(--pnl-neg)'
+                      : marketMeta.tone === 'bull'
+                        ? 'var(--pnl-pos)'
+                        : marketMeta.tone === 'warn'
+                          ? 'var(--state-warn)'
+                          : 'var(--border-strong)'
+                    : item.anomaly.severity === 'HIGH'
+                      ? 'var(--pnl-neg)'
+                      : 'var(--state-warn)';
+
+              return (
+                <div
+                  key={item.id}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => selectQueueItem(item)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      selectQueueItem(item);
+                    }
+                  }}
+                  className="kairos-list-item kairos-row relative w-full cursor-pointer overflow-hidden rounded-[6px] border py-2 pr-2.5 pl-3 text-left"
                   style={{
-                    backgroundColor:
-                      queueTab === id ? 'var(--bg-elevated)' : 'transparent',
-                    color:
-                      queueTab === id ? 'var(--accent-brand)' : 'var(--text-secondary)',
+                    backgroundColor: isSelected
+                      ? 'var(--bg-elevated)'
+                      : 'var(--bg-canvas)',
+                    borderColor: isSelected
+                      ? 'var(--accent-brand)'
+                      : 'var(--border-hairline)',
                   }}
                 >
-                  {label}
-                </button>
-              ))}
-            </div>
-            <button
-              type="button"
-              onClick={() => setDrawerOpen(false)}
-              className="rounded p-1 hover:opacity-80"
-              style={{ color: 'var(--text-muted)' }}
-              aria-label={t('watch.queue.closeAria')}
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
-          </div>
-
-          <div className="min-h-0 flex-1 space-y-1 overflow-y-auto p-1.5">
-            {queueItems.length === 0 ? (
-              <div
-                className="px-3 py-10 text-center text-xs"
-                style={{ color: 'var(--text-muted)' }}
-              >
-                {t('watch.queue.empty')}
-              </div>
-            ) : (
-              queueItems.map((item) => {
-                const isSelected = item.id === selectedQueueId;
-                return (
-                  <div
-                    key={item.id}
-                    onClick={() => selectQueueItem(item)}
-                    className="kairos-list-item w-full cursor-pointer rounded border px-2.5 py-2 text-left transition-colors"
-                    style={{
-                      backgroundColor: isSelected
-                        ? 'var(--bg-elevated)'
-                        : 'var(--bg-canvas)',
-                      borderColor: isSelected
-                        ? 'var(--accent-brand)'
-                        : 'var(--border-hairline)',
-                    }}
-                  >
-                    {item.kind === 'notice' ? (
-                      <>
-                        <div className="flex items-center justify-between gap-1">
-                          <span className="font-mono text-xs font-medium tabular-nums" style={{ color: 'var(--text-primary)' }}>
-                            {cleanSymbol(item.notice.symbol, marketAllLabel)}
-                          </span>
-                          <span className="text-[10px]" style={{ color: 'var(--accent-brand)' }}>
-                            {t('watch.queue.noticeBadge')}
-                          </span>
-                        </div>
-                        <div className="mt-1 line-clamp-2 text-[11px]" style={{ color: 'var(--text-secondary)' }}>
-                          {item.notice.trigger_facts.fact_summary ||
-                            anomalyTypeLabel(item.notice.trigger_facts.event_type, t)}
-                        </div>
-                        <div className="mt-0.5 font-mono text-[10px] tabular-nums" style={{ color: 'var(--text-muted)' }}>
-                          {fmtIsoUtc8(item.notice.ts)}
-                        </div>
-                      </>
-                    ) : isMarketAnomaly(item.anomaly) ? (
-                      (() => {
-                        const meta = marketAnomalyMeta(item.anomaly, t);
-                        const titleColor =
-                          meta.tone === 'bear'
-                            ? 'var(--pnl-neg)'
-                            : meta.tone === 'bull'
-                              ? 'var(--pnl-pos)'
-                              : meta.tone === 'warn'
-                                ? 'var(--state-warn)'
-                                : 'var(--text-primary)';
-                        return (
-                          <>
-                            <div className="flex items-center justify-between gap-1">
-                              <span className="text-xs font-medium" style={{ color: titleColor }}>
-                                {meta.title}
+                  <span
+                    aria-hidden="true"
+                    className="absolute top-0 bottom-0 left-0 w-[2.5px]"
+                    style={{ backgroundColor: stripeColor }}
+                  />
+                  {item.kind === 'notice' ? (
+                    <>
+                      <div className="flex items-center justify-between gap-1">
+                        <span
+                          className="font-mono text-xs font-medium tabular-nums"
+                          style={{ color: 'var(--text-primary)' }}
+                        >
+                          {cleanSymbol(item.notice.symbol, marketAllLabel)}
+                        </span>
+                        <span
+                          className="rounded px-1 py-0.5 text-[10px] font-medium"
+                          style={{
+                            backgroundColor: 'var(--accent-brand-soft)',
+                            color: 'var(--accent-brand-text)',
+                          }}
+                        >
+                          {t('watch.queue.noticeBadge')}
+                        </span>
+                      </div>
+                      <div
+                        className="mt-1 line-clamp-2 text-[11px]"
+                        style={{ color: 'var(--text-secondary)' }}
+                      >
+                        {item.notice.trigger_facts.fact_summary ||
+                          anomalyTypeLabel(item.notice.trigger_facts.event_type, t)}
+                      </div>
+                      <div
+                        className="mt-1 font-mono text-[10px] tabular-nums"
+                        style={{ color: 'var(--text-muted)' }}
+                      >
+                        {fmtIsoUtc8(item.notice.ts)}
+                      </div>
+                    </>
+                  ) : marketMeta ? (
+                    (() => {
+                      const titleColor =
+                        marketMeta.tone === 'bear'
+                          ? 'var(--pnl-neg)'
+                          : marketMeta.tone === 'bull'
+                            ? 'var(--pnl-pos)'
+                            : marketMeta.tone === 'warn'
+                              ? 'var(--state-warn)'
+                              : 'var(--text-primary)';
+                      return (
+                        <>
+                          <div className="flex items-center justify-between gap-1">
+                            <span className="text-xs font-medium" style={{ color: titleColor }}>
+                              {marketMeta.title}
+                            </span>
+                            <span
+                              className="font-mono text-[10px] tabular-nums"
+                              style={{ color: 'var(--text-muted)' }}
+                            >
+                              {fmtDateTimeSec(item.anomaly.timestamp)}
+                            </span>
+                          </div>
+                          {item.anomaly.event_type === 'market_data_stale' ||
+                          item.anomaly.event_type === 'market_data_recovered' ? (
+                            <div
+                              className="mt-1 flex items-center justify-between font-mono text-[11px] tabular-nums"
+                              style={{ color: 'var(--text-secondary)' }}
+                            >
+                              <span>
+                                {t('watch.queue.coverage')}{' '}
+                                {(() => {
+                                  const cov = asFiniteNumber(item.anomaly.data?.coverage);
+                                  return cov != null ? `${Math.round(cov * 100)}%` : '—';
+                                })()}
                               </span>
-                              <span
-                                className="font-mono text-[10px] tabular-nums"
-                                style={{ color: 'var(--text-muted)' }}
-                              >
-                                {fmtDateTimeSec(item.anomaly.timestamp)}
+                              <span>
+                                {t('watch.queue.validSymbols')}{' '}
+                                {asFiniteNumber(item.anomaly.data?.valid_symbols) ?? '—'}
                               </span>
                             </div>
-                            {item.anomaly.event_type === 'market_data_stale' ||
-                            item.anomaly.event_type === 'market_data_recovered' ? (
-                              <div
-                                className="mt-1 flex items-center justify-between font-mono text-[11px] tabular-nums"
-                                style={{ color: 'var(--text-secondary)' }}
-                              >
-                                <span>
-                                  {t('watch.queue.coverage')}{' '}
-                                  {(() => {
-                                    const cov = asFiniteNumber(item.anomaly.data?.coverage);
-                                    return cov != null ? `${Math.round(cov * 100)}%` : '—';
-                                  })()}
-                                </span>
-                                <span>
-                                  {t('watch.queue.validSymbols')}{' '}
-                                  {asFiniteNumber(item.anomaly.data?.valid_symbols) ?? '—'}
-                                </span>
-                              </div>
-                            ) : (
-                              <div
-                                className="mt-1 flex items-center justify-between font-mono text-[11px] tabular-nums"
-                                style={{ color: 'var(--text-secondary)' }}
-                              >
-                                <span>
-                                  {t('watch.queue.median60s')}{' '}
-                                  <span
-                                    style={{
-                                      color:
-                                        meta.med60 == null
-                                          ? 'var(--text-muted)'
-                                          : meta.med60 >= 0
-                                            ? 'var(--pnl-pos)'
-                                            : 'var(--pnl-neg)',
-                                    }}
-                                  >
-                                    {meta.med60 != null ? fmtPctPoints(meta.med60, 2, true) : '—'}
-                                  </span>
-                                </span>
-                                <span>
-                                  {t('watch.queue.breadth')}{' '}
-                                  {meta.breadthRatio != null
-                                    ? `${Math.round(meta.breadthRatio * 100)}%`
-                                    : '—'}
-                                </span>
-                              </div>
-                            )}
-                            {meta.chips.length > 0 ? (
-                              <div className="mt-1.5 flex flex-wrap gap-1">
-                                {meta.chips.map((chip) => (
-                                  <button
-                                    key={chip.symbol}
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setSelectedQueueId(item.id);
-                                      onSelectSymbol(chip.symbol);
-                                    }}
-                                    className="tabular-nums flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] transition-colors hover:opacity-85"
-                                    style={{
-                                      backgroundColor: 'var(--bg-surface)',
-                                      borderColor: 'var(--border-hairline)',
-                                      color: 'var(--text-primary)',
-                                    }}
-                                    title={t('watch.queue.switchSymbolTitle', {
-                                      symbol: cleanSymbol(chip.symbol, marketAllLabel),
-                                    })}
-                                  >
-                                    <span className="font-medium">{shortTicker(chip.symbol)}</span>
-                                    {chip.returnPct != null ? (
-                                      <span
-                                        style={{
-                                          color:
-                                            chip.returnPct >= 0
-                                              ? 'var(--pnl-pos)'
-                                              : 'var(--pnl-neg)',
-                                        }}
-                                      >
-                                        {fmtPctPoints(chip.returnPct, 2, true)}
-                                      </span>
-                                    ) : null}
-                                  </button>
-                                ))}
-                              </div>
-                            ) : null}
-                          </>
-                        );
-                      })()
-                    ) : (
-                      (() => {
-                        const changePct = asFiniteNumber(item.anomaly.data?.change_pct);
-                        const winSec = asFiniteNumber(item.anomaly.data?.window_seconds);
-                        const label = anomalyTypeLabel(item.anomaly.event_type, t);
-                        return (
-                          <>
-                            <div className="flex items-center justify-between gap-1">
-                              <span className="font-mono text-xs font-medium tabular-nums" style={{ color: 'var(--text-primary)' }}>
-                                {cleanSymbol(item.anomaly.symbol, marketAllLabel)}
-                              </span>
-                              {changePct != null ? (
+                          ) : (
+                            <div
+                              className="mt-1 flex items-center justify-between font-mono text-[11px] tabular-nums"
+                              style={{ color: 'var(--text-secondary)' }}
+                            >
+                              <span>
+                                {t('watch.queue.median60s')}{' '}
                                 <span
-                                  className="font-mono text-[11px] font-medium tabular-nums"
-                                  style={{
-                                    color: changePct >= 0 ? 'var(--pnl-pos)' : 'var(--pnl-neg)',
-                                  }}
-                                >
-                                  {fmtPctPoints(changePct, 2, true)}
-                                </span>
-                              ) : (
-                                <span
-                                  className="font-mono text-[10px]"
                                   style={{
                                     color:
-                                      item.anomaly.severity === 'HIGH'
-                                        ? 'var(--pnl-neg)'
-                                        : 'var(--state-warn)',
+                                      marketMeta.med60 == null
+                                        ? 'var(--text-muted)'
+                                        : marketMeta.med60 >= 0
+                                          ? 'var(--pnl-pos)'
+                                          : 'var(--pnl-neg)',
                                   }}
                                 >
-                                  {item.anomaly.severity}
+                                  {marketMeta.med60 != null ? fmtPctPoints(marketMeta.med60, 2, true) : '—'}
                                 </span>
-                              )}
+                              </span>
+                              <span>
+                                {t('watch.queue.breadth')}{' '}
+                                {marketMeta.breadthRatio != null
+                                  ? `${Math.round(marketMeta.breadthRatio * 100)}%`
+                                  : '—'}
+                              </span>
                             </div>
-                            <div className="mt-0.5 flex items-center justify-between font-mono text-[10px] tabular-nums" style={{ color: 'var(--text-muted)' }}>
-                              <span>{winSec != null ? `${label} · ${Math.round(winSec)}s` : label}</span>
-                              <span>{fmtDateTimeSec(item.anomaly.timestamp)}</span>
+                          )}
+                          {marketMeta.chips.length > 0 ? (
+                            <div className="mt-1.5 flex flex-wrap gap-1">
+                              {marketMeta.chips.map((chip) => (
+                                <button
+                                  key={chip.symbol}
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setSelectedQueueId(item.id);
+                                    onSelectSymbol(chip.symbol);
+                                  }}
+                                  className="kairos-btn tabular-nums flex items-center gap-1 rounded-[5px] border px-1.5 py-0.5 text-[10px]"
+                                  style={{
+                                    backgroundColor: 'var(--bg-surface)',
+                                    borderColor: 'var(--border-hairline)',
+                                    color: 'var(--text-primary)',
+                                  }}
+                                  title={t('watch.queue.switchSymbolTitle', {
+                                    symbol: cleanSymbol(chip.symbol, marketAllLabel),
+                                  })}
+                                >
+                                  <span className="font-medium">{shortTicker(chip.symbol)}</span>
+                                  {chip.returnPct != null ? (
+                                    <span
+                                      style={{
+                                        color:
+                                          chip.returnPct >= 0
+                                            ? 'var(--pnl-pos)'
+                                            : 'var(--pnl-neg)',
+                                      }}
+                                    >
+                                      {fmtPctPoints(chip.returnPct, 2, true)}
+                                    </span>
+                                  ) : null}
+                                </button>
+                              ))}
                             </div>
-                          </>
-                        );
-                      })()
-                    )}
-                  </div>
-                );
-              })
-            )}
-          </div>
-          </aside>
-        </>
-      ) : null}
+                          ) : null}
+                        </>
+                      );
+                    })()
+                  ) : (
+                    (() => {
+                      const changePct = asFiniteNumber(item.anomaly.data?.change_pct);
+                      const winSec = asFiniteNumber(item.anomaly.data?.window_seconds);
+                      const label = anomalyTypeLabel(item.anomaly.event_type, t);
+                      return (
+                        <>
+                          <div className="flex items-center justify-between gap-1">
+                            <span
+                              className="font-mono text-xs font-medium tabular-nums"
+                              style={{ color: 'var(--text-primary)' }}
+                            >
+                              {cleanSymbol(item.anomaly.symbol, marketAllLabel)}
+                            </span>
+                            {changePct != null ? (
+                              <span
+                                className="font-mono text-[11px] font-medium tabular-nums"
+                                style={{
+                                  color: changePct >= 0 ? 'var(--pnl-pos)' : 'var(--pnl-neg)',
+                                }}
+                              >
+                                {fmtPctPoints(changePct, 2, true)}
+                              </span>
+                            ) : (
+                              <span
+                                className="font-mono text-[10px]"
+                                style={{
+                                  color:
+                                    item.anomaly.severity === 'HIGH'
+                                      ? 'var(--pnl-neg)'
+                                      : 'var(--state-warn)',
+                                }}
+                              >
+                                {item.anomaly.severity}
+                              </span>
+                            )}
+                          </div>
+                          <div
+                            className="mt-0.5 flex items-center justify-between font-mono text-[10px] tabular-nums"
+                            style={{ color: 'var(--text-muted)' }}
+                          >
+                            <span>{winSec != null ? `${label} · ${Math.round(winSec)}s` : label}</span>
+                            <span>{fmtDateTimeSec(item.anomaly.timestamp)}</span>
+                          </div>
+                        </>
+                      );
+                    })()
+                  )}
+                </div>
+              );
+            })
+          )}
+        </div>
+      </aside>
 
       {/* Main 100% Full-Bleed Chart Stage */}
       <section className="flex min-w-0 flex-1 flex-col">
         {splitMode ? (
           <div
-            className="grid min-h-0 flex-1 grid-rows-2 divide-y"
-            style={{ borderColor: 'var(--border-hairline)' }}
+            ref={splitContainerRef}
+            className={`flex min-h-0 flex-1 flex-col ${draggingSplit ? 'select-none' : ''}`}
           >
-            <KairosChart
-              chartId="watch-primary"
-              symbol={activeSymbol}
-              timeframe={activeTf}
-              availableTimeframes={['1m', '5m', '15m', '1h', '4h']}
-              onTimeframeChange={onSelectTf}
-              headerBadge={t('watch.split.primaryBadge')}
-              statusSlot={chartControls}
-              bars={primarySlice.bars}
-              metrics={primarySlice.metrics}
-              anomalies={drawerOpen ? symbolAnomalies : []}
-              notices={drawerOpen ? visibleSymbolNotices : []}
-              drawings={drawings}
-              loading={primarySlice.loading}
-              loadingMore={Boolean(primarySlice.loadingMore)}
-              error={primaryError}
-              followLatest
-              onLoadMoreHistory={loadMorePrimary}
-              onUserDrawing={handleUserDrawing}
-              onUpdateDrawing={handleUpdateDrawing}
-              onDeleteDrawing={handleDeleteDrawing}
-              onEraseDrawings={handleEraseDrawings}
-              onChartReady={setPrimaryHandle}
-            />
-            <KairosChart
-              chartId="watch-compare"
-              symbol={compareSymbol}
-              timeframe={compareTf}
-              availableTimeframes={['1m', '5m', '15m', '1h', '4h']}
-              onTimeframeChange={setCompareTf}
-              symbolSlot={
-                <CompareSymbolPicker
-                  symbol={compareSymbol}
-                  symbols={cryptoSymbols}
-                  onSelect={(nextSym) => {
-                    if (sameSymbol(nextSym, compareSymbol)) return;
-                    setCompareSymbol(nextSym);
-                  }}
-                />
-              }
-              headerBadge={t('watch.split.compareBadge')}
-              onClosePane={onToggleSplit}
-              bars={compareSlice.bars}
-              metrics={compareSlice.metrics}
-              drawings={compareDrawings}
-              loading={compareSlice.loading}
-              loadingMore={Boolean(compareSlice.loadingMore)}
-              error={compareError}
-              followLatest
-              onLoadMoreHistory={loadMoreCompare}
-              onUserDrawing={handleCompareDrawing}
-              onUpdateDrawing={handleUpdateCompareDrawing}
-              onDeleteDrawing={handleDeleteCompareDrawing}
-              onEraseDrawings={handleEraseCompareDrawings}
-              onChartReady={setCompareHandle}
-            />
+            <div
+              className="flex min-h-0 flex-col overflow-hidden"
+              style={{ flex: `${splitRatio} 1 0%` }}
+            >
+              <KairosChart
+                chartId="watch-primary"
+                symbol={activeSymbol}
+                timeframe={activeTf}
+                availableTimeframes={HOTKEY_TFS}
+                onTimeframeChange={onSelectTf}
+                headerBadge={t('watch.split.primaryBadge')}
+                statusSlot={chartControls}
+                bars={primarySlice.bars}
+                metrics={primarySlice.metrics}
+                anomalies={drawerOpen ? symbolAnomalies : []}
+                notices={drawerOpen ? visibleSymbolNotices : []}
+                drawings={drawings}
+                loading={primarySlice.loading}
+                loadingMore={Boolean(primarySlice.loadingMore)}
+                error={primaryError}
+                followLatest
+                onLoadMoreHistory={loadMorePrimary}
+                onUserDrawing={handleUserDrawing}
+                onUpdateDrawing={handleUpdateDrawing}
+                onDeleteDrawing={handleDeleteDrawing}
+                onEraseDrawings={handleEraseDrawings}
+                onChartReady={setPrimaryHandle}
+              />
+            </div>
+
+            {/* Interactive Split Resize Handle */}
+            <div
+              role="separator"
+              tabIndex={0}
+              aria-orientation="horizontal"
+              aria-label={t('watch.split.resizeAria')}
+              aria-valuemin={25}
+              aria-valuemax={75}
+              aria-valuenow={Math.round(splitRatio * 100)}
+              title={t('watch.split.resizeTitle')}
+              onPointerDown={handleSplitDividerPointerDown}
+              onDoubleClick={() => {
+                setSplitRatio(0.5);
+                persistSplitRatio(0.5);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'ArrowUp') {
+                  e.preventDefault();
+                  const next = Math.max(0.25, Number((splitRatioRef.current - 0.05).toFixed(2)));
+                  setSplitRatio(next);
+                  persistSplitRatio(next);
+                } else if (e.key === 'ArrowDown') {
+                  e.preventDefault();
+                  const next = Math.min(0.75, Number((splitRatioRef.current + 0.05).toFixed(2)));
+                  setSplitRatio(next);
+                  persistSplitRatio(next);
+                } else if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  setSplitRatio(0.5);
+                  persistSplitRatio(0.5);
+                }
+              }}
+              className="group relative flex h-[7px] shrink-0 cursor-row-resize items-center justify-center border-y transition-colors"
+              style={{
+                backgroundColor: draggingSplit
+                  ? 'var(--accent-brand-soft)'
+                  : 'var(--bg-surface)',
+                borderColor: draggingSplit
+                  ? 'var(--accent-brand)'
+                  : 'var(--border-hairline)',
+              }}
+            >
+              <GripHorizontal
+                className="h-3 w-3 transition-colors group-hover:text-[var(--accent-brand)]"
+                style={{
+                  color: draggingSplit ? 'var(--accent-brand)' : 'var(--text-muted)',
+                }}
+              />
+            </div>
+
+            <div
+              className="flex min-h-0 flex-col overflow-hidden"
+              style={{ flex: `${1 - splitRatio} 1 0%` }}
+            >
+              <KairosChart
+                chartId="watch-compare"
+                symbol={compareSymbol}
+                timeframe={compareTf}
+                availableTimeframes={HOTKEY_TFS}
+                onTimeframeChange={setCompareTf}
+                symbolSlot={
+                  <CompareSymbolPicker
+                    symbol={compareSymbol}
+                    symbols={cryptoSymbols}
+                    onSelect={(nextSym) => {
+                      if (sameSymbol(nextSym, compareSymbol)) return;
+                      setCompareSymbol(nextSym);
+                    }}
+                  />
+                }
+                headerBadge={t('watch.split.compareBadge')}
+                onClosePane={onToggleSplit}
+                bars={compareSlice.bars}
+                metrics={compareSlice.metrics}
+                drawings={compareDrawings}
+                loading={compareSlice.loading}
+                loadingMore={Boolean(compareSlice.loadingMore)}
+                error={compareError}
+                followLatest
+                onLoadMoreHistory={loadMoreCompare}
+                onUserDrawing={handleCompareDrawing}
+                onUpdateDrawing={handleUpdateCompareDrawing}
+                onDeleteDrawing={handleDeleteCompareDrawing}
+                onEraseDrawings={handleEraseCompareDrawings}
+                onChartReady={setCompareHandle}
+              />
+            </div>
           </div>
         ) : (
           <KairosChart
             chartId="watch-single"
             symbol={activeSymbol}
             timeframe={activeTf}
-            availableTimeframes={['1m', '5m', '15m', '1h', '4h']}
+            availableTimeframes={HOTKEY_TFS}
             onTimeframeChange={onSelectTf}
             statusSlot={chartControls}
             bars={primarySlice.bars}
@@ -1594,29 +1844,73 @@ function CompareSymbolPicker({
   const marketAllLabel = t('watch.marketAll');
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
-  const wrapRef = useRef<HTMLDivElement | null>(null);
+  const [popupPos, setPopupPos] = useState<{
+    top: number;
+    left: number;
+    maxListHeight: number;
+  } | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const popupRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+
+  const updatePopupPos = useCallback(() => {
+    const trigger = triggerRef.current;
+    if (!trigger) return;
+    const rect = trigger.getBoundingClientRect();
+    const width = 224;
+    const margin = 8;
+    const headerHeight = 36;
+    const spaceBelow = window.innerHeight - rect.bottom - margin;
+    const spaceAbove = rect.top - margin;
+    const openUp = spaceBelow < 180 && spaceAbove > spaceBelow;
+    const available = Math.max(120, Math.min(280, (openUp ? spaceAbove : spaceBelow) - 6));
+    const maxListHeight = Math.max(84, available - headerHeight);
+    const top = openUp
+      ? Math.max(margin, rect.top - available - 6)
+      : Math.min(window.innerHeight - margin - available, rect.bottom + 6);
+    const left = Math.max(
+      margin,
+      Math.min(window.innerWidth - width - margin, rect.left),
+    );
+    setPopupPos({ top, left, maxListHeight });
+  }, []);
 
   useEffect(() => {
     if (!open) return;
     setQuery('');
+    updatePopupPos();
     const timer = window.setTimeout(() => inputRef.current?.focus(), 10);
     const onPointer = (e: MouseEvent) => {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) {
-        setOpen(false);
+      const target = e.target as Node | null;
+      if (
+        (popupRef.current && target && popupRef.current.contains(target)) ||
+        (triggerRef.current && target && triggerRef.current.contains(target))
+      ) {
+        return;
       }
+      setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false);
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        setOpen(false);
+        requestAnimationFrame(() => triggerRef.current?.focus());
+      }
     };
+    const onViewport = () => updatePopupPos();
     window.addEventListener('mousedown', onPointer);
-    window.addEventListener('keydown', onKey);
+    window.addEventListener('keydown', onKey, { capture: true });
+    window.addEventListener('resize', onViewport);
+    window.addEventListener('scroll', onViewport, true);
     return () => {
       window.clearTimeout(timer);
       window.removeEventListener('mousedown', onPointer);
-      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('keydown', onKey, { capture: true });
+      window.removeEventListener('resize', onViewport);
+      window.removeEventListener('scroll', onViewport, true);
     };
-  }, [open]);
+  }, [open, updatePopupPos]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -1627,11 +1921,14 @@ function CompareSymbolPicker({
   }, [symbols, query, marketAllLabel]);
 
   return (
-    <div ref={wrapRef} className="relative shrink-0">
+    <div className="relative shrink-0">
       <button
+        ref={triggerRef}
         type="button"
+        aria-expanded={open}
+        aria-haspopup="listbox"
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-1 rounded border px-2 py-0.5 font-mono text-xs font-semibold tabular-nums transition-colors"
+        className="kairos-btn flex items-center gap-1 rounded-[5px] border px-2 py-0.5 font-mono text-xs font-semibold tabular-nums"
         style={{
           backgroundColor: 'var(--bg-canvas)',
           borderColor: open ? 'var(--accent-brand)' : 'var(--border-hairline)',
@@ -1643,67 +1940,82 @@ function CompareSymbolPicker({
         <ChevronDown className="h-3 w-3" style={{ color: 'var(--text-muted)' }} />
       </button>
 
-      {open ? (
-        <div
-          className="absolute top-full left-0 z-40 mt-1 w-56 overflow-hidden rounded-md border shadow-xl"
-          style={{
-            backgroundColor: 'var(--bg-surface)',
-            borderColor: 'var(--border-strong)',
-          }}
-        >
-          <div
-            className="flex items-center gap-1.5 border-b px-2 py-1.5"
-            style={{ borderColor: 'var(--border-hairline)' }}
-          >
-            <Search className="h-3 w-3 shrink-0" style={{ color: 'var(--text-muted)' }} />
-            <input
-              ref={inputRef}
-              type="text"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && filtered.length > 0) {
-                  e.preventDefault();
-                  onSelect(filtered[0]);
-                  setOpen(false);
-                }
+      {open && popupPos && typeof document !== 'undefined'
+        ? createPortal(
+            <div
+              ref={popupRef}
+              className="kairos-floating kairos-animate-popover fixed z-[70] w-56 overflow-hidden rounded-[8px]"
+              style={{
+                top: `${popupPos.top}px`,
+                left: `${popupPos.left}px`,
               }}
-              placeholder={t('watch.comparePicker.searchPlaceholder')}
-              className="w-full bg-transparent font-mono text-xs outline-none"
-              style={{ color: 'var(--text-primary)' }}
-            />
-          </div>
-          <div className="max-h-60 overflow-y-auto p-1">
-            {filtered.length === 0 ? (
-              <div className="px-2 py-3 text-center text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                {t('watch.comparePicker.empty')}
-              </div>
-            ) : (
-              filtered.map((s) => {
-                const active = sameSymbol(s, symbol);
-                return (
-                  <button
-                    key={s}
-                    type="button"
-                    onClick={() => {
-                      onSelect(s);
+            >
+              <div
+                className="flex items-center gap-1.5 border-b px-2 py-1.5"
+                style={{ borderColor: 'var(--border-hairline)' }}
+              >
+                <Search className="h-3 w-3 shrink-0" style={{ color: 'var(--text-muted)' }} />
+                <input
+                  ref={inputRef}
+                  type="text"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && filtered.length > 0) {
+                      e.preventDefault();
+                      onSelect(filtered[0]);
                       setOpen(false);
-                    }}
-                    className="flex w-full items-center justify-between rounded px-2 py-1 text-left font-mono text-xs tabular-nums transition-colors"
-                    style={{
-                      backgroundColor: active ? 'var(--bg-elevated)' : 'transparent',
-                      color: active ? 'var(--accent-brand)' : 'var(--text-primary)',
-                    }}
+                    }
+                  }}
+                  placeholder={t('watch.comparePicker.searchPlaceholder')}
+                  className="w-full bg-transparent font-mono text-xs outline-none"
+                  style={{ color: 'var(--text-primary)' }}
+                />
+              </div>
+              <div
+                role="listbox"
+                className="overflow-y-auto p-1"
+                style={{ maxHeight: `${popupPos.maxListHeight}px` }}
+              >
+                {filtered.length === 0 ? (
+                  <div
+                    className="px-2 py-3 text-center text-[11px]"
+                    style={{ color: 'var(--text-muted)' }}
                   >
-                    <span>{cleanSymbol(s, marketAllLabel)}</span>
-                    {active ? <span className="text-[10px]">{t('watch.comparePicker.current')}</span> : null}
-                  </button>
-                );
-              })
-            )}
-          </div>
-        </div>
-      ) : null}
+                    {t('watch.comparePicker.empty')}
+                  </div>
+                ) : (
+                  filtered.map((s) => {
+                    const active = sameSymbol(s, symbol);
+                    return (
+                      <button
+                        key={s}
+                        type="button"
+                        role="option"
+                        aria-selected={active}
+                        onClick={() => {
+                          onSelect(s);
+                          setOpen(false);
+                        }}
+                        className="kairos-press flex w-full items-center justify-between rounded px-2 py-1 text-left font-mono text-xs tabular-nums transition-colors hover:bg-[var(--bg-hover)]"
+                        style={{
+                          backgroundColor: active ? 'var(--bg-elevated)' : 'transparent',
+                          color: active ? 'var(--accent-brand-text)' : 'var(--text-primary)',
+                        }}
+                      >
+                        <span>{cleanSymbol(s, marketAllLabel)}</span>
+                        {active ? (
+                          <span className="text-[10px]">{t('watch.comparePicker.current')}</span>
+                        ) : null}
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }

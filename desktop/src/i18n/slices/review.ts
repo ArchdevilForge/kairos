@@ -46,6 +46,10 @@ export const reviewZh = {
   'stats.rDist.title': 'R 倍数分布',
   'stats.rDist.empty': '暂无已完成交易样本',
   'stats.rDist.tradeCount': '{count} 笔',
+  'stats.rDist.share': '占比 {pct}%',
+  'stats.recent.title': '近期记录 · 点击直接复盘',
+  'stats.recent.empty': '暂无可钻取的决策票或交易记录',
+  'stats.recent.openReview': '去复盘',
 } as const;
 
 export const reviewEn: Record<keyof typeof reviewZh, string> = {
@@ -96,4 +100,8 @@ export const reviewEn: Record<keyof typeof reviewZh, string> = {
   'stats.rDist.title': 'R-Multiple Distribution',
   'stats.rDist.empty': 'No completed trade samples',
   'stats.rDist.tradeCount': '{count} trades',
+  'stats.rDist.share': '{pct}% share',
+  'stats.recent.title': 'Recent Records · Click to Review',
+  'stats.recent.empty': 'No tickets or trades available for drill-down yet',
+  'stats.recent.openReview': 'Review',
 };

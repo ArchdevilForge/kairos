@@ -5,6 +5,7 @@ import {
   Columns2,
   Eye,
   History,
+  Keyboard,
   Languages,
   RefreshCw,
   Search,
@@ -28,6 +29,7 @@ export interface CommandPaletteProps {
   onToggleTheme: () => void;
   onSyncAccount: () => void;
   onOpenSettings: () => void;
+  onOpenShortcuts?: () => void;
 }
 
 interface PaletteItem {
@@ -35,6 +37,7 @@ interface PaletteItem {
   group: string;
   label: string;
   hint?: string;
+  shortcut?: string;
   icon: React.ReactNode;
   run: () => void;
 }
@@ -67,6 +70,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
   onToggleTheme,
   onSyncAccount,
   onOpenSettings,
+  onOpenShortcuts,
 }) => {
   const { locale, toggleLocale, t } = useI18n();
   const activeExchange = resolveAccountExchange(bootstrap.status);
@@ -74,13 +78,24 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
   const [query, setQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const rowRefs = useRef<Map<number, HTMLButtonElement>>(new Map());
+  const prevFocusRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     if (!open) return;
+    prevFocusRef.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setQuery('');
     setSelectedIndex(0);
-    const timer = setTimeout(() => inputRef.current?.focus(), 10);
-    return () => clearTimeout(timer);
+    const timer = window.setTimeout(() => inputRef.current?.focus(), 10);
+    return () => {
+      window.clearTimeout(timer);
+      const prev = prevFocusRef.current;
+      prevFocusRef.current = null;
+      if (prev && prev.isConnected) {
+        requestAnimationFrame(() => prev.focus());
+      }
+    };
   }, [open]);
 
   const items = useMemo<PaletteItem[]>(() => {
@@ -126,6 +141,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
         group: actionsGroup,
         label: t('palette.action.splitLabel'),
         hint: t('palette.action.splitHint'),
+        shortcut: 'S',
         icon: <Columns2 className="h-3.5 w-3.5" />,
         run: () => {
           onToggleSplit();
@@ -177,6 +193,21 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
         },
       },
     ];
+
+    if (onOpenShortcuts) {
+      list.push({
+        id: 'action:shortcuts',
+        group: actionsGroup,
+        label: t('palette.action.shortcutsLabel'),
+        hint: t('palette.action.shortcutsHint'),
+        shortcut: '?',
+        icon: <Keyboard className="h-3.5 w-3.5" />,
+        run: () => {
+          onClose();
+          onOpenShortcuts();
+        },
+      });
+    }
 
     const rawSymbols =
       bootstrap.status.available_symbols && bootstrap.status.available_symbols.length > 0
@@ -253,7 +284,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       });
     }
 
-    return filtered.slice(0, 24);
+    return filtered.slice(0, 28);
   }, [
     activeSymbol,
     bootstrap.status.available_symbols,
@@ -264,6 +295,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
     onChangeView,
     onClose,
     onOpenSettings,
+    onOpenShortcuts,
     onOpenTicketInReview,
     onSelectSymbol,
     onSyncAccount,
@@ -280,11 +312,19 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
     );
   }, [items.length]);
 
+  // Keep active keyboard-selected row smoothly scrolled into view
+  useEffect(() => {
+    if (!open) return;
+    const activeRow = rowRefs.current.get(selectedIndex);
+    activeRow?.scrollIntoView({ block: 'nearest' });
+  }, [open, selectedIndex]);
+
   if (!open) return null;
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Escape') {
       e.preventDefault();
+      e.stopPropagation();
       onClose();
     } else if (e.key === 'ArrowDown') {
       e.preventDefault();
@@ -297,6 +337,10 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
         setSelectedIndex((prev) => (prev - 1 + items.length) % items.length);
       }
     } else if (e.key === 'Enter') {
+      // If user tabbed onto a specific result button, let its native click run that button
+      if (e.target instanceof HTMLButtonElement) {
+        return;
+      }
       e.preventDefault();
       const target = items[selectedIndex];
       if (target) target.run();
@@ -305,29 +349,24 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center px-3 pt-[10dvh] sm:pt-[12dvh]"
-      style={{ backgroundColor: 'var(--bg-overlay)' }}
+      className="kairos-glass-backdrop kairos-animate-backdrop fixed inset-0 z-50 flex items-start justify-center px-3 pt-[9dvh] sm:pt-[11dvh]"
       onClick={onClose}
     >
       <div
         role="dialog"
         aria-modal="true"
         aria-label={t('palette.ariaLabel')}
-        className="kairos-contain-panel w-full max-w-[540px] overflow-hidden rounded-[8px] border shadow-2xl"
-        style={{
-          backgroundColor: 'var(--bg-surface)',
-          borderColor: 'var(--border-strong)',
-        }}
+        className="kairos-floating kairos-animate-palette kairos-contain-panel w-full max-w-[548px] overflow-hidden rounded-[10px]"
         onClick={(e) => e.stopPropagation()}
         onKeyDown={handleKeyDown}
       >
         <div
-          className="flex items-center gap-2 border-b px-3 py-2.5"
+          className="flex items-center gap-2.5 border-b px-3.5 py-2.5"
           style={{ borderColor: 'var(--border-hairline)' }}
         >
           <Search
             className="h-4 w-4 shrink-0"
-            style={{ color: 'var(--text-muted)' }}
+            style={{ color: 'var(--accent-brand)' }}
           />
           <input
             ref={inputRef}
@@ -341,21 +380,13 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
             className="w-full bg-transparent text-[13px] outline-none"
             style={{ color: 'var(--text-primary)' }}
           />
-          <span
-            className="rounded border px-1.5 py-0.5 text-[10px]"
-            style={{
-              borderColor: 'var(--border-hairline)',
-              color: 'var(--text-muted)',
-            }}
-          >
-            ESC
-          </span>
+          <kbd className="kairos-kbd shrink-0">ESC</kbd>
         </div>
 
         <div className="max-h-[380px] overflow-y-auto p-1.5">
           {items.length === 0 ? (
             <div
-              className="px-3 py-6 text-center text-[12px]"
+              className="px-3 py-8 text-center text-[12px]"
               style={{ color: 'var(--text-muted)' }}
             >
               {t('palette.empty')}
@@ -363,54 +394,105 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
           ) : (
             items.map((item, idx) => {
               const active = idx === selectedIndex;
+              const prevGroup = idx > 0 ? items[idx - 1].group : null;
+              const showGroupHeader = item.group !== prevGroup;
               return (
-                <button
-                  key={item.id}
-                  type="button"
-                  onMouseEnter={() => setSelectedIndex(idx)}
-                  onClick={item.run}
-                  className="flex w-full items-center justify-between gap-2 rounded-[6px] px-2.5 py-2 text-left transition-colors"
-                  style={{
-                    backgroundColor: active
-                      ? 'var(--bg-elevated)'
-                      : 'transparent',
-                    color: 'var(--text-primary)',
-                  }}
-                >
-                  <div className="flex min-w-0 items-center gap-2.5">
-                    <span
+                <React.Fragment key={item.id}>
+                  {showGroupHeader ? (
+                    <div
+                      className={`px-2.5 pb-1 text-[10px] font-semibold uppercase tracking-wider ${
+                        idx > 0 ? 'mt-2 pt-1.5 border-t' : 'pt-1'
+                      }`}
                       style={{
-                        color: active
-                          ? 'var(--accent-brand)'
-                          : 'var(--text-muted)',
+                        color: 'var(--text-muted)',
+                        borderColor: 'var(--border-hairline)',
                       }}
                     >
-                      {item.icon}
-                    </span>
-                    <div className="min-w-0">
-                      <div className="tabular-nums truncate text-[13px] font-medium">
-                        {item.label}
-                      </div>
-                      {item.hint && (
-                        <div
-                          className="tabular-nums truncate text-[11px]"
-                          style={{ color: 'var(--text-secondary)' }}
-                        >
-                          {item.hint}
-                        </div>
-                      )}
+                      {item.group}
                     </div>
-                  </div>
-                  <span
-                    className="shrink-0 text-[10px] uppercase tracking-wider"
-                    style={{ color: 'var(--text-muted)' }}
+                  ) : null}
+                  <button
+                    ref={(el) => {
+                      if (el) rowRefs.current.set(idx, el);
+                      else rowRefs.current.delete(idx);
+                    }}
+                    type="button"
+                    onMouseEnter={() => setSelectedIndex(idx)}
+                    onFocus={() => setSelectedIndex(idx)}
+                    onClick={item.run}
+                    className="flex w-full items-center justify-between gap-2 rounded-[6px] px-2.5 py-2 text-left transition-colors duration-75"
+                    style={{
+                      backgroundColor: active ? 'var(--bg-elevated)' : 'transparent',
+                      color: 'var(--text-primary)',
+                      boxShadow: active ? 'var(--inset-highlight)' : undefined,
+                    }}
                   >
-                    {item.group}
-                  </span>
-                </button>
+                    <div className="flex min-w-0 items-center gap-2.5">
+                      <span
+                        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-[5px] border transition-colors"
+                        style={{
+                          backgroundColor: active
+                            ? 'var(--accent-brand-soft)'
+                            : 'var(--bg-canvas)',
+                          borderColor: active
+                            ? 'var(--accent-brand-glow)'
+                            : 'var(--border-hairline)',
+                          color: active ? 'var(--accent-brand)' : 'var(--text-muted)',
+                        }}
+                      >
+                        {item.icon}
+                      </span>
+                      <div className="min-w-0">
+                        <div className="tabular-nums truncate text-[13px] font-medium">
+                          {item.label}
+                        </div>
+                        {item.hint ? (
+                          <div
+                            className="tabular-nums truncate text-[11px]"
+                            style={{ color: 'var(--text-secondary)' }}
+                          >
+                            {item.hint}
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      {item.shortcut ? (
+                        <kbd className="kairos-kbd">{item.shortcut}</kbd>
+                      ) : active ? (
+                        <kbd className="kairos-kbd">↵</kbd>
+                      ) : null}
+                    </div>
+                  </button>
+                </React.Fragment>
               );
             })
           )}
+        </div>
+
+        <div
+          className="flex items-center justify-between border-t px-3.5 py-2 text-[10px]"
+          style={{
+            backgroundColor: 'var(--bg-canvas)',
+            borderColor: 'var(--border-hairline)',
+            color: 'var(--text-muted)',
+          }}
+        >
+          <div className="flex items-center gap-3">
+            <span className="flex items-center gap-1">
+              <kbd className="kairos-kbd">↑</kbd>
+              <kbd className="kairos-kbd">↓</kbd>
+              <span>{t('palette.footer.navigate')}</span>
+            </span>
+            <span className="flex items-center gap-1">
+              <kbd className="kairos-kbd">↵</kbd>
+              <span>{t('palette.footer.confirm')}</span>
+            </span>
+          </div>
+          <span className="flex items-center gap-1">
+            <kbd className="kairos-kbd">ESC</kbd>
+            <span>{t('palette.footer.close')}</span>
+          </span>
         </div>
       </div>
     </div>

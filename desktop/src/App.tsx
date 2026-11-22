@@ -1,5 +1,7 @@
 import React, { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
+import { AppShellSkeleton } from './components/Skeleton';
+import { ToastProvider, useToast } from './components/ToastViewport';
 import { TopStatusBar, type WorkspaceTab } from './components/TopStatusBar';
 import { t as i18nT, useI18n } from './i18n';
 import { DeskClient } from './services/deskClient';
@@ -8,10 +10,12 @@ import type {
   AnomalyItem,
   BootstrapPayload,
   MarketState,
+  ReviewSubjectType,
   Timeframe,
   UpdateSettingsRequest,
   WsEvent,
 } from './types/kairos';
+import { formatExchangeLabel, resolveAccountExchange } from './utils/doctrine';
 import { WatchWorkspace } from './views/WatchWorkspace';
 
 const ReviewWorkspace = lazy(() =>
@@ -26,10 +30,20 @@ const CommandPalette = lazy(() =>
 const SettingsModal = lazy(() =>
   import('./components/SettingsModal').then((m) => ({ default: m.SettingsModal })),
 );
+const ShortcutsModal = lazy(() =>
+  import('./components/ShortcutsModal').then((m) => ({ default: m.ShortcutsModal })),
+);
 
 const THEME_STORAGE_KEY = 'kairos.desk.theme';
 const CHIME_STORAGE_KEY = 'kairos.desk.chime';
 const SYMBOL_STORAGE_KEY = 'kairos.desk.symbol';
+
+function isEditableElement(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
+  const tag = target.tagName;
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+}
 
 function sanitizeSymbol(
   raw: string | null | undefined,
@@ -124,7 +138,16 @@ function playSoftChime(audioCtxRef: React.MutableRefObject<AudioContext | null>)
 }
 
 export function App() {
-  const { t } = useI18n();
+  return (
+    <ToastProvider>
+      <AppShell />
+    </ToastProvider>
+  );
+}
+
+function AppShell() {
+  const { t, locale } = useI18n();
+  const { pushToast } = useToast();
   const [client, setClient] = useState<DeskClient | null>(null);
   const [bootstrap, setBootstrap] = useState<BootstrapPayload | null>(null);
   const [loading, setLoading] = useState(true);
@@ -146,12 +169,15 @@ export function App() {
     symbol: string;
     cursorTs?: number;
     ticketId?: string;
+    subjectKind?: ReviewSubjectType;
+    subjectId?: string;
   }>({ symbol: 'BTC/USDT:USDT' });
 
   const [theme, setTheme] = useState<'dark' | 'light'>(readInitialTheme);
   const [chimeEnabled, setChimeEnabled] = useState<boolean>(readInitialChime);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [syncingAccount, setSyncingAccount] = useState(false);
   const [manualToken, setManualToken] = useState('');
   const [manualApiUrl, setManualApiUrl] = useState('');
@@ -163,6 +189,9 @@ export function App() {
   const lastQuietPulseUpdateRef = useRef<number>(0);
   const seenAnomalyKeysRef = useRef<Set<string>>(new Set());
   const chimedEventIdsRef = useRef<Set<string>>(new Set());
+  const hadWsConnectedRef = useRef(false);
+  const pushToastRef = useRef(pushToast);
+  pushToastRef.current = pushToast;
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -193,41 +222,44 @@ export function App() {
     setActiveSymbol((prev) => sanitizeSymbol(sym, prev || 'BTC/USDT:USDT'));
   }, []);
 
-  const refreshBootstrap = useCallback(async (targetClient?: DeskClient) => {
-    const active = targetClient ?? client;
-    if (!active) return;
-    try {
-      const data = await active.bootstrap();
-      const visibleNotices = (data.notices ?? []).filter(
-        (n) => n.delivery_status !== 'suppressed',
-      );
-      for (const a of data.anomalies ?? []) {
-        const key = anomalyKey(a);
-        rememberKey(seenAnomalyKeysRef.current, key);
-        rememberKey(chimedEventIdsRef.current, a.event_id || key);
-      }
-      for (const n of visibleNotices) {
-        rememberKey(chimedEventIdsRef.current, `notice:${n.notice_id}`);
-        if (n.trigger_facts?.event_id) {
-          rememberKey(chimedEventIdsRef.current, n.trigger_facts.event_id);
+  const refreshBootstrap = useCallback(
+    async (targetClient?: DeskClient) => {
+      const active = targetClient ?? client;
+      if (!active) return;
+      try {
+        const data = await active.bootstrap();
+        const visibleNotices = (data.notices ?? []).filter(
+          (n) => n.delivery_status !== 'suppressed',
+        );
+        for (const a of data.anomalies ?? []) {
+          const key = anomalyKey(a);
+          rememberKey(seenAnomalyKeysRef.current, key);
+          rememberKey(chimedEventIdsRef.current, a.event_id || key);
         }
+        for (const n of visibleNotices) {
+          rememberKey(chimedEventIdsRef.current, `notice:${n.notice_id}`);
+          if (n.trigger_facts?.event_id) {
+            rememberKey(chimedEventIdsRef.current, n.trigger_facts.event_id);
+          }
+        }
+        if (!lastPulseStateRef.current && data.status?.pulse?.state) {
+          lastPulseStateRef.current = data.status.pulse.state;
+        }
+        setBootstrap({ ...data, notices: visibleNotices });
+        setConnError(null);
+        setActiveSymbol((prev) => {
+          const clean = sanitizeSymbol(prev, '');
+          if (clean) return clean;
+          return sanitizeSymbol(data.status.symbols[0], 'BTC/USDT:USDT');
+        });
+      } catch (err) {
+        setConnError(
+          err instanceof Error ? err.message : t('app.err.unreachable'),
+        );
       }
-      if (!lastPulseStateRef.current && data.status?.pulse?.state) {
-        lastPulseStateRef.current = data.status.pulse.state;
-      }
-      setBootstrap({ ...data, notices: visibleNotices });
-      setConnError(null);
-      setActiveSymbol((prev) => {
-        const clean = sanitizeSymbol(prev, '');
-        if (clean) return clean;
-        return sanitizeSymbol(data.status.symbols[0], 'BTC/USDT:USDT');
-      });
-    } catch (err) {
-      setConnError(
-        err instanceof Error ? err.message : t('app.err.unreachable'),
-      );
-    }
-  }, [client, t]);
+    },
+    [client, t],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -244,7 +276,26 @@ export function App() {
         setClient(c);
 
         unsubConn = c.onConnectionChange((connected) => {
-          if (!cancelled) setWsConnected(connected);
+          if (cancelled) return;
+          setWsConnected(connected);
+          if (connected) {
+            if (hadWsConnectedRef.current) {
+              pushToastRef.current({
+                id: 'ws-state',
+                tone: 'success',
+                title: i18nT('toast.wsReconnected'),
+                durationMs: 2400,
+              });
+            }
+            hadWsConnectedRef.current = true;
+          } else if (hadWsConnectedRef.current) {
+            pushToastRef.current({
+              id: 'ws-state',
+              tone: 'warn',
+              title: i18nT('toast.wsDisconnected'),
+              durationMs: 3600,
+            });
+          }
         });
 
         unsubWs = c.onWsEvent((evt: WsEvent) => {
@@ -399,20 +450,41 @@ export function App() {
       try {
         const res = await client.syncAccount();
         await refreshBootstrap(client);
+        const exchangeLabel = formatExchangeLabel(
+          resolveAccountExchange(bootstrap?.status),
+          locale,
+        );
+        if (!opts?.rethrow) {
+          pushToast({
+            tone: 'success',
+            title: t('toast.syncSuccessTitle', { exchange: exchangeLabel }),
+            description: res?.account
+              ? t('toast.syncSuccessDesc', {
+                  balance: res.account.wallet_balance_usd.toFixed(2),
+                  trades: res.synced_trades,
+                  fills: res.synced_fills,
+                })
+              : undefined,
+          });
+        }
         return res;
       } catch (err) {
         if (opts?.rethrow) {
           throw err;
         }
-        setConnError(
-          err instanceof Error ? err.message : t('app.err.syncFailed'),
-        );
+        const message = err instanceof Error ? err.message : t('app.err.syncFailed');
+        setConnError(message);
+        pushToast({
+          tone: 'error',
+          title: t('toast.syncFailedTitle'),
+          description: message,
+        });
         return undefined;
       } finally {
         setSyncingAccount(false);
       }
     },
-    [client, refreshBootstrap, syncingAccount, t],
+    [bootstrap?.status, client, locale, pushToast, refreshBootstrap, syncingAccount, t],
   );
 
   useEffect(() => {
@@ -431,33 +503,91 @@ export function App() {
     };
   }, [handleSyncAccount, selectTradeableSymbol]);
 
-  const modalStateRef = useRef({ paletteOpen: false, settingsOpen: false });
-  modalStateRef.current = { paletteOpen, settingsOpen };
+  const modalStateRef = useRef({
+    paletteOpen: false,
+    settingsOpen: false,
+    shortcutsOpen: false,
+  });
+  modalStateRef.current = { paletteOpen, settingsOpen, shortcutsOpen };
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      const m = modalStateRef.current;
+      const anyModalOpen = m.paletteOpen || m.settingsOpen || m.shortcutsOpen;
+
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
+        e.stopImmediatePropagation();
+        setSettingsOpen(false);
+        setShortcutsOpen(false);
         setPaletteOpen((prev) => !prev);
-      } else if (e.key === 'Escape') {
-        if (modalStateRef.current.paletteOpen) {
-          e.preventDefault();
-          setPaletteOpen(false);
-        } else if (modalStateRef.current.settingsOpen) {
-          e.preventDefault();
-          setSettingsOpen(false);
+        return;
+      }
+
+      if (e.key === 'Escape' && anyModalOpen) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        if (m.paletteOpen) setPaletteOpen(false);
+        else if (m.settingsOpen) setSettingsOpen(false);
+        else if (m.shortcutsOpen) setShortcutsOpen(false);
+        return;
+      }
+
+      if (e.key === '?' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        if (isEditableElement(e.target) || m.paletteOpen || m.settingsOpen) {
+          return;
+        }
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        setShortcutsOpen((prev) => !prev);
+        return;
+      }
+
+      // When any top-level modal is open, block background global workspace hotkeys
+      if (anyModalOpen && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        const key = e.key;
+        if (
+          key === ' ' ||
+          key === 'ArrowLeft' ||
+          key === 'ArrowRight' ||
+          key === 'Delete' ||
+          key === 'Backspace' ||
+          (key >= '1' && key <= '5') ||
+          ['s', 'j', 'k', 'a', 'n'].includes(key.toLowerCase())
+        ) {
+          const target = e.target;
+          if (!isEditableElement(target)) {
+            // Allow Enter/Tab/Arrows inside modal buttons/lists; block workspace-only hotkeys
+            if (key !== 'ArrowLeft' && key !== 'ArrowRight' && key !== ' ') {
+              e.stopImmediatePropagation();
+            } else if (!(target instanceof HTMLButtonElement)) {
+              e.stopImmediatePropagation();
+            }
+          }
         }
       }
     };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
+    window.addEventListener('keydown', onKeyDown, { capture: true });
+    return () => window.removeEventListener('keydown', onKeyDown, { capture: true });
   }, []);
 
   const handleOpenInReview = useCallback(
-    (symbol: string, cursorTs?: number, ticketId?: string) => {
+    (
+      symbol: string,
+      cursorTs?: number,
+      ticketId?: string,
+      subjectKind?: ReviewSubjectType,
+      subjectId?: string,
+    ) => {
       const clean = sanitizeSymbol(symbol);
       setActiveSymbol(clean);
-      setReviewTarget({ symbol: clean, cursorTs, ticketId });
+      setReviewTarget({
+        symbol: clean,
+        cursorTs,
+        ticketId,
+        subjectKind,
+        subjectId,
+      });
       setActiveView('review');
     },
     [],
@@ -475,9 +605,13 @@ export function App() {
         syncRes = await client.syncAccount();
       }
       await refreshBootstrap(client);
+      pushToast({
+        tone: 'success',
+        title: t('toast.settingsSaved'),
+      });
       return syncRes;
     },
-    [client, refreshBootstrap],
+    [client, pushToast, refreshBootstrap, t],
   );
 
   const handleToggleTheme = useCallback(() => {
@@ -489,6 +623,8 @@ export function App() {
   }, []);
 
   const handleOpenPalette = useCallback(() => {
+    setSettingsOpen(false);
+    setShortcutsOpen(false);
     setPaletteOpen(true);
   }, []);
 
@@ -497,11 +633,23 @@ export function App() {
   }, []);
 
   const handleOpenSettings = useCallback(() => {
+    setPaletteOpen(false);
+    setShortcutsOpen(false);
     setSettingsOpen(true);
   }, []);
 
   const handleCloseSettings = useCallback(() => {
     setSettingsOpen(false);
+  }, []);
+
+  const handleOpenShortcuts = useCallback(() => {
+    setPaletteOpen(false);
+    setSettingsOpen(false);
+    setShortcutsOpen(true);
+  }, []);
+
+  const handleCloseShortcuts = useCallback(() => {
+    setShortcutsOpen(false);
   }, []);
 
   const handleToggleChime = useCallback(() => {
@@ -537,17 +685,7 @@ export function App() {
   };
 
   if (loading && !bootstrap) {
-    return (
-      <div
-        className="flex h-full w-full items-center justify-center"
-        style={{ backgroundColor: 'var(--bg-canvas)', color: 'var(--text-secondary)' }}
-      >
-        <div className="flex items-center gap-2.5 text-[13px]">
-          <RefreshCw className="h-4 w-4 animate-spin" style={{ color: 'var(--accent-brand)' }} />
-          <span>{t('app.loading')}</span>
-        </div>
-      </div>
-    );
+    return <AppShellSkeleton label={t('app.loading')} />;
   }
 
   if (!client || !bootstrap) {
@@ -556,20 +694,17 @@ export function App() {
         className="flex h-full w-full items-center justify-center p-6"
         style={{ backgroundColor: 'var(--bg-canvas)' }}
       >
-        <div
-          className="w-full max-w-[440px] rounded-[8px] border p-5"
-          style={{
-            backgroundColor: 'var(--bg-surface)',
-            borderColor: 'var(--border-strong)',
-          }}
-        >
+        <div className="kairos-floating kairos-animate-modal w-full max-w-[440px] rounded-[10px] p-5">
           <div className="mb-3 flex items-center gap-2">
             <AlertTriangle className="h-4 w-4" style={{ color: 'var(--state-warn)' }} />
             <h1 className="font-editorial text-[18px] font-medium">
               {t('app.daemonUnavailable')}
             </h1>
           </div>
-          <p className="mb-4 text-[12px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+          <p
+            className="mb-4 text-[12px] leading-relaxed"
+            style={{ color: 'var(--text-secondary)' }}
+          >
             {connError || t('app.daemonUnavailableDesc')}
           </p>
           <form onSubmit={(e) => void handleManualConnect(e)} className="space-y-2.5">
@@ -578,7 +713,7 @@ export function App() {
               value={manualApiUrl}
               onChange={(e) => setManualApiUrl(e.target.value)}
               placeholder={t('app.daemonUrlPlaceholder')}
-              className="tabular-nums w-full rounded-[6px] border px-2.5 py-1.5 text-[12px] outline-none"
+              className="tabular-nums w-full rounded-[6px] border px-2.5 py-1.5 text-[12px] outline-none transition-colors focus:border-[var(--accent-brand)]"
               style={{
                 backgroundColor: 'var(--bg-canvas)',
                 borderColor: 'var(--border-hairline)',
@@ -590,7 +725,7 @@ export function App() {
               value={manualToken}
               onChange={(e) => setManualToken(e.target.value)}
               placeholder={t('app.tokenPlaceholder')}
-              className="tabular-nums w-full rounded-[6px] border px-2.5 py-1.5 text-[12px] outline-none"
+              className="tabular-nums w-full rounded-[6px] border px-2.5 py-1.5 text-[12px] outline-none transition-colors focus:border-[var(--accent-brand)]"
               style={{
                 backgroundColor: 'var(--bg-canvas)',
                 borderColor: 'var(--border-hairline)',
@@ -600,8 +735,8 @@ export function App() {
             <div className="flex justify-end gap-2 pt-1">
               <button
                 type="submit"
-                className="rounded-[6px] px-3 py-1.5 text-[12px] font-medium"
-                style={{ backgroundColor: 'var(--accent-brand)', color: '#FAF9F5' }}
+                className="kairos-press rounded-[6px] px-3 py-1.5 text-[12px] font-medium hover:brightness-105"
+                style={{ backgroundColor: 'var(--accent-brand-solid)', color: '#FAF9F5' }}
               >
                 {t('app.connectRetry')}
               </button>
@@ -612,94 +747,122 @@ export function App() {
     );
   }
 
+  const anyModalOpen = paletteOpen || settingsOpen || shortcutsOpen;
+
   return (
     <div
       className="flex h-full w-full flex-col overflow-hidden"
       style={{ backgroundColor: 'var(--bg-canvas)', color: 'var(--text-primary)' }}
     >
-      <TopStatusBar
-        activeView={activeView}
-        onChangeView={setActiveView}
-        status={bootstrap.status}
-        activeSymbol={activeSymbol}
-        wsConnected={wsConnected}
-        theme={theme}
-        onToggleTheme={handleToggleTheme}
-        onOpenCommandPalette={handleOpenPalette}
-        onOpenSettings={handleOpenSettings}
-        onSelectSymbol={selectTradeableSymbol}
-      />
+      <div
+        inert={anyModalOpen ? true : undefined}
+        className="flex min-h-0 flex-1 flex-col overflow-hidden"
+      >
+        <TopStatusBar
+          activeView={activeView}
+          onChangeView={setActiveView}
+          status={bootstrap.status}
+          activeSymbol={activeSymbol}
+          wsConnected={wsConnected}
+          theme={theme}
+          onToggleTheme={handleToggleTheme}
+          onOpenCommandPalette={handleOpenPalette}
+          onOpenSettings={handleOpenSettings}
+          onOpenShortcuts={handleOpenShortcuts}
+          onSelectSymbol={selectTradeableSymbol}
+        />
 
-      {connError && (
-        <div
-          className="flex shrink-0 items-center justify-between border-b px-3 py-1 text-[11px]"
-          style={{
-            backgroundColor: 'var(--state-warn-soft)',
-            borderColor: 'var(--border-hairline)',
-            color: 'var(--state-warn)',
-          }}
-        >
-          <span>{t('app.daemonWarning', { message: connError })}</span>
-          <button
-            type="button"
-            onClick={() => void refreshBootstrap()}
-            className="underline"
+        {connError ? (
+          <div
+            className="kairos-animate-view flex shrink-0 items-center justify-between border-b px-3 py-1.5 text-[11px]"
+            style={{
+              backgroundColor: 'var(--state-warn-soft)',
+              borderColor: 'var(--border-hairline)',
+              color: 'var(--state-warn)',
+            }}
           >
-            {t('app.retry')}
-          </button>
-        </div>
-      )}
+            <span>{t('app.daemonWarning', { message: connError })}</span>
+            <button
+              type="button"
+              onClick={() => void refreshBootstrap()}
+              className="kairos-press font-medium underline"
+            >
+              {t('app.retry')}
+            </button>
+          </div>
+        ) : null}
 
-      <main className="min-h-0 flex-1 overflow-hidden">
-        {activeView === 'watch' && (
-          <WatchWorkspace
-            client={client}
-            bootstrap={bootstrap}
-            activeSymbol={activeSymbol}
-            onSelectSymbol={selectTradeableSymbol}
-            splitMode={splitMode}
-            onToggleSplit={handleToggleSplit}
-            activeTf={activeTf}
-            onSelectTf={setActiveTf}
-          />
-        )}
+        <main className="min-h-0 flex-1 overflow-hidden">
+          {activeView === 'watch' ? (
+            <div key="view-watch" className="kairos-animate-view h-full w-full">
+              <WatchWorkspace
+                client={client}
+                bootstrap={bootstrap}
+                activeSymbol={activeSymbol}
+                onSelectSymbol={selectTradeableSymbol}
+                splitMode={splitMode}
+                onToggleSplit={handleToggleSplit}
+                activeTf={activeTf}
+                onSelectTf={setActiveTf}
+              />
+            </div>
+          ) : null}
 
-        {activeView === 'review' && (
-          <Suspense
-            fallback={
-              <div className="flex h-full w-full items-center justify-center text-xs" style={{ color: 'var(--text-secondary)' }}>
-                <RefreshCw className="mr-2 h-4 w-4 animate-spin" style={{ color: 'var(--accent-brand)' }} />
-              </div>
-            }
-          >
-            <ReviewWorkspace
-              client={client}
-              bootstrap={bootstrap}
-              initialSymbol={reviewTarget.symbol || activeSymbol}
-              initialCursorTs={reviewTarget.cursorTs}
-              initialTicketId={reviewTarget.ticketId}
-              onSelectSymbol={selectTradeableSymbol}
-              onRefreshBootstrap={() => refreshBootstrap()}
-            />
-          </Suspense>
-        )}
+          {activeView === 'review' ? (
+            <div key="view-review" className="kairos-animate-view h-full w-full">
+              <Suspense
+                fallback={
+                  <div
+                    className="flex h-full w-full items-center justify-center text-xs"
+                    style={{ color: 'var(--text-secondary)' }}
+                  >
+                    <RefreshCw
+                      className="mr-2 h-4 w-4 animate-spin"
+                      style={{ color: 'var(--accent-brand)' }}
+                    />
+                  </div>
+                }
+              >
+                <ReviewWorkspace
+                  client={client}
+                  bootstrap={bootstrap}
+                  initialSymbol={reviewTarget.symbol || activeSymbol}
+                  initialCursorTs={reviewTarget.cursorTs}
+                  initialTicketId={reviewTarget.ticketId}
+                  initialSubjectKind={reviewTarget.subjectKind}
+                  initialSubjectId={reviewTarget.subjectId}
+                  onSelectSymbol={selectTradeableSymbol}
+                  onRefreshBootstrap={() => refreshBootstrap()}
+                />
+              </Suspense>
+            </div>
+          ) : null}
 
-        {activeView === 'stats' && (
-          <Suspense
-            fallback={
-              <div className="flex h-full w-full items-center justify-center text-xs" style={{ color: 'var(--text-secondary)' }}>
-                <RefreshCw className="mr-2 h-4 w-4 animate-spin" style={{ color: 'var(--accent-brand)' }} />
-              </div>
-            }
-          >
-            <StatsWorkspace
-              client={client}
-              bootstrap={bootstrap}
-              onDrillDownReview={handleOpenInReview}
-            />
-          </Suspense>
-        )}
-      </main>
+          {activeView === 'stats' ? (
+            <div key="view-stats" className="kairos-animate-view h-full w-full">
+              <Suspense
+                fallback={
+                  <div
+                    className="flex h-full w-full items-center justify-center text-xs"
+                    style={{ color: 'var(--text-secondary)' }}
+                  >
+                    <RefreshCw
+                      className="mr-2 h-4 w-4 animate-spin"
+                      style={{ color: 'var(--accent-brand)' }}
+                    />
+                  </div>
+                }
+              >
+                <StatsWorkspace
+                  client={client}
+                  bootstrap={bootstrap}
+                  onDrillDownReview={handleOpenInReview}
+                />
+              </Suspense>
+            </div>
+          ) : null}
+        </main>
+      </div>
 
       {paletteOpen ? (
         <Suspense fallback={null}>
@@ -715,6 +878,7 @@ export function App() {
             onToggleTheme={handleToggleTheme}
             onSyncAccount={handleTriggerSync}
             onOpenSettings={handleOpenSettings}
+            onOpenShortcuts={handleOpenShortcuts}
           />
         </Suspense>
       ) : null}
@@ -731,6 +895,12 @@ export function App() {
             onSyncAccount={handleSyncAccount}
             onSaveSettings={handleSaveSettings}
           />
+        </Suspense>
+      ) : null}
+
+      {shortcutsOpen ? (
+        <Suspense fallback={null}>
+          <ShortcutsModal open={shortcutsOpen} onClose={handleCloseShortcuts} />
         </Suspense>
       ) : null}
     </div>

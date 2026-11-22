@@ -30,6 +30,8 @@ export const watchZh = {
   'watch.split.tooltip': '双图同步联排 (快捷键 s)',
   'watch.split.primaryBadge': '主图',
   'watch.split.compareBadge': '对照',
+  'watch.split.resizeAria': '拖拽调整双图高度比例，双击恢复等分',
+  'watch.split.resizeTitle': '上下拖拽调节分屏比例 · 双击重置 50/50',
 
   'watch.queue.toggleLabel': '异动',
   'watch.queue.toggleTooltip': '展开/收起异动队列',
@@ -86,6 +88,8 @@ export const watchEn: Record<keyof typeof watchZh, string> = {
   'watch.split.tooltip': 'Synced Split View (Shortcut: s)',
   'watch.split.primaryBadge': 'Primary',
   'watch.split.compareBadge': 'Compare',
+  'watch.split.resizeAria': 'Drag to resize split chart ratio, double-click to reset 50/50',
+  'watch.split.resizeTitle': 'Drag to adjust split ratio · Double-click to reset 50/50',
 
   'watch.queue.toggleLabel': 'Alerts',
   'watch.queue.toggleTooltip': 'Toggle Anomaly Queue',

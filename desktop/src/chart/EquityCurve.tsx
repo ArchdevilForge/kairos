@@ -10,6 +10,7 @@ import {
   type TickMarkType,
   type Time,
 } from 'lightweight-charts';
+import { SegmentedControl, type SegmentedOption } from '../components/SegmentedControl';
 import { useI18n, type Locale, type TranslateFn } from '../i18n';
 import type { EquityPoint } from '../types/kairos';
 import { type AnthropicChartTheme, readChartTheme, withAlpha } from '../utils/chartTheme';
@@ -318,15 +319,17 @@ export default function EquityCurve({
     updateReadout(pt);
   }, [sortedPoints, updateReadout]);
 
+  const modeOptions = useMemo<ReadonlyArray<SegmentedOption<'equity' | 'drawdown'>>>(
+    () => [
+      { value: 'equity', label: t('equity.modeEquity'), activeColor: 'var(--accent-brand)' },
+      { value: 'drawdown', label: t('equity.modeDrawdown'), activeColor: 'var(--candle-bear)' },
+    ],
+    [t],
+  );
+
   if (!hasEnoughPoints) {
     return (
-      <div
-        className="rounded border p-4"
-        style={{
-          backgroundColor: 'var(--bg-surface)',
-          borderColor: 'var(--border-hairline)',
-        }}
-      >
+      <div className="kairos-card rounded-[8px] p-4">
         <div className="mb-2 flex h-[28px] shrink-0 items-center justify-between gap-3 overflow-hidden whitespace-nowrap">
           <h2 className="shrink-0 font-editorial text-base font-medium" style={{ color: 'var(--text-primary)' }}>
             {t('equity.title')}
@@ -338,7 +341,7 @@ export default function EquityCurve({
           ) : null}
         </div>
         <div
-          className="flex items-center justify-center rounded border px-4 py-10 text-xs"
+          className="flex items-center justify-center rounded-[6px] border px-4 py-10 text-xs"
           style={{
             height,
             backgroundColor: 'var(--bg-canvas)',
@@ -353,19 +356,13 @@ export default function EquityCurve({
   }
 
   return (
-    <div
-      className="flex flex-col rounded border p-4"
-      style={{
-        backgroundColor: 'var(--bg-surface)',
-        borderColor: 'var(--border-hairline)',
-      }}
-    >
-      <div className="mb-1.5 flex h-[28px] shrink-0 items-center justify-between gap-3 overflow-hidden whitespace-nowrap">
-        <div className="flex min-w-0 items-center gap-3">
+    <div className="kairos-card flex flex-col rounded-[8px] p-4">
+      <div className="mb-1.5 flex min-h-[28px] shrink-0 flex-wrap items-center justify-between gap-2 sm:flex-nowrap sm:gap-3">
+        <div className="flex min-w-0 items-center gap-3 overflow-hidden">
           <h2 className="shrink-0 font-editorial text-base font-medium" style={{ color: 'var(--text-primary)' }}>
             {t('equity.title')}
           </h2>
-          <span className="flex shrink-0 items-center gap-1.5 text-[11px]" style={{ color: 'var(--candle-bull)' }}>
+          <span className="flex shrink-0 items-center gap-1.5 text-[11px]" style={{ color: 'var(--pnl-pos)' }}>
             <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: 'var(--candle-bull)' }} />
             {t('equity.legendBankroll')}
           </span>
@@ -374,51 +371,27 @@ export default function EquityCurve({
             {t('equity.legendWallet')}
           </span>
           {walletSummary ? (
-            <span className="truncate font-mono text-[11px] tabular-nums" style={{ color: 'var(--text-secondary)' }}>
+            <span className="hidden truncate font-mono text-[11px] tabular-nums md:inline" style={{ color: 'var(--text-secondary)' }}>
               {walletSummary}
             </span>
           ) : null}
         </div>
 
-        <div
-          className="flex shrink-0 rounded border p-0.5 text-[11px]"
-          style={{
-            backgroundColor: 'var(--bg-canvas)',
-            borderColor: 'var(--border-hairline)',
-          }}
-        >
-          <button
-            type="button"
-            onClick={() => setMode('equity')}
-            className="rounded px-2 py-0.5 transition-colors"
-            style={{
-              backgroundColor: mode === 'equity' ? 'var(--bg-elevated)' : 'transparent',
-              color: mode === 'equity' ? 'var(--accent-brand)' : 'var(--text-secondary)',
-            }}
-          >
-            {t('equity.modeEquity')}
-          </button>
-          <button
-            type="button"
-            onClick={() => setMode('drawdown')}
-            className="rounded px-2 py-0.5 transition-colors"
-            style={{
-              backgroundColor: mode === 'drawdown' ? 'var(--bg-elevated)' : 'transparent',
-              color: mode === 'drawdown' ? 'var(--candle-bear)' : 'var(--text-secondary)',
-            }}
-          >
-            {t('equity.modeDrawdown')}
-          </button>
-        </div>
+        <SegmentedControl<'equity' | 'drawdown'>
+          options={modeOptions}
+          value={mode}
+          onChange={setMode}
+          size="xs"
+        />
       </div>
 
-      <div className="mb-2 flex h-[20px] shrink-0 items-center gap-3 overflow-hidden whitespace-nowrap font-mono text-[11px] tabular-nums">
-        <span ref={timeSlotRef} className="w-[116px] shrink-0" style={{ color: 'var(--text-muted)' }} />
-        <span ref={bankrollSlotRef} className="min-w-[126px] shrink-0" style={{ color: 'var(--text-primary)' }} />
-        <span ref={walletSlotRef} className="min-w-[124px] shrink-0" style={{ color: 'var(--text-muted)' }} />
-        <span ref={pnlSlotRef} className="min-w-[118px] shrink-0" style={{ color: 'var(--text-secondary)' }} />
-        <span ref={cumRSlotRef} className="min-w-[104px] shrink-0" style={{ color: 'var(--text-secondary)' }} />
-        <span ref={ddSlotRef} className="min-w-[104px] shrink-0" style={{ color: 'var(--pnl-neg)' }} />
+      <div className="mb-2 flex min-h-[20px] shrink-0 flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[11px] tabular-nums">
+        <span ref={timeSlotRef} className="min-w-[104px] shrink-0" style={{ color: 'var(--text-muted)' }} />
+        <span ref={bankrollSlotRef} className="min-w-[110px] shrink-0" style={{ color: 'var(--text-primary)' }} />
+        <span ref={walletSlotRef} className="min-w-[110px] shrink-0" style={{ color: 'var(--text-muted)' }} />
+        <span ref={pnlSlotRef} className="min-w-[104px] shrink-0" style={{ color: 'var(--text-secondary)' }} />
+        <span ref={cumRSlotRef} className="min-w-[92px] shrink-0" style={{ color: 'var(--text-secondary)' }} />
+        <span ref={ddSlotRef} className="min-w-[92px] shrink-0" style={{ color: 'var(--pnl-neg)' }} />
       </div>
 
       <div ref={containerRef} style={{ height }} className="w-full" />

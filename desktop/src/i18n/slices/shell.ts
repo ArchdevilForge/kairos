@@ -41,6 +41,56 @@ export const shellZh = {
   'top.themeAria': '切换主题',
   'top.settingsTitle': '风险预算与 {exchange} 只读账户设置',
   'top.settingsAria': '打开设置',
+  'top.wsConnectedTitle': '实时行情流已连接',
+  'top.wsDisconnectedTitle': '实时行情流重连中…',
+  'top.shortcutsTitle': '键盘快捷键 (?)',
+  'top.shortcutsAria': '查看键盘快捷键',
+
+  // Toast notifications
+  'toast.wsReconnected': '实时行情流已恢复连接',
+  'toast.wsDisconnected': '实时行情流已断开，正在重连…',
+  'toast.syncSuccessTitle': '{exchange} 只读账户同步完成',
+  'toast.syncSuccessDesc': '余额 ${balance} · 归集 {trades} 笔交易 / {fills} 笔成交',
+  'toast.syncFailedTitle': '账户同步失败',
+  'toast.settingsSaved': '配置已保存并实时生效',
+  'toast.drawingsCleared': '已清空当前标的画线',
+
+  // ShortcutsModal
+  'shortcuts.title': '键盘快捷键',
+  'shortcuts.subtitle': '高频操作零延迟响应 · 随时按 ? 唤出',
+  'shortcuts.closeAria': '关闭快捷键说明',
+  'shortcuts.group.global': '全局导航',
+  'shortcuts.group.watch': '看盘工作区',
+  'shortcuts.group.chart': '图表与画线',
+  'shortcuts.group.review': '复盘回放',
+  'shortcuts.item.palette': '打开指令与币种切换',
+  'shortcuts.item.help': '显示 / 隐藏快捷键',
+  'shortcuts.item.escape': '取消画线 / 关闭浮层',
+  'shortcuts.item.timeframes': '切换 1m · 5m · 15m · 1h · 4h',
+  'shortcuts.item.split': '切换单图 / 双图分屏',
+  'shortcuts.item.queueNav': '抽屉内上下切换异动项',
+  'shortcuts.item.quickRuler': '按住 Shift 拖拽快捷测距',
+  'shortcuts.item.magnetInvert': '临时反转 OHLC 磁吸状态',
+  'shortcuts.item.deleteDrawing': '删除已选中的画线',
+  'shortcuts.item.playPause': '播放 / 暂停复盘回放',
+  'shortcuts.item.stepCursor': '回放游标单步前进 / 后退',
+  'shortcuts.item.jumpAnomaly': '跳至上一条 / 下一条异动',
+
+  // CommandPalette footer & extras
+  'palette.action.shortcutsLabel': '查看键盘快捷键 (?)',
+  'palette.action.shortcutsHint': '看盘、画线与复盘热键速查',
+  'palette.footer.navigate': '选择',
+  'palette.footer.confirm': '执行',
+  'palette.footer.close': '关闭',
+
+  // SettingsModal sections & toggles
+  'settings.section.risk': '风控本金边界',
+  'settings.section.preferences': '界面与提示偏好',
+  'settings.section.network': '网络与代理',
+  'settings.chimeOn': '已开启',
+  'settings.chimeOff': '已静音',
+  'settings.showSecretAria': '显示密钥',
+  'settings.hideSecretAria': '隐藏密钥',
 
   // SettingsModal
   'settings.title': '风险预算与只读账户设置',
@@ -166,6 +216,56 @@ export const shellEn: Record<keyof typeof shellZh, string> = {
   'top.themeAria': 'Toggle theme',
   'top.settingsTitle': 'Risk budget & {exchange} read-only account settings',
   'top.settingsAria': 'Open settings',
+  'top.wsConnectedTitle': 'Realtime feed connected',
+  'top.wsDisconnectedTitle': 'Realtime feed reconnecting…',
+  'top.shortcutsTitle': 'Keyboard shortcuts (?)',
+  'top.shortcutsAria': 'Open keyboard shortcuts',
+
+  // Toast notifications
+  'toast.wsReconnected': 'Realtime feed reconnected',
+  'toast.wsDisconnected': 'Realtime feed disconnected, reconnecting…',
+  'toast.syncSuccessTitle': '{exchange} read-only sync complete',
+  'toast.syncSuccessDesc': 'Balance ${balance} · {trades} trades / {fills} fills',
+  'toast.syncFailedTitle': 'Account sync failed',
+  'toast.settingsSaved': 'Settings saved and applied',
+  'toast.drawingsCleared': 'Cleared drawings for current symbol',
+
+  // ShortcutsModal
+  'shortcuts.title': 'Keyboard Shortcuts',
+  'shortcuts.subtitle': 'Zero-latency keyboard navigation · Press ? anytime',
+  'shortcuts.closeAria': 'Close keyboard shortcuts',
+  'shortcuts.group.global': 'Global',
+  'shortcuts.group.watch': 'Watch Workspace',
+  'shortcuts.group.chart': 'Chart & Drawings',
+  'shortcuts.group.review': 'Review Replay',
+  'shortcuts.item.palette': 'Command palette & symbol search',
+  'shortcuts.item.help': 'Toggle shortcuts reference',
+  'shortcuts.item.escape': 'Cancel drawing / close overlay',
+  'shortcuts.item.timeframes': 'Switch 1m · 5m · 15m · 1h · 4h',
+  'shortcuts.item.split': 'Toggle single / split chart',
+  'shortcuts.item.queueNav': 'Navigate anomaly queue items',
+  'shortcuts.item.quickRuler': 'Hold Shift + drag quick ruler',
+  'shortcuts.item.magnetInvert': 'Invert OHLC magnet snap temporarily',
+  'shortcuts.item.deleteDrawing': 'Delete selected drawing',
+  'shortcuts.item.playPause': 'Play / pause bar replay',
+  'shortcuts.item.stepCursor': 'Step replay cursor back / forward',
+  'shortcuts.item.jumpAnomaly': 'Jump to previous / next anomaly',
+
+  // CommandPalette footer & extras
+  'palette.action.shortcutsLabel': 'Keyboard Shortcuts (?)',
+  'palette.action.shortcutsHint': 'Watch, chart drawing & replay hotkeys',
+  'palette.footer.navigate': 'Navigate',
+  'palette.footer.confirm': 'Select',
+  'palette.footer.close': 'Close',
+
+  // SettingsModal sections & toggles
+  'settings.section.risk': 'Risk Budget Bounds',
+  'settings.section.preferences': 'Interface & Audio',
+  'settings.section.network': 'Network Proxy',
+  'settings.chimeOn': 'Enabled',
+  'settings.chimeOff': 'Muted',
+  'settings.showSecretAria': 'Show secret',
+  'settings.hideSecretAria': 'Hide secret',
 
   // SettingsModal
   'settings.title': 'Risk Budget & Read-Only Account Settings',

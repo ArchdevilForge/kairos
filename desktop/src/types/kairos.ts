@@ -802,6 +802,8 @@ export interface ReviewWorkspaceProps {
   initialSymbol: string;
   initialCursorTs?: number;
   initialTicketId?: string;
+  initialSubjectKind?: ReviewSubjectType;
+  initialSubjectId?: string;
   onSelectSymbol: (sym: string) => void;
   onRefreshBootstrap: () => Promise<void>;
 }
@@ -809,7 +811,13 @@ export interface ReviewWorkspaceProps {
 export interface StatsWorkspaceProps {
   client: DeskClient;
   bootstrap: BootstrapPayload;
-  onDrillDownReview: (symbol: string, cursorTs?: number, ticketId?: string) => void;
+  onDrillDownReview: (
+    symbol: string,
+    cursorTs?: number,
+    ticketId?: string,
+    subjectKind?: ReviewSubjectType,
+    subjectId?: string,
+  ) => void;
 }
 
 export interface KairosDesktopBridge {

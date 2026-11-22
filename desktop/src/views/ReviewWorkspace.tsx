@@ -13,6 +13,7 @@ import KairosChart, {
   type ChartPriceLineSpec,
   type ChartTradeSegmentInput,
 } from '../chart/KairosChart';
+import { SegmentedControl, type SegmentedOption } from '../components/SegmentedControl';
 import {
   type Bar,
   type BootstrapPayload,
@@ -40,6 +41,8 @@ import {
 } from '../utils/format';
 
 type SelectorTab = 'all' | 'executed' | 'skipped';
+
+const REVIEW_TIMEFRAMES: readonly Timeframe[] = ['1m', '5m', '15m', '1h', '4h'];
 
 type SelectedSubject =
   | { kind: 'ticket'; id: string; bundle: TicketBundle }
@@ -119,8 +122,23 @@ function resolveInitialReviewTarget(
   bootstrap: BootstrapPayload,
   initialSymbol?: string,
   initialTicketId?: string,
+  initialSubjectKind?: 'ticket' | 'trade' | 'position',
+  initialSubjectId?: string,
 ): { symbol: string; selectedKey: string; anchorSec: number | null } {
   const subjects = buildReviewSubjects(bootstrap);
+  if (initialSubjectKind && initialSubjectId) {
+    const exact = subjects.find(
+      (s) => s.kind === initialSubjectKind && s.id === initialSubjectId,
+    );
+    if (exact) {
+      const bounds = subjectTimeBounds(exact);
+      return {
+        symbol: subjectSymbol(exact),
+        selectedKey: `${exact.kind}:${exact.id}`,
+        anchorSec: bounds.entrySec > 0 ? bounds.entrySec : null,
+      };
+    }
+  }
   if (initialTicketId) {
     const match = subjects.find((s) => s.kind === 'ticket' && s.id === initialTicketId);
     if (match) {
@@ -165,14 +183,41 @@ export function ReviewWorkspace({
   initialSymbol,
   initialCursorTs,
   initialTicketId,
+  initialSubjectKind,
+  initialSubjectId,
   onSelectSymbol,
 }: ReviewWorkspaceProps) {
   const { t } = useI18n();
   const [selectorOpen, setSelectorOpen] = useState(false);
   const [selectorTab, setSelectorTab] = useState<SelectorTab>('all');
+  const selectorToggleBtnRef = useRef<HTMLButtonElement | null>(null);
+  const selectorCloseBtnRef = useRef<HTMLButtonElement | null>(null);
+  const selectorDrawerRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (selectorOpen) {
+      const timer = window.setTimeout(() => selectorCloseBtnRef.current?.focus(), 10);
+      return () => window.clearTimeout(timer);
+    }
+    if (
+      selectorDrawerRef.current &&
+      document.activeElement &&
+      selectorDrawerRef.current.contains(document.activeElement)
+    ) {
+      selectorToggleBtnRef.current?.focus();
+    }
+    return undefined;
+  }, [selectorOpen]);
 
   const initialResolved = useMemo(
-    () => resolveInitialReviewTarget(bootstrap, initialSymbol, initialTicketId),
+    () =>
+      resolveInitialReviewTarget(
+        bootstrap,
+        initialSymbol,
+        initialTicketId,
+        initialSubjectKind,
+        initialSubjectId,
+      ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   );
@@ -282,9 +327,26 @@ export function ReviewWorkspace({
 
   const prevDrilldownRef = useRef<string>('');
   useEffect(() => {
-    const sig = `${initialTicketId ?? ''}|${initialCursorTs ?? ''}`;
+    const sig = `${initialSubjectKind ?? ''}|${initialSubjectId ?? ''}|${initialTicketId ?? ''}|${initialCursorTs ?? ''}|${initialSymbol ?? ''}`;
     if (sig === prevDrilldownRef.current) return;
     prevDrilldownRef.current = sig;
+
+    if (initialSubjectKind && initialSubjectId) {
+      const exact = allSubjects.find(
+        (s) => s.kind === initialSubjectKind && s.id === initialSubjectId,
+      );
+      setSelectedKey(`${initialSubjectKind}:${initialSubjectId}`);
+      if (exact) {
+        setSymbol(subjectSymbol(exact));
+        const bounds = subjectTimeBounds(exact);
+        const anchor =
+          initialCursorTs && Number.isFinite(initialCursorTs) && initialCursorTs > 0
+            ? initialCursorTs
+            : bounds.entrySec;
+        if (anchor > 0) setCursorTs(anchor);
+        return;
+      }
+    }
 
     if (initialTicketId) {
       setSelectedKey(`ticket:${initialTicketId}`);
@@ -292,19 +354,29 @@ export function ReviewWorkspace({
       if (match) {
         setSymbol(match.ticket.symbol);
         const anchor =
-          initialCursorTs ||
+          (initialCursorTs && Number.isFinite(initialCursorTs) && initialCursorTs > 0
+            ? initialCursorTs
+            : 0) ||
           match.ticket.entry_triggered_at ||
           match.ticket.signal_at ||
           match.ticket.created_at;
         if (anchor > 0) setCursorTs(anchor);
-      } else if (initialCursorTs && initialCursorTs > 0) {
+      } else if (initialCursorTs && Number.isFinite(initialCursorTs) && initialCursorTs > 0) {
         setCursorTs(initialCursorTs);
       }
-    } else if (initialCursorTs && initialCursorTs > 0) {
+    } else if (initialCursorTs && Number.isFinite(initialCursorTs) && initialCursorTs > 0) {
       if (initialSymbol) setSymbol(initialSymbol);
       setCursorTs(initialCursorTs);
     }
-  }, [initialSymbol, initialCursorTs, initialTicketId, bootstrap.tickets]);
+  }, [
+    initialSymbol,
+    initialCursorTs,
+    initialTicketId,
+    initialSubjectKind,
+    initialSubjectId,
+    bootstrap.tickets,
+    allSubjects,
+  ]);
 
   const anchorTimestampFor = useCallback((subj: SelectedSubject): number => {
     return subjectTimeBounds(subj).entrySec || Math.floor(Date.now() / 1000);
@@ -630,6 +702,7 @@ export function ReviewWorkspace({
       if (e.key === 'Escape') {
         if (replayKeyRef.current.selectorOpen) {
           e.preventDefault();
+          e.stopImmediatePropagation();
           setSelectorOpen(false);
           return;
         }
@@ -951,17 +1024,32 @@ export function ReviewWorkspace({
     return null;
   }, [selectedSubject, activeTrade, activeTicket, activePosition, t]);
 
+  const selectorTabOptions = useMemo<ReadonlyArray<SegmentedOption<SelectorTab>>>(
+    () => [
+      { value: 'all', label: t('review.selector.tabAll'), activeColor: 'var(--accent-brand)' },
+      { value: 'executed', label: t('review.selector.tabExecuted'), activeColor: 'var(--accent-brand)' },
+      {
+        value: 'skipped',
+        label: t('review.selector.tabSkipped'),
+        title: t('review.selector.tabSkippedHint'),
+        activeColor: 'var(--accent-brand)',
+      },
+    ],
+    [t],
+  );
+
   // Inline KISS controls inside KairosChart toolbar
   const reviewToolbarSlot = (
     <div className="flex shrink-0 items-center gap-1.5">
       <button
+        ref={selectorToggleBtnRef}
         type="button"
         onClick={() => setSelectorOpen((v) => !v)}
-        className="flex items-center gap-1 rounded border px-2 py-0.5 text-[11px] transition-colors"
+        className="kairos-btn flex items-center gap-1 rounded-[5px] border px-2 py-0.5 text-[11px] font-medium"
         style={{
-          backgroundColor: selectorOpen ? 'var(--bg-elevated)' : 'transparent',
+          backgroundColor: selectorOpen ? 'var(--accent-brand-soft)' : 'transparent',
           borderColor: selectorOpen ? 'var(--accent-brand)' : 'var(--border-hairline)',
-          color: selectorOpen ? 'var(--accent-brand)' : 'var(--text-primary)',
+          color: selectorOpen ? 'var(--accent-brand-text)' : 'var(--text-primary)',
         }}
       >
         <List className="h-3 w-3" />
@@ -976,7 +1064,7 @@ export function ReviewWorkspace({
             type="button"
             title={t('review.toolbar.prevRecord')}
             onClick={() => stepSubject(-1)}
-            className="rounded p-0.5 hover:opacity-80"
+            className="kairos-btn rounded border border-transparent p-0.5"
             style={{ color: 'var(--text-secondary)' }}
           >
             <ChevronLeft className="h-3.5 w-3.5" />
@@ -985,7 +1073,7 @@ export function ReviewWorkspace({
             type="button"
             title={t('review.toolbar.nextRecord')}
             onClick={() => stepSubject(1)}
-            className="rounded p-0.5 hover:opacity-80"
+            className="kairos-btn rounded border border-transparent p-0.5"
             style={{ color: 'var(--text-secondary)' }}
           >
             <ChevronRight className="h-3.5 w-3.5" />
@@ -1018,237 +1106,263 @@ export function ReviewWorkspace({
       className="relative flex h-full min-h-0 w-full overflow-hidden"
       style={{ backgroundColor: 'var(--bg-canvas)' }}
     >
-      {/* Left Slide-Over Record Selector (Hidden by default) */}
-      {selectorOpen ? (
-        <>
-          <div
-            className="absolute inset-0 z-10 sm:hidden"
-            style={{ backgroundColor: 'var(--bg-overlay)' }}
+      {/* Left Slide-Over Record Selector (GPU slide transition) */}
+      <div
+        data-open={selectorOpen}
+        className="kairos-drawer-scrim kairos-glass-backdrop absolute inset-0 z-10 sm:hidden"
+        onClick={() => setSelectorOpen(false)}
+        aria-hidden="true"
+      />
+      <aside
+        ref={selectorDrawerRef}
+        data-open={selectorOpen}
+        aria-hidden={!selectorOpen}
+        inert={!selectorOpen ? true : undefined}
+        className="kairos-drawer-left kairos-contain-panel absolute top-0 bottom-0 left-0 z-20 flex w-[min(86vw,288px)] flex-col border-r sm:w-[276px]"
+        style={{
+          backgroundColor: 'var(--bg-surface)',
+          borderColor: 'var(--border-strong)',
+          boxShadow: selectorOpen ? 'var(--shadow-floating)' : 'none',
+        }}
+      >
+        <div
+          className="flex items-center justify-between border-b px-3 py-2"
+          style={{ borderColor: 'var(--border-hairline)' }}
+        >
+          <span className="text-xs font-medium" style={{ color: 'var(--text-primary)' }}>
+            {t('review.selector.title')}
+          </span>
+          <button
+            ref={selectorCloseBtnRef}
+            type="button"
             onClick={() => setSelectorOpen(false)}
-            aria-hidden
+            className="kairos-btn rounded-[5px] border border-transparent p-1"
+            style={{ color: 'var(--text-muted)' }}
+            aria-label={t('review.selector.close')}
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+
+        <div
+          className="border-b p-2"
+          style={{ borderColor: 'var(--border-hairline)' }}
+        >
+          <SegmentedControl<SelectorTab>
+            options={selectorTabOptions}
+            value={selectorTab}
+            onChange={setSelectorTab}
+            size="xs"
+            fullWidth
           />
-          <aside
-            className="kairos-contain-panel absolute top-0 bottom-0 left-0 z-20 flex w-[min(86vw,280px)] flex-col border-r shadow-xl sm:w-[272px]"
-            style={{
-              backgroundColor: 'var(--bg-surface)',
-              borderColor: 'var(--border-strong)',
-            }}
-          >
-          <div
-            className="flex items-center justify-between border-b px-3 py-2"
-            style={{ borderColor: 'var(--border-hairline)' }}
-          >
-            <span className="text-xs font-medium" style={{ color: 'var(--text-primary)' }}>
-              {t('review.selector.title')}
-            </span>
-            <button
-              type="button"
-              onClick={() => setSelectorOpen(false)}
-              className="rounded p-1 hover:opacity-80"
+        </div>
+
+        <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto p-2">
+          {!selectorOpen ? null : filteredSubjects.length === 0 ? (
+            <div
+              className="px-3 py-10 text-center text-xs"
               style={{ color: 'var(--text-muted)' }}
-              aria-label={t('review.selector.close')}
             >
-              <X className="h-3.5 w-3.5" />
-            </button>
-          </div>
-
-          <div
-            className="grid grid-cols-3 gap-1 border-b p-1.5 text-[11px]"
-            style={{ borderColor: 'var(--border-hairline)' }}
-          >
-            {(
-              [
-                ['all', t('review.selector.tabAll'), undefined],
-                ['executed', t('review.selector.tabExecuted'), undefined],
-                ['skipped', t('review.selector.tabSkipped'), t('review.selector.tabSkippedHint')],
-              ] as const
-            ).map(([id, label, hint]) => (
-              <button
-                key={id}
-                type="button"
-                title={hint}
-                onClick={() => setSelectorTab(id)}
-                className="rounded py-1 font-medium"
-                style={{
-                  backgroundColor:
-                    selectorTab === id ? 'var(--bg-elevated)' : 'transparent',
-                  color:
-                    selectorTab === id ? 'var(--accent-brand)' : 'var(--text-secondary)',
-                }}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-
-          <div className="min-h-0 flex-1 space-y-1 overflow-y-auto p-1.5">
-            {filteredSubjects.length === 0 ? (
-              <div
-                className="px-3 py-10 text-center text-xs"
-                style={{ color: 'var(--text-muted)' }}
-              >
-                {t('review.selector.emptyFiltered')}
-              </div>
-            ) : (
-              filteredSubjects.map((subj) => {
-                const active =
-                  selectedSubject?.kind === subj.kind && selectedSubject?.id === subj.id;
-                const subjKey = `${subj.kind}:${subj.id}`;
-                if (subj.kind === 'ticket') {
-                  const b = subj.bundle;
-                  const dir =
-                    b.ticket.direction === 'down'
-                      ? t('review.dir.short')
-                      : t('review.dir.long');
-                  return (
-                    <button
-                      key={subjKey}
-                      type="button"
-                      onClick={() => handleSelectSubject(subj)}
-                      className="kairos-list-item w-full rounded border px-2.5 py-2 text-left transition-colors"
-                      style={{
-                        backgroundColor: active
-                          ? 'var(--bg-elevated)'
-                          : 'var(--bg-canvas)',
-                        borderColor: active
-                          ? 'var(--accent-brand)'
-                          : 'var(--border-hairline)',
-                      }}
-                    >
-                      <div className="flex items-center justify-between gap-1">
-                        <span className="font-mono text-xs font-semibold tabular-nums" style={{ color: 'var(--text-primary)' }}>
-                          {cleanSymbol(b.ticket.symbol)}
-                        </span>
-                        <span
-                          className="rounded px-1.5 py-0.5 font-mono text-[10px] tabular-nums"
-                          style={{
-                            backgroundColor:
-                              b.ticket.direction === 'up'
-                                ? 'var(--candle-bull-soft)'
-                                : 'var(--candle-bear-soft)',
-                            color:
-                              b.ticket.direction === 'up'
-                                ? 'var(--pnl-pos)'
-                                : 'var(--pnl-neg)',
-                          }}
-                        >
-                          {dir} · {b.ticket.grade}
-                        </span>
-                      </div>
-                      <div className="mt-1 flex items-center justify-between font-mono text-[10px] tabular-nums" style={{ color: 'var(--text-muted)' }}>
-                        <span>{fmtDateTimeSec(b.ticket.signal_at || b.ticket.created_at)}</span>
-                        {b.outcome ? (
-                          <span
-                            style={{
-                              color:
-                                b.outcome.net_r >= 0
-                                  ? 'var(--pnl-pos)'
-                                  : 'var(--pnl-neg)',
-                            }}
-                          >
-                            {fmtR(b.outcome.net_r)}
-                          </span>
-                        ) : null}
-                      </div>
-                    </button>
-                  );
-                }
-                if (subj.kind === 'trade') {
-                  const tr = subj.trade;
-                  const dir =
-                    tr.direction === 'short' || tr.direction === 'down'
-                      ? t('review.dir.short')
-                      : t('review.dir.long');
-                  return (
-                    <button
-                      key={subjKey}
-                      type="button"
-                      onClick={() => handleSelectSubject(subj)}
-                      className="w-full rounded border px-2.5 py-2 text-left"
-                      style={{
-                        backgroundColor: active
-                          ? 'var(--bg-elevated)'
-                          : 'var(--bg-canvas)',
-                        borderColor: active
-                          ? 'var(--state-warn)'
-                          : 'var(--border-hairline)',
-                      }}
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className="font-mono text-xs font-semibold tabular-nums" style={{ color: 'var(--text-primary)' }}>
-                          {cleanSymbol(tr.symbol)}
-                        </span>
-                        <span
-                          className="rounded px-1.5 py-0.5 text-[10px]"
-                          style={{
-                            backgroundColor: 'var(--state-warn-soft)',
-                            color: 'var(--state-warn)',
-                          }}
-                        >
-                          {t('review.card.unplanned')}
-                        </span>
-                      </div>
-                      <div className="mt-1 flex items-center justify-between font-mono text-[10px] tabular-nums" style={{ color: 'var(--text-secondary)' }}>
-                        <span>
-                          {dir} {tr.leverage}x
-                        </span>
-                        <span style={{ color: tr.net_pnl >= 0 ? 'var(--pnl-pos)' : 'var(--pnl-neg)' }}>
-                          {fmtUsd(tr.net_pnl, true)}
-                        </span>
-                      </div>
-                    </button>
-                  );
-                }
-                const pos = subj.position;
+              {t('review.selector.emptyFiltered')}
+            </div>
+          ) : (
+            filteredSubjects.map((subj) => {
+              const active =
+                selectedSubject?.kind === subj.kind && selectedSubject?.id === subj.id;
+              const subjKey = `${subj.kind}:${subj.id}`;
+              if (subj.kind === 'ticket') {
+                const b = subj.bundle;
+                const dir =
+                  b.ticket.direction === 'down'
+                    ? t('review.dir.short')
+                    : t('review.dir.long');
                 return (
                   <button
                     key={subjKey}
                     type="button"
+                    tabIndex={selectorOpen ? 0 : -1}
                     onClick={() => handleSelectSubject(subj)}
-                    className="kairos-list-item w-full rounded border px-2.5 py-2 text-left"
+                    className="kairos-list-item kairos-row w-full rounded-[6px] border px-2.5 py-2 text-left"
                     style={{
                       backgroundColor: active
                         ? 'var(--bg-elevated)'
                         : 'var(--bg-canvas)',
                       borderColor: active
-                        ? 'var(--accent-info)'
+                        ? 'var(--accent-brand)'
+                        : 'var(--border-hairline)',
+                    }}
+                  >
+                    <div className="flex items-center justify-between gap-1">
+                      <span
+                        className="font-mono text-xs font-semibold tabular-nums"
+                        style={{ color: 'var(--text-primary)' }}
+                      >
+                        {cleanSymbol(b.ticket.symbol)}
+                      </span>
+                      <span
+                        className="rounded px-1.5 py-0.5 font-mono text-[10px] tabular-nums"
+                        style={{
+                          backgroundColor:
+                            b.ticket.direction === 'up'
+                              ? 'var(--candle-bull-soft)'
+                              : 'var(--candle-bear-soft)',
+                          color:
+                            b.ticket.direction === 'up'
+                              ? 'var(--pnl-pos)'
+                              : 'var(--pnl-neg)',
+                        }}
+                      >
+                        {dir} · {b.ticket.grade}
+                      </span>
+                    </div>
+                    <div
+                      className="mt-1 flex items-center justify-between font-mono text-[10px] tabular-nums"
+                      style={{ color: 'var(--text-muted)' }}
+                    >
+                      <span>{fmtDateTimeSec(b.ticket.signal_at || b.ticket.created_at)}</span>
+                      {b.outcome ? (
+                        <span
+                          style={{
+                            color:
+                              b.outcome.net_r >= 0
+                                ? 'var(--pnl-pos)'
+                                : 'var(--pnl-neg)',
+                          }}
+                        >
+                          {fmtR(b.outcome.net_r)}
+                        </span>
+                      ) : null}
+                    </div>
+                  </button>
+                );
+              }
+              if (subj.kind === 'trade') {
+                const tr = subj.trade;
+                const dir =
+                  tr.direction === 'short' || tr.direction === 'down'
+                    ? t('review.dir.short')
+                    : t('review.dir.long');
+                return (
+                  <button
+                    key={subjKey}
+                    type="button"
+                    tabIndex={selectorOpen ? 0 : -1}
+                    onClick={() => handleSelectSubject(subj)}
+                    className="kairos-list-item kairos-row w-full rounded-[6px] border px-2.5 py-2 text-left"
+                    style={{
+                      backgroundColor: active
+                        ? 'var(--bg-elevated)'
+                        : 'var(--bg-canvas)',
+                      borderColor: active
+                        ? 'var(--state-warn)'
                         : 'var(--border-hairline)',
                     }}
                   >
                     <div className="flex items-center justify-between">
-                      <span className="font-mono text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>
-                        {cleanSymbol(pos.symbol)}
+                      <span
+                        className="font-mono text-xs font-semibold tabular-nums"
+                        style={{ color: 'var(--text-primary)' }}
+                      >
+                        {cleanSymbol(tr.symbol)}
                       </span>
-                      <span className="font-mono text-[10px] tabular-nums" style={{ color: 'var(--accent-info)' }}>
-                        {t('review.card.positionLev', { leverage: pos.leverage })}
+                      <span
+                        className="rounded px-1.5 py-0.5 text-[10px]"
+                        style={{
+                          backgroundColor: 'var(--state-warn-soft)',
+                          color: 'var(--state-warn)',
+                        }}
+                      >
+                        {t('review.card.unplanned')}
                       </span>
                     </div>
-                    <div className="mt-1 flex items-center justify-between font-mono text-[10px] tabular-nums" style={{ color: 'var(--text-secondary)' }}>
-                      <span>{t('review.card.avgEntry', { price: fmtPrice(pos.entry_price) })}</span>
-                      <span style={{ color: pos.unrealized_pnl >= 0 ? 'var(--pnl-pos)' : 'var(--pnl-neg)' }}>
-                        {fmtUsd(pos.unrealized_pnl, true)}
+                    <div
+                      className="mt-1 flex items-center justify-between font-mono text-[10px] tabular-nums"
+                      style={{ color: 'var(--text-secondary)' }}
+                    >
+                      <span>
+                        {dir} {tr.leverage}x
+                      </span>
+                      <span style={{ color: tr.net_pnl >= 0 ? 'var(--pnl-pos)' : 'var(--pnl-neg)' }}>
+                        {fmtUsd(tr.net_pnl, true)}
                       </span>
                     </div>
                   </button>
                 );
-              })
-            )}
-          </div>
-          </aside>
-        </>
-      ) : null}
+              }
+              const pos = subj.position;
+              return (
+                <button
+                  key={subjKey}
+                  type="button"
+                  tabIndex={selectorOpen ? 0 : -1}
+                  onClick={() => handleSelectSubject(subj)}
+                  className="kairos-list-item kairos-row w-full rounded-[6px] border px-2.5 py-2 text-left"
+                  style={{
+                    backgroundColor: active
+                      ? 'var(--bg-elevated)'
+                      : 'var(--bg-canvas)',
+                    borderColor: active
+                      ? 'var(--accent-info)'
+                      : 'var(--border-hairline)',
+                  }}
+                >
+                  <div className="flex items-center justify-between">
+                    <span
+                      className="font-mono text-xs font-semibold tabular-nums"
+                      style={{ color: 'var(--text-primary)' }}
+                    >
+                      {cleanSymbol(pos.symbol)}
+                    </span>
+                    <span
+                      className="font-mono text-[10px] tabular-nums"
+                      style={{ color: 'var(--accent-info)' }}
+                    >
+                      {t('review.card.positionLev', { leverage: pos.leverage })}
+                    </span>
+                  </div>
+                  <div
+                    className="mt-1 flex items-center justify-between font-mono text-[10px] tabular-nums"
+                    style={{ color: 'var(--text-secondary)' }}
+                  >
+                    <span>{t('review.card.avgEntry', { price: fmtPrice(pos.entry_price) })}</span>
+                    <span
+                      style={{
+                        color: pos.unrealized_pnl >= 0 ? 'var(--pnl-pos)' : 'var(--pnl-neg)',
+                      }}
+                    >
+                      {fmtUsd(pos.unrealized_pnl, true)}
+                    </span>
+                  </div>
+                </button>
+              );
+            })
+          )}
+        </div>
+      </aside>
 
       {/* Main Full-Bleed Replay Chart */}
       <section className="flex min-w-0 flex-1 flex-col">
         {hideFuture ? (
           <div
-            className="flex shrink-0 flex-wrap items-center gap-2 border-b px-3 py-1 text-[11px]"
+            className="kairos-animate-view flex shrink-0 flex-wrap items-center gap-2 border-b px-3 py-1.5 text-[11px]"
             style={{
               backgroundColor: 'var(--bg-surface)',
               borderColor: 'var(--border-hairline)',
             }}
           >
-            <span className="font-mono tabular-nums" style={{ color: 'var(--accent-brand)' }}>
+            <span className="flex items-center gap-1.5 font-mono tabular-nums" style={{ color: 'var(--accent-brand)' }}>
+              {playing ? (
+                <span className="relative flex h-2 w-2">
+                  <span
+                    className="kairos-pulse-ring absolute inline-flex h-full w-full rounded-full"
+                    style={{ backgroundColor: 'var(--accent-brand)' }}
+                  />
+                  <span
+                    className="relative inline-flex h-2 w-2 rounded-full"
+                    style={{ backgroundColor: 'var(--accent-brand)' }}
+                  />
+                </span>
+              ) : null}
               {fmtDateTimeWithSec(cursorTs)}
             </span>
             <input
@@ -1262,13 +1376,13 @@ export function ReviewWorkspace({
                 setPlaying(false);
                 setCursorTs(Number(e.target.value));
               }}
-              className="h-1 flex-1 accent-[var(--accent-brand)]"
+              className="kairos-range h-4 min-w-[120px] flex-1"
             />
             <button
               type="button"
               title={t('review.replay.prevAnomaly')}
               onClick={() => jumpAnomaly(-1)}
-              className="rounded p-0.5 hover:opacity-80"
+              className="kairos-btn rounded border border-transparent p-1"
               style={{ color: 'var(--text-secondary)' }}
             >
               <SkipBack className="h-3 w-3" />
@@ -1277,7 +1391,7 @@ export function ReviewWorkspace({
               type="button"
               title={t('review.replay.nextAnomaly')}
               onClick={() => jumpAnomaly(1)}
-              className="rounded p-0.5 hover:opacity-80"
+              className="kairos-btn rounded border border-transparent p-1"
               style={{ color: 'var(--text-secondary)' }}
             >
               <SkipForward className="h-3 w-3" />
@@ -1290,8 +1404,12 @@ export function ReviewWorkspace({
                   setPlaying(false);
                   setCursorTs(anchorTimestampFor(selectedSubject));
                 }}
-                className="flex items-center gap-1 rounded px-1.5 py-0.5 hover:opacity-85"
-                style={{ color: 'var(--text-secondary)' }}
+                className="kairos-btn flex items-center gap-1 rounded-[5px] border px-2 py-0.5 font-medium"
+                style={{
+                  backgroundColor: 'var(--bg-canvas)',
+                  borderColor: 'var(--border-hairline)',
+                  color: 'var(--text-secondary)',
+                }}
               >
                 <Anchor className="h-3 w-3" />
                 <span>{t('review.replay.jumpAnchor')}</span>
@@ -1304,7 +1422,7 @@ export function ReviewWorkspace({
           chartId="review-replay"
           symbol={symbol}
           timeframe={activeTf}
-          availableTimeframes={['1m', '5m', '15m', '1h', '4h']}
+          availableTimeframes={REVIEW_TIMEFRAMES}
           onTimeframeChange={setActiveTf}
           statusSlot={reviewToolbarSlot}
           bars={chartBars}

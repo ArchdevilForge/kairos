@@ -1,12 +1,23 @@
-import React, { useEffect, useState } from 'react';
-import { Bell, BellOff, Lock, RefreshCw, Save, X } from 'lucide-react';
-import { useI18n } from '../i18n';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Bell,
+  BellOff,
+  Eye,
+  EyeOff,
+  Lock,
+  RefreshCw,
+  Save,
+  ShieldCheck,
+  X,
+} from 'lucide-react';
+import { useI18n, type Locale } from '../i18n';
 import type {
   AccountSyncResponse,
   DeskStatus,
   UpdateSettingsRequest,
 } from '../types/kairos';
 import { formatExchangeLabel, resolveAccountExchange } from '../utils/doctrine';
+import { SegmentedControl, type SegmentedOption } from './SegmentedControl';
 
 export interface SettingsModalProps {
   open: boolean;
@@ -48,9 +59,35 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [proxyUrl, setProxyUrl] = useState(status.proxy_url ?? '');
   const [apiKey, setApiKey] = useState('');
   const [apiSecret, setApiSecret] = useState('');
+  const [showSecret, setShowSecret] = useState(false);
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const closeBtnRef = useRef<HTMLButtonElement | null>(null);
+  const prevFocusRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    prevFocusRef.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const timer = window.setTimeout(() => closeBtnRef.current?.focus(), 10);
+    return () => {
+      window.clearTimeout(timer);
+      const prev = prevFocusRef.current;
+      prevFocusRef.current = null;
+      if (prev && prev.isConnected) {
+        requestAnimationFrame(() => prev.focus());
+      }
+    };
+  }, [open]);
+
+  const localeOptions = useMemo<ReadonlyArray<SegmentedOption<Locale>>>(
+    () => [
+      { value: 'zh', label: '中文' },
+      { value: 'en', label: 'EN' },
+    ],
+    [],
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -60,6 +97,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setProxyUrl(status.proxy_url ?? '');
     setApiKey('');
     setApiSecret('');
+    setShowSecret(false);
     setErrorMsg(null);
     setSuccessMsg(null);
   }, [
@@ -195,40 +233,40 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4"
-      style={{ backgroundColor: 'var(--bg-overlay)' }}
+      className="kairos-glass-backdrop kairos-animate-backdrop fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4"
       onClick={onClose}
     >
       <div
         role="dialog"
         aria-modal="true"
         aria-label={t('settings.title')}
-        className="kairos-contain-panel max-h-[88dvh] w-full max-w-[460px] overflow-y-auto rounded-[8px] border shadow-2xl"
-        style={{
-          backgroundColor: 'var(--bg-surface)',
-          borderColor: 'var(--border-strong)',
-        }}
+        className="kairos-floating kairos-animate-modal kairos-contain-panel max-h-[88dvh] w-full max-w-[490px] overflow-y-auto rounded-[10px]"
         onClick={(e) => e.stopPropagation()}
       >
+        {/* Header */}
         <div
-          className="flex items-center justify-between border-b px-4 py-3"
-          style={{ borderColor: 'var(--border-hairline)' }}
+          className="sticky top-0 z-10 flex items-center justify-between border-b px-4 py-3"
+          style={{
+            backgroundColor: 'var(--bg-surface)',
+            borderColor: 'var(--border-hairline)',
+          }}
         >
           <div>
             <h2
-              className="font-editorial text-[17px] font-medium"
+              className="font-editorial text-[17px] font-medium leading-tight"
               style={{ color: 'var(--text-primary)' }}
             >
               {t('settings.title')}
             </h2>
-            <p className="text-[11px]" style={{ color: 'var(--text-secondary)' }}>
+            <p className="mt-0.5 text-[11px]" style={{ color: 'var(--text-secondary)' }}>
               {t('settings.subtitle', { exchange: exchangeLabel })}
             </p>
           </div>
           <button
+            ref={closeBtnRef}
             type="button"
             onClick={onClose}
-            className="rounded p-1 transition-colors"
+            className="kairos-btn rounded-[6px] border border-transparent p-1"
             style={{ color: 'var(--text-muted)' }}
             aria-label={t('settings.closeAria')}
           >
@@ -237,182 +275,230 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         </div>
 
         <div className="space-y-4 p-4">
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <label className="block">
-              <span
-                className="mb-1 block text-[11px] font-medium"
-                style={{ color: 'var(--text-secondary)' }}
-              >
-                {t('settings.bankrollLabel')}
-              </span>
-              <input
-                type="number"
-                step="1"
-                min="1"
-                value={bankroll}
-                onChange={(e) => setBankroll(e.target.value)}
-                className="tabular-nums w-full rounded-[6px] border px-2.5 py-1.5 text-[13px] outline-none"
-                style={{
-                  backgroundColor: 'var(--bg-canvas)',
-                  borderColor: 'var(--border-hairline)',
-                  color: 'var(--text-primary)',
-                }}
-              />
-            </label>
+          {/* Section 1: Risk Budget Bounds */}
+          <section className="space-y-2.5">
+            <div
+              className="text-[10px] font-semibold uppercase tracking-wider"
+              style={{ color: 'var(--text-muted)' }}
+            >
+              {t('settings.section.risk')}
+            </div>
 
-            <label className="block">
-              <span
-                className="mb-1 block text-[11px] font-medium"
-                style={{ color: 'var(--text-secondary)' }}
-              >
-                {t('settings.maxLossLabel')}
-              </span>
-              <input
-                type="number"
-                step="0.5"
-                min="0.5"
-                value={maxLoss}
-                onChange={(e) => setMaxLoss(e.target.value)}
-                className="tabular-nums w-full rounded-[6px] border px-2.5 py-1.5 text-[13px] outline-none"
-                style={{
-                  backgroundColor: 'var(--bg-canvas)',
-                  borderColor: 'var(--border-hairline)',
-                  color: 'var(--text-primary)',
-                }}
-              />
-            </label>
-          </div>
+            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+              <label className="block">
+                <span
+                  className="mb-1 block text-[11px] font-medium"
+                  style={{ color: 'var(--text-secondary)' }}
+                >
+                  {t('settings.bankrollLabel')}
+                </span>
+                <input
+                  type="number"
+                  step="1"
+                  min="1"
+                  value={bankroll}
+                  onChange={(e) => setBankroll(e.target.value)}
+                  className="tabular-nums w-full rounded-[6px] border px-2.5 py-1.5 text-[13px] outline-none transition-colors focus:border-[var(--accent-brand)]"
+                  style={{
+                    backgroundColor: 'var(--bg-canvas)',
+                    borderColor: 'var(--border-hairline)',
+                    color: 'var(--text-primary)',
+                  }}
+                />
+              </label>
 
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <label className="block">
+              <label className="block">
+                <span
+                  className="mb-1 block text-[11px] font-medium"
+                  style={{ color: 'var(--text-secondary)' }}
+                >
+                  {t('settings.maxLossLabel')}
+                </span>
+                <input
+                  type="number"
+                  step="0.5"
+                  min="0.5"
+                  value={maxLoss}
+                  onChange={(e) => setMaxLoss(e.target.value)}
+                  className="tabular-nums w-full rounded-[6px] border px-2.5 py-1.5 text-[13px] outline-none transition-colors focus:border-[var(--accent-brand)]"
+                  style={{
+                    backgroundColor: 'var(--bg-canvas)',
+                    borderColor: 'var(--border-hairline)',
+                    color: 'var(--text-primary)',
+                  }}
+                />
+              </label>
+            </div>
+
+            <div
+              className="flex flex-wrap items-center justify-between gap-2 rounded-[7px] border px-3 py-2 text-[11px]"
+              style={{
+                backgroundColor: 'var(--bg-canvas)',
+                borderColor: 'var(--border-hairline)',
+                color: 'var(--text-secondary)',
+              }}
+            >
+              <span className="flex items-center gap-1.5">
+                <ShieldCheck className="h-3.5 w-3.5" style={{ color: 'var(--candle-bull)' }} />
+                {t('settings.riskSummaryLabel')}
+              </span>
+              <span className="tabular-nums" style={{ color: 'var(--text-primary)' }}>
+                {t('settings.riskSummaryValue', {
+                  major: status.risk_config.max_major_leverage,
+                  alt: status.risk_config.max_alt_leverage,
+                  cooldown: status.risk_config.cooldown_minutes,
+                })}
+              </span>
+            </div>
+          </section>
+
+          {/* Section 2: Interface & Audio */}
+          <section className="space-y-2.5">
+            <div
+              className="text-[10px] font-semibold uppercase tracking-wider"
+              style={{ color: 'var(--text-muted)' }}
+            >
+              {t('settings.section.preferences')}
+            </div>
+
+            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+              <label className="block">
+                <span
+                  className="mb-1 block text-[11px] font-medium"
+                  style={{ color: 'var(--text-secondary)' }}
+                >
+                  {t('settings.timezoneLabel')}
+                </span>
+                <input
+                  type="text"
+                  value={timezone}
+                  onChange={(e) => setTimezone(e.target.value)}
+                  placeholder="Asia/Shanghai"
+                  className="w-full rounded-[6px] border px-2.5 py-1.5 text-[12px] outline-none transition-colors focus:border-[var(--accent-brand)]"
+                  style={{
+                    backgroundColor: 'var(--bg-canvas)',
+                    borderColor: 'var(--border-hairline)',
+                    color: 'var(--text-primary)',
+                  }}
+                />
+              </label>
+
+              <div className="flex flex-col justify-end">
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={chimeEnabled}
+                  onClick={onToggleChime}
+                  className="kairos-btn flex h-[34px] items-center justify-between rounded-[6px] border px-2.5 text-[12px]"
+                  style={{
+                    backgroundColor: 'var(--bg-canvas)',
+                    borderColor: 'var(--border-hairline)',
+                    color: chimeEnabled ? 'var(--text-primary)' : 'var(--text-secondary)',
+                  }}
+                >
+                  <span className="flex items-center gap-1.5">
+                    {chimeEnabled ? (
+                      <Bell className="h-3.5 w-3.5" style={{ color: 'var(--accent-brand)' }} />
+                    ) : (
+                      <BellOff className="h-3.5 w-3.5" style={{ color: 'var(--text-muted)' }} />
+                    )}
+                    <span>{t('settings.chimeLabel')}</span>
+                  </span>
+                  <span
+                    className="relative inline-flex h-[18px] w-[32px] shrink-0 items-center rounded-full transition-colors duration-200"
+                    style={{
+                      backgroundColor: chimeEnabled
+                        ? 'var(--accent-brand)'
+                        : 'var(--bg-elevated)',
+                    }}
+                  >
+                    <span
+                      className="inline-block h-[14px] w-[14px] rounded-full transition-transform duration-200"
+                      style={{
+                        backgroundColor: 'var(--text-primary)',
+                        transform: chimeEnabled ? 'translateX(16px)' : 'translateX(2px)',
+                      }}
+                    />
+                  </span>
+                </button>
+              </div>
+            </div>
+
+            <div
+              className="flex items-center justify-between rounded-[7px] border px-3 py-2 text-[12px]"
+              style={{
+                backgroundColor: 'var(--bg-canvas)',
+                borderColor: 'var(--border-hairline)',
+              }}
+            >
+              <span className="font-medium" style={{ color: 'var(--text-secondary)' }}>
+                {t('settings.languageLabel')}
+              </span>
+              <SegmentedControl<Locale>
+                options={localeOptions}
+                value={locale}
+                onChange={setLocale}
+                ariaLabel={t('settings.languageLabel')}
+                size="xs"
+              />
+            </div>
+          </section>
+
+          {/* Section 3: Network Proxy */}
+          <section className="space-y-2">
+            <div
+              className="text-[10px] font-semibold uppercase tracking-wider"
+              style={{ color: 'var(--text-muted)' }}
+            >
+              {t('settings.section.network')}
+            </div>
+            <label
+              className="block rounded-[7px] border p-3"
+              style={{
+                backgroundColor: 'var(--bg-canvas)',
+                borderColor: 'var(--border-hairline)',
+              }}
+            >
               <span
-                className="mb-1 block text-[11px] font-medium"
+                className="mb-1.5 block text-[11px] font-medium"
                 style={{ color: 'var(--text-secondary)' }}
               >
-                {t('settings.timezoneLabel')}
+                {t('settings.proxyLabel', { exchange: exchangeTitle })}
               </span>
               <input
                 type="text"
-                value={timezone}
-                onChange={(e) => setTimezone(e.target.value)}
-                placeholder="Asia/Shanghai"
-                className="w-full rounded-[6px] border px-2.5 py-1.5 text-[12px] outline-none"
+                value={proxyUrl}
+                onChange={(e) => {
+                  setErrorMsg(null);
+                  setSuccessMsg(null);
+                  setProxyUrl(e.target.value);
+                }}
+                placeholder={t('settings.proxyPlaceholder')}
+                className="w-full rounded-[6px] border px-2.5 py-1.5 font-mono text-[12px] outline-none transition-colors focus:border-[var(--accent-brand)]"
                 style={{
-                  backgroundColor: 'var(--bg-canvas)',
+                  backgroundColor: 'var(--bg-surface)',
                   borderColor: 'var(--border-hairline)',
                   color: 'var(--text-primary)',
                 }}
               />
+              <span
+                className="mt-1.5 block text-[10px] leading-relaxed"
+                style={{ color: 'var(--text-muted)' }}
+              >
+                {t('settings.proxyHint')}
+              </span>
             </label>
+          </section>
 
-            <div className="flex flex-col justify-end">
-              <button
-                type="button"
-                onClick={onToggleChime}
-                className="flex h-[34px] items-center justify-between rounded-[6px] border px-2.5 text-[12px] transition-colors"
-                style={{
-                  backgroundColor: 'var(--bg-canvas)',
-                  borderColor: 'var(--border-hairline)',
-                  color: chimeEnabled ? 'var(--text-primary)' : 'var(--text-secondary)',
-                }}
-              >
-                <span>{t('settings.chimeLabel')}</span>
-                {chimeEnabled ? (
-                  <Bell className="h-3.5 w-3.5" style={{ color: 'var(--accent-brand)' }} />
-                ) : (
-                  <BellOff className="h-3.5 w-3.5" style={{ color: 'var(--text-muted)' }} />
-                )}
-              </button>
-            </div>
-          </div>
-
-          <div
-            className="flex items-center justify-between rounded-[6px] border px-3 py-2 text-[12px]"
+          {/* Section 4: Read-Only Exchange API */}
+          <section
+            className="rounded-[8px] border p-3"
             style={{
               backgroundColor: 'var(--bg-canvas)',
               borderColor: 'var(--border-hairline)',
             }}
           >
-            <span className="font-medium" style={{ color: 'var(--text-secondary)' }}>
-              {t('settings.languageLabel')}
-            </span>
-            <div
-              className="flex items-center rounded-[5px] border p-0.5 text-[11px] font-medium"
-              style={{
-                backgroundColor: 'var(--bg-surface)',
-                borderColor: 'var(--border-hairline)',
-              }}
-            >
-              <button
-                type="button"
-                onClick={() => setLocale('zh')}
-                className="rounded-[4px] px-2 py-0.5 transition-colors"
-                style={{
-                  backgroundColor: locale === 'zh' ? 'var(--bg-elevated)' : 'transparent',
-                  color: locale === 'zh' ? 'var(--text-primary)' : 'var(--text-secondary)',
-                }}
-              >
-                中
-              </button>
-              <button
-                type="button"
-                onClick={() => setLocale('en')}
-                className="rounded-[4px] px-2 py-0.5 transition-colors"
-                style={{
-                  backgroundColor: locale === 'en' ? 'var(--bg-elevated)' : 'transparent',
-                  color: locale === 'en' ? 'var(--text-primary)' : 'var(--text-secondary)',
-                }}
-              >
-                EN
-              </button>
-            </div>
-          </div>
-
-          <label
-            className="block rounded-[6px] border p-3"
-            style={{
-              backgroundColor: 'var(--bg-canvas)',
-              borderColor: 'var(--border-hairline)',
-            }}
-          >
-            <span
-              className="mb-1.5 block text-[11px] font-medium"
-              style={{ color: 'var(--text-secondary)' }}
-            >
-              {t('settings.proxyLabel', { exchange: exchangeTitle })}
-            </span>
-            <input
-              type="text"
-              value={proxyUrl}
-              onChange={(e) => {
-                setErrorMsg(null);
-                setSuccessMsg(null);
-                setProxyUrl(e.target.value);
-              }}
-              placeholder={t('settings.proxyPlaceholder')}
-              className="w-full rounded-[6px] border px-2.5 py-1.5 font-mono text-[12px] outline-none"
-              style={{
-                backgroundColor: 'var(--bg-surface)',
-                borderColor: 'var(--border-hairline)',
-                color: 'var(--text-primary)',
-              }}
-            />
-            <span
-              className="mt-1.5 block text-[10px] leading-relaxed"
-              style={{ color: 'var(--text-muted)' }}
-            >
-              {t('settings.proxyHint')}
-            </span>
-          </label>
-
-          <div
-            className="rounded-[6px] border p-3"
-            style={{
-              backgroundColor: 'var(--bg-canvas)',
-              borderColor: 'var(--border-hairline)',
-            }}
-          >
-            <div className="mb-2 flex items-center justify-between text-[11px]">
+            <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2 text-[11px]">
               <span
                 className="flex items-center gap-1.5 font-medium"
                 style={{ color: 'var(--text-primary)' }}
@@ -421,8 +507,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 {t('settings.apiSectionTitle', { exchange: exchangeLabel })}
               </span>
               <span
-                className="tabular-nums"
+                className="tabular-nums rounded px-1.5 py-0.5 text-[10px] font-medium"
                 style={{
+                  backgroundColor: status.account.configured
+                    ? 'var(--candle-bull-soft)'
+                    : 'var(--bg-elevated)',
                   color: status.account.configured
                     ? 'var(--pnl-pos)'
                     : 'var(--text-muted)',
@@ -450,7 +539,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     : t('settings.apiKeyPlaceholder', { envPrefix })
                 }
                 autoComplete="off"
-                className="tabular-nums w-full rounded-[6px] border px-2.5 py-1.5 text-[12px] outline-none"
+                className="tabular-nums w-full rounded-[6px] border px-2.5 py-1.5 text-[12px] outline-none transition-colors focus:border-[var(--accent-brand)]"
                 style={{
                   backgroundColor: 'var(--bg-surface)',
                   borderColor: 'var(--border-hairline)',
@@ -458,34 +547,53 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 }}
               />
 
-              <input
-                type="password"
-                value={apiSecret}
-                onChange={(e) => {
-                  setErrorMsg(null);
-                  setSuccessMsg(null);
-                  setApiSecret(e.target.value);
-                }}
-                placeholder={t('settings.apiSecretPlaceholder', { envPrefix })}
-                autoComplete="new-password"
-                className="tabular-nums w-full rounded-[6px] border px-2.5 py-1.5 text-[12px] outline-none"
-                style={{
-                  backgroundColor: 'var(--bg-surface)',
-                  borderColor: 'var(--border-hairline)',
-                  color: 'var(--text-primary)',
-                }}
-              />
+              <div className="relative">
+                <input
+                  type={showSecret ? 'text' : 'password'}
+                  value={apiSecret}
+                  onChange={(e) => {
+                    setErrorMsg(null);
+                    setSuccessMsg(null);
+                    setApiSecret(e.target.value);
+                  }}
+                  placeholder={t('settings.apiSecretPlaceholder', { envPrefix })}
+                  autoComplete="new-password"
+                  className="tabular-nums w-full rounded-[6px] border py-1.5 pr-8 pl-2.5 text-[12px] outline-none transition-colors focus:border-[var(--accent-brand)]"
+                  style={{
+                    backgroundColor: 'var(--bg-surface)',
+                    borderColor: 'var(--border-hairline)',
+                    color: 'var(--text-primary)',
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowSecret((v) => !v)}
+                  className="kairos-press absolute top-1/2 right-1.5 -translate-y-1/2 rounded p-1 hover:opacity-80"
+                  style={{ color: 'var(--text-muted)' }}
+                  aria-label={
+                    showSecret
+                      ? t('settings.hideSecretAria')
+                      : t('settings.showSecretAria')
+                  }
+                >
+                  {showSecret ? (
+                    <EyeOff className="h-3.5 w-3.5" />
+                  ) : (
+                    <Eye className="h-3.5 w-3.5" />
+                  )}
+                </button>
+              </div>
             </div>
 
             <p className="mt-2 text-[10px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
               {t(isBinance ? 'settings.apiPermHintBinance' : 'settings.apiPermHintBybit')}
             </p>
 
-            {status.account.sync_error && !errorMsg && (
+            {status.account.sync_error && !errorMsg ? (
               <p className="mt-2 text-[11px]" style={{ color: 'var(--pnl-neg)' }}>
                 {t('settings.lastSyncError', { error: status.account.sync_error })}
               </p>
-            )}
+            ) : null}
 
             <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2">
               <p className="text-[10px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>
@@ -497,7 +605,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 type="button"
                 disabled={syncingAccount || saving}
                 onClick={() => void handleImmediateSync()}
-                className="flex shrink-0 items-center gap-1 rounded border px-2 py-1 text-[11px] disabled:opacity-60"
+                className="kairos-btn flex shrink-0 items-center gap-1.5 rounded-[6px] border px-2.5 py-1 text-[11px] font-medium disabled:opacity-60"
                 style={{
                   backgroundColor: 'var(--bg-surface)',
                   borderColor: 'var(--border-hairline)',
@@ -512,29 +620,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <span>{t('settings.syncNow')}</span>
               </button>
             </div>
-          </div>
+          </section>
 
-          <div
-            className="flex items-center justify-between rounded-[6px] border px-3 py-2 text-[11px]"
-            style={{
-              backgroundColor: 'var(--bg-canvas)',
-              borderColor: 'var(--border-hairline)',
-              color: 'var(--text-secondary)',
-            }}
-          >
-            <span>{t('settings.riskSummaryLabel')}</span>
-            <span className="tabular-nums">
-              {t('settings.riskSummaryValue', {
-                major: status.risk_config.max_major_leverage,
-                alt: status.risk_config.max_alt_leverage,
-                cooldown: status.risk_config.cooldown_minutes,
-              })}
-            </span>
-          </div>
-
-          {successMsg && (
+          {successMsg ? (
             <div
-              className="tabular-nums rounded-[6px] border px-3 py-2 text-[12px]"
+              className="kairos-animate-view tabular-nums rounded-[6px] border px-3 py-2 text-[12px]"
               style={{
                 backgroundColor: 'var(--candle-bull-soft)',
                 borderColor: 'var(--candle-bull)',
@@ -543,11 +633,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             >
               {successMsg}
             </div>
-          )}
+          ) : null}
 
-          {errorMsg && (
+          {errorMsg ? (
             <div
-              className="rounded-[6px] border px-3 py-2 text-[12px]"
+              className="kairos-animate-view rounded-[6px] border px-3 py-2 text-[12px]"
               style={{
                 backgroundColor: 'var(--candle-bear-soft)',
                 borderColor: 'var(--candle-bear)',
@@ -556,17 +646,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             >
               {errorMsg}
             </div>
-          )}
+          ) : null}
         </div>
 
+        {/* Sticky Footer */}
         <div
-          className="flex flex-wrap items-center justify-end gap-2 border-t px-4 py-3"
-          style={{ borderColor: 'var(--border-hairline)' }}
+          className="sticky bottom-0 z-10 flex flex-wrap items-center justify-end gap-2 border-t px-4 py-3"
+          style={{
+            backgroundColor: 'var(--bg-surface)',
+            borderColor: 'var(--border-hairline)',
+          }}
         >
           <button
             type="button"
             onClick={onClose}
-            className="rounded-[6px] border px-3 py-1.5 text-[12px] font-medium"
+            className="kairos-btn rounded-[6px] border px-3 py-1.5 text-[12px] font-medium"
             style={{
               backgroundColor: 'var(--bg-canvas)',
               borderColor: 'var(--border-hairline)',
@@ -580,7 +674,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             type="button"
             disabled={saving}
             onClick={() => void submit(false)}
-            className="flex items-center gap-1.5 rounded-[6px] border px-3 py-1.5 text-[12px] font-medium disabled:opacity-60"
+            className="kairos-btn flex items-center gap-1.5 rounded-[6px] border px-3 py-1.5 text-[12px] font-medium disabled:opacity-60"
             style={{
               backgroundColor: 'var(--bg-elevated)',
               borderColor: 'var(--border-strong)',
@@ -595,9 +689,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             type="button"
             disabled={saving}
             onClick={() => void submit(true)}
-            className="flex items-center gap-1.5 rounded-[6px] px-3 py-1.5 text-[12px] font-medium disabled:opacity-60"
+            className="kairos-press flex items-center gap-1.5 rounded-[6px] px-3 py-1.5 text-[12px] font-medium hover:brightness-105 disabled:opacity-60"
             style={{
-              backgroundColor: 'var(--accent-brand)',
+              backgroundColor: 'var(--accent-brand-solid)',
               color: '#FAF9F5',
             }}
           >

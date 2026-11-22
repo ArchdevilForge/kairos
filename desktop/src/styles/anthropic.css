@@ -7,18 +7,25 @@
   --bg-canvas: #141413;
   --bg-surface: #1C1B19;
   --bg-elevated: #262522;
-  --bg-overlay: rgba(20, 20, 19, 0.78);
+  --bg-hover: rgba(250, 249, 245, 0.045);
+  --bg-active: rgba(250, 249, 245, 0.08);
+  --bg-glass: rgba(28, 27, 25, 0.84);
+  --bg-overlay: rgba(20, 20, 19, 0.72);
 
-  --border-hairline: rgba(250, 249, 245, 0.09);
-  --border-strong: rgba(250, 249, 245, 0.16);
+  --border-hairline: rgba(250, 249, 245, 0.085);
+  --border-hover: rgba(250, 249, 245, 0.15);
+  --border-strong: rgba(250, 249, 245, 0.18);
 
   --text-primary: #FAF9F5;
   --text-secondary: #B0AEA5;
   --text-muted: #87867F;
 
   --accent-brand: #D97757;
+  --accent-brand-text: #E28768;
+  --accent-brand-solid: #C86443;
   --accent-brand-hover: #C6613F;
   --accent-brand-soft: rgba(217, 119, 87, 0.14);
+  --accent-brand-glow: rgba(217, 119, 87, 0.28);
 
   --candle-bull: #788C5D;
   --pnl-pos: #8FA670;
@@ -36,6 +43,16 @@
 
   --chart-grid: rgba(250, 249, 245, 0.045);
   --chart-crosshair: rgba(250, 249, 245, 0.24);
+
+  --inset-highlight: inset 0 1px 0 rgba(250, 249, 245, 0.055);
+  --shadow-floating: 0 18px 44px -12px rgba(10, 10, 9, 0.68), 0 0 0 1px rgba(250, 249, 245, 0.07);
+  --shadow-card: 0 4px 16px -6px rgba(10, 10, 9, 0.42);
+  --shadow-pill: 0 1px 2px rgba(10, 10, 9, 0.45), inset 0 1px 0 rgba(250, 249, 245, 0.07);
+  --kbd-bg-top: #2B2A27;
+  --kbd-bg-bottom: #21201E;
+  --kbd-shadow: 0 1px 0 rgba(10, 10, 9, 0.7), inset 0 1px 0 rgba(250, 249, 245, 0.08);
+  --shimmer-base: rgba(250, 249, 245, 0.04);
+  --shimmer-shine: rgba(250, 249, 245, 0.09);
 }
 
 [data-theme="light"] {
@@ -44,35 +61,52 @@
   --bg-canvas: #FAF9F5;
   --bg-surface: #F5F4ED;
   --bg-elevated: #E8E6DC;
-  --bg-overlay: rgba(250, 249, 245, 0.82);
+  --bg-hover: rgba(20, 20, 19, 0.045);
+  --bg-active: rgba(20, 20, 19, 0.08);
+  --bg-glass: rgba(245, 244, 237, 0.86);
+  --bg-overlay: rgba(20, 20, 19, 0.28);
 
-  --border-hairline: rgba(20, 20, 19, 0.10);
-  --border-strong: rgba(20, 20, 19, 0.18);
+  --border-hairline: rgba(20, 20, 19, 0.095);
+  --border-hover: rgba(20, 20, 19, 0.18);
+  --border-strong: rgba(20, 20, 19, 0.22);
 
   --text-primary: #141413;
-  --text-secondary: #5E5D59;
-  --text-muted: #87867F;
+  --text-secondary: #4A4945;
+  --text-muted: #5F5E59;
 
   --accent-brand: #D97757;
-  --accent-brand-hover: #C6613F;
-  --accent-brand-soft: rgba(217, 119, 87, 0.12);
+  --accent-brand-text: #A64728;
+  --accent-brand-solid: #B34D2C;
+  --accent-brand-hover: #9E4224;
+  --accent-brand-soft: rgba(217, 119, 87, 0.13);
+  --accent-brand-glow: rgba(217, 119, 87, 0.24);
 
   --candle-bull: #788C5D;
-  --pnl-pos: #5B6E44;
+  --pnl-pos: #465833;
   --candle-bull-soft: rgba(120, 140, 93, 0.14);
 
   --candle-bear: #B85450;
-  --pnl-neg: #A84440;
+  --pnl-neg: #963936;
   --candle-bear-soft: rgba(184, 84, 80, 0.12);
 
-  --accent-info: #4E7DAA;
-  --accent-info-soft: rgba(78, 125, 170, 0.13);
+  --accent-info: #345E87;
+  --accent-info-soft: rgba(52, 94, 135, 0.13);
 
-  --state-warn: #A6792E;
-  --state-warn-soft: rgba(166, 121, 46, 0.13);
+  --state-warn: #8B621B;
+  --state-warn-soft: rgba(139, 98, 27, 0.13);
 
   --chart-grid: rgba(20, 20, 19, 0.055);
   --chart-crosshair: rgba(20, 20, 19, 0.24);
+
+  --inset-highlight: inset 0 1px 0 rgba(250, 249, 245, 0.72);
+  --shadow-floating: 0 20px 44px -14px rgba(20, 20, 19, 0.22), 0 0 0 1px rgba(20, 20, 19, 0.08);
+  --shadow-card: 0 2px 10px -4px rgba(20, 20, 19, 0.1);
+  --shadow-pill: 0 1px 2px rgba(20, 20, 19, 0.09), inset 0 1px 0 rgba(250, 249, 245, 0.8);
+  --kbd-bg-top: #FAF9F5;
+  --kbd-bg-bottom: #E8E6DC;
+  --kbd-shadow: 0 1px 0 rgba(20, 20, 19, 0.16), inset 0 1px 0 rgba(250, 249, 245, 0.9);
+  --shimmer-base: rgba(20, 20, 19, 0.045);
+  --shimmer-shine: rgba(20, 20, 19, 0.095);
 }
 
 :root {
@@ -83,6 +117,14 @@
   --radius-xs: 4px;
   --radius-sm: 6px;
   --radius-md: 8px;
+  --radius-lg: 10px;
+
+  /* Emil Kowalski / Linear strong ease-out motion curves */
+  --ease-out-expo: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-out-quart: cubic-bezier(0.165, 0.84, 0.44, 1);
+  --dur-instant: 110ms;
+  --dur-fast: 170ms;
+  --dur-base: 220ms;
 }
 
 @layer base {
@@ -129,6 +171,10 @@
     background: var(--border-strong);
     border-radius: 3px;
   }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--text-muted);
+  }
 }
 
 .font-editorial {
@@ -157,3 +203,330 @@
   }
 }
 
+/* Tactile Linear/Raycast button feedback */
+.kairos-btn {
+  transition:
+    background-color var(--dur-instant) ease,
+    border-color var(--dur-instant) ease,
+    color var(--dur-instant) ease,
+    transform var(--dur-instant) var(--ease-out-expo),
+    box-shadow var(--dur-fast) var(--ease-out-expo);
+}
+
+.kairos-btn:hover:not(:disabled) {
+  background-color: var(--bg-hover);
+  border-color: var(--border-hover);
+}
+
+.kairos-btn:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.kairos-press {
+  transition:
+    background-color var(--dur-instant) ease,
+    border-color var(--dur-instant) ease,
+    color var(--dur-instant) ease,
+    opacity var(--dur-instant) ease,
+    transform var(--dur-instant) var(--ease-out-expo);
+}
+
+.kairos-press:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+/* Elevated surface card with subtle top inner highlight */
+.kairos-card {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-hairline);
+  box-shadow: var(--inset-highlight), var(--shadow-card);
+  transition:
+    border-color var(--dur-fast) var(--ease-out-expo),
+    transform var(--dur-fast) var(--ease-out-expo),
+    box-shadow var(--dur-fast) var(--ease-out-expo);
+}
+
+.kairos-card-interactive:hover {
+  border-color: var(--border-hover);
+  transform: translateY(-1px);
+}
+
+/* Floating glass surface (command palette, modal, popover) */
+.kairos-floating {
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+  box-shadow: var(--inset-highlight), var(--shadow-floating);
+}
+
+.kairos-glass-backdrop {
+  background-color: var(--bg-overlay);
+  backdrop-filter: blur(5px);
+  -webkit-backdrop-filter: blur(5px);
+}
+
+/* Raycast-style tactile keycap */
+.kairos-kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 4px;
+  border: 1px solid var(--border-hairline);
+  background: linear-gradient(180deg, var(--kbd-bg-top) 0%, var(--kbd-bg-bottom) 100%);
+  box-shadow: var(--kbd-shadow);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1;
+  letter-spacing: 0.01em;
+}
+
+/* Interactive list row */
+.kairos-row {
+  transition:
+    background-color var(--dur-instant) ease,
+    border-color var(--dur-instant) ease,
+    transform var(--dur-instant) var(--ease-out-expo);
+}
+
+.kairos-row:hover {
+  border-color: var(--border-hover);
+}
+
+/* Custom hairline range input (Replay cursor) */
+.kairos-range {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+.kairos-range::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--border-strong);
+}
+
+.kairos-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  margin-top: -4px;
+  border-radius: 999px;
+  background: var(--accent-brand);
+  border: 2px solid var(--bg-surface);
+  box-shadow: 0 0 0 1px var(--accent-brand-glow);
+  transition: transform var(--dur-instant) var(--ease-out-expo), box-shadow var(--dur-instant) ease;
+}
+
+.kairos-range:hover::-webkit-slider-thumb {
+  transform: scale(1.16);
+  box-shadow: 0 0 0 3px var(--accent-brand-soft);
+}
+
+.kairos-range:active::-webkit-slider-thumb {
+  transform: scale(1.04);
+}
+
+.kairos-range::-moz-range-track {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--border-strong);
+}
+
+.kairos-range::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: var(--accent-brand);
+  border: 2px solid var(--bg-surface);
+  box-shadow: 0 0 0 1px var(--accent-brand-glow);
+}
+
+/* Hide scrollbars cleanly where horizontal scrolling is used for narrow toolbars */
+.kairos-no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.kairos-no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* Keyframes (transform & opacity only for 60fps compositing) */
+@keyframes kairosFadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes kairosModalPop {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 6px, 0) scale(0.975);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes kairosPalettePop {
+  from {
+    opacity: 0;
+    transform: translate3d(0, -4px, 0) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes kairosViewEnter {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 4px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes kairosToastIn {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 10px, 0) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes kairosPopoverIn {
+  from {
+    opacity: 0;
+    transform: translate3d(0, -4px, 0) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes kairosPulseRing {
+  0% {
+    transform: scale(0.9);
+    opacity: 0.72;
+  }
+  70% {
+    transform: scale(2.1);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(2.1);
+    opacity: 0;
+  }
+}
+
+@keyframes kairosShimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+.kairos-animate-backdrop {
+  animation: kairosFadeIn var(--dur-fast) var(--ease-out-expo) both;
+}
+
+.kairos-animate-modal {
+  animation: kairosModalPop var(--dur-base) var(--ease-out-expo) both;
+}
+
+.kairos-animate-palette {
+  animation: kairosPalettePop var(--dur-instant) var(--ease-out-expo) both;
+}
+
+.kairos-animate-popover {
+  animation: kairosPopoverIn var(--dur-instant) var(--ease-out-expo) both;
+}
+
+.kairos-animate-view {
+  animation: kairosViewEnter var(--dur-fast) var(--ease-out-expo) both;
+}
+
+.kairos-animate-toast {
+  animation: kairosToastIn var(--dur-base) var(--ease-out-expo) both;
+}
+
+.kairos-pulse-ring {
+  animation: kairosPulseRing 2s cubic-bezier(0.24, 0, 0.38, 1) infinite;
+}
+
+.kairos-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--shimmer-base) 25%,
+    var(--shimmer-shine) 50%,
+    var(--shimmer-base) 75%
+  );
+  background-size: 200% 100%;
+  animation: kairosShimmer 1.6s ease-in-out infinite;
+}
+
+/* Smooth slide-over drawer transitions */
+.kairos-drawer-left {
+  transition:
+    transform var(--dur-base) var(--ease-out-expo),
+    opacity var(--dur-fast) ease;
+}
+
+.kairos-drawer-left[data-open="false"] {
+  transform: translate3d(-100%, 0, 0);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.kairos-drawer-left[data-open="true"] {
+  will-change: transform;
+  transform: translate3d(0, 0, 0);
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.kairos-drawer-scrim {
+  transition: opacity var(--dur-fast) ease;
+}
+
+.kairos-drawer-scrim[data-open="false"] {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.kairos-drawer-scrim[data-open="true"] {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* Respect reduced motion preferences */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
