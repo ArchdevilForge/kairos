@@ -69,6 +69,80 @@ func TestBybitTradablePerpIncludesStocksWhileCryptoOnlyExcludes(t *testing.T) {
 	}
 }
 
+func TestBybitTradablePerpCatalogMetadataAndResolve(t *testing.T) {
+	var instCalls atomic.Int32
+	rt := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		var body string
+		switch req.URL.Path {
+		case "/v5/market/instruments-info":
+			instCalls.Add(1)
+			body = `{"retCode":0,"result":{"nextPageCursor":"","list":[
+				{"symbol":"BTCUSDT","contractType":"LinearPerpetual","status":"Trading","quoteCoin":"USDT","settleCoin":"USDT","launchTime":"1600000000000","symbolType":""},
+				{"symbol":"NVDAUSDT","contractType":"LinearPerpetual","status":"Trading","quoteCoin":"USDT","settleCoin":"USDT","launchTime":"1700000000000","symbolType":"stock","fullName":"NVIDIA","underlyingTicker":"NVDA","marketRegion":"US"},
+				{"symbol":"AMDSTOCKUSDT","contractType":"LinearPerpetual","status":"Trading","quoteCoin":"USDT","settleCoin":"USDT","launchTime":"1700000000000","symbolType":"stock","fullName":"Advanced Micro Devices","underlyingTicker":"AMD","marketRegion":"US"},
+				{"symbol":"QQQUSDT","contractType":"LinearPerpetual","status":"Trading","quoteCoin":"USDT","settleCoin":"USDT","launchTime":"1700000000000","symbolType":"ETF","fullName":"Invesco QQQ Trust","underlyingTicker":"QQQ","marketRegion":"US"}
+			]}}`
+		case "/v5/market/tickers":
+			// Simulate tickers failure: catalog must still succeed using instruments-info.
+			return &http.Response{
+				StatusCode: http.StatusInternalServerError,
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(`{"retCode":10001}`)),
+			}, nil
+		default:
+			body = `{"retCode":0,"result":{"list":[]}}`
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(body)),
+		}, nil
+	})
+
+	cleanup := SetBybitTestHooks(rt, "")
+	defer cleanup()
+
+	ctx := context.Background()
+	catalog, allow, err := FetchTradablePerpCatalog(ctx, "bybit")
+	if err != nil {
+		t.Fatalf("FetchTradablePerpCatalog: %v", err)
+	}
+	if len(catalog) != 4 || !allow["NVDA/USDT:USDT"] || !allow["AMDSTOCK/USDT:USDT"] {
+		t.Fatalf("unexpected catalog=%+v allow=%+v", catalog, allow)
+	}
+
+	bySym := make(map[string]TradableInstrument, len(catalog))
+	for _, item := range catalog {
+		bySym[item.Symbol] = item
+	}
+	nvda := bySym["NVDA/USDT:USDT"]
+	if nvda.SymbolType != "stock" || nvda.FullName != "NVIDIA" || nvda.UnderlyingTicker != "NVDA" || nvda.MarketRegion != "US" {
+		t.Fatalf("unexpected NVDA catalog item: %+v", nvda)
+	}
+	if bySym["QQQ/USDT:USDT"].SymbolType != "etf" {
+		t.Fatalf("expected normalized symbol_type=etf, got %+v", bySym["QQQ/USDT:USDT"])
+	}
+	if bySym["BTC/USDT:USDT"].SymbolType != "crypto" {
+		t.Fatalf("expected normalized symbol_type=crypto, got %+v", bySym["BTC/USDT:USDT"])
+	}
+
+	if got, ok := ResolveTradableSymbol(catalog, "NVIDIA"); !ok || got != "NVDA/USDT:USDT" {
+		t.Fatalf("ResolveTradableSymbol(NVIDIA) = (%q, %v), want NVDA/USDT:USDT", got, ok)
+	}
+	if got, ok := ResolveTradableSymbol(catalog, "AMD"); !ok || got != "AMDSTOCK/USDT:USDT" {
+		t.Fatalf("ResolveTradableSymbol(AMD) = (%q, %v), want AMDSTOCK/USDT:USDT", got, ok)
+	}
+	if got, ok := ResolveTradableSymbol(catalog, "AMD/USDT:USDT"); !ok || got != "AMDSTOCK/USDT:USDT" {
+		t.Fatalf("ResolveTradableSymbol(AMD/USDT:USDT) = (%q, %v), want AMDSTOCK/USDT:USDT", got, ok)
+	}
+	if _, ok := ResolveTradableSymbol(catalog, "FAKECOIN"); ok {
+		t.Fatal("ResolveTradableSymbol(FAKECOIN) unexpectedly succeeded")
+	}
+	if instCalls.Load() != 1 {
+		t.Fatalf("expected 1 instruments-info call, got %d", instCalls.Load())
+	}
+}
+
 func TestAggregateTradesComputesFIFORealizedPnLWhenExecPnLOmitted(t *testing.T) {
 	fills := []cache.TradeFill{
 		{

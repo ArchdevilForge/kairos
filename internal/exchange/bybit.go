@@ -109,11 +109,7 @@ func resetBybitTestCaches() {
 	bybitCryptoCache.sorted = nil
 	bybitCryptoCache.mu.Unlock()
 
-	bybitTradableCache.mu.Lock()
-	bybitTradableCache.fetchedAt = time.Time{}
-	bybitTradableCache.allow = nil
-	bybitTradableCache.sorted = nil
-	bybitTradableCache.mu.Unlock()
+	ResetTradableCaches()
 
 	bybitUniverseInfoCache.mu.Lock()
 	bybitUniverseInfoCache.fetchedAt = time.Time{}

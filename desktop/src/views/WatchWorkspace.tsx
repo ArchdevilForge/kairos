@@ -15,6 +15,7 @@ import {
   type DrawingKind,
   type MetricsPoint,
   type Notice,
+  type SymbolCatalogItem,
   type Timeframe,
   type WatchWorkspaceProps,
 } from '../types/kairos';
@@ -580,6 +581,8 @@ export function WatchWorkspace({
       .then((res) => {
         if (cancelled) return;
         const loaded = res.bars ?? [];
+        const resolvedSym = res.symbol?.trim();
+        const canonicalChanged = Boolean(resolvedSym && !sameSymbol(resolvedSym, activeSymbol));
         if (loaded.length < 2) {
           primaryHistoryRef.current.exhausted = true;
         }
@@ -596,6 +599,14 @@ export function WatchWorkspace({
           marketCycle,
           symbolCycle,
         });
+        if (canonicalChanged && resolvedSym) {
+          writeBarCache(`${resolvedSym}|${activeTf}`, {
+            bars: mergedBars,
+            marketCycle,
+            symbolCycle,
+          });
+          onSelectSymbol(resolvedSym);
+        }
         setPrimarySlice({
           bars: mergedBars,
           metrics: res.metrics ?? [],
@@ -621,7 +632,7 @@ export function WatchWorkspace({
       cancelled = true;
       ac.abort();
     };
-  }, [client, activeSymbol, activeTf, writeBarCache]);
+  }, [client, activeSymbol, activeTf, writeBarCache, onSelectSymbol]);
 
   // Load primary symbol drawings only when activeSymbol changes (never on timeframe switch)
   useEffect(() => {
@@ -670,6 +681,8 @@ export function WatchWorkspace({
       .then((res) => {
         if (cancelled) return;
         const loaded = res.bars ?? [];
+        const resolvedSym = res.symbol?.trim();
+        const canonicalChanged = Boolean(resolvedSym && !sameSymbol(resolvedSym, compareSymbol));
         if (loaded.length < 2) {
           compareHistoryRef.current.exhausted = true;
         }
@@ -686,6 +699,14 @@ export function WatchWorkspace({
           marketCycle,
           symbolCycle,
         });
+        if (canonicalChanged && resolvedSym) {
+          writeBarCache(`${resolvedSym}|${compareTf}`, {
+            bars: mergedBars,
+            marketCycle,
+            symbolCycle,
+          });
+          setCompareSymbol(resolvedSym);
+        }
         setCompareSlice({
           bars: mergedBars,
           metrics: res.metrics ?? [],
@@ -1778,6 +1799,7 @@ export function WatchWorkspace({
                   <CompareSymbolPicker
                     symbol={compareSymbol}
                     symbols={cryptoSymbols}
+                    symbolCatalog={bootstrap.status.symbol_catalog}
                     onSelect={(nextSym) => {
                       if (sameSymbol(nextSym, compareSymbol)) return;
                       setCompareSymbol(nextSym);
@@ -1834,10 +1856,12 @@ export function WatchWorkspace({
 function CompareSymbolPicker({
   symbol,
   symbols,
+  symbolCatalog,
   onSelect,
 }: {
   symbol: string;
   symbols: string[];
+  symbolCatalog?: SymbolCatalogItem[];
   onSelect: (sym: string) => void;
 }) {
   const { t } = useI18n();
@@ -1853,11 +1877,21 @@ function CompareSymbolPicker({
   const popupRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
+  const catalogBySymbol = useMemo(() => {
+    const map = new Map<string, SymbolCatalogItem>();
+    for (const item of symbolCatalog ?? []) {
+      if (item?.symbol) {
+        map.set(item.symbol.toUpperCase(), item);
+      }
+    }
+    return map;
+  }, [symbolCatalog]);
+
   const updatePopupPos = useCallback(() => {
     const trigger = triggerRef.current;
     if (!trigger) return;
     const rect = trigger.getBoundingClientRect();
-    const width = 224;
+    const width = 264;
     const margin = 8;
     const headerHeight = 36;
     const spaceBelow = window.innerHeight - rect.bottom - margin;
@@ -1914,11 +1948,44 @@ function CompareSymbolPicker({
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const list = q
-      ? symbols.filter((s) => cleanSymbol(s, marketAllLabel).toLowerCase().includes(q))
-      : symbols;
+    if (!q) return symbols.slice(0, 60);
+    const scoreOf = (s: string): number => {
+      const meta = catalogBySymbol.get(s.toUpperCase());
+      const base = shortTicker(s).toLowerCase();
+      const underlying = (meta?.underlying_ticker ?? '').toLowerCase();
+      const fullName = (meta?.full_name ?? '').toLowerCase();
+      if (base === q || underlying === q) return 0;
+      if (fullName === q) return 1;
+      if (base.startsWith(q) || underlying.startsWith(q)) return 2;
+      if (fullName.startsWith(q)) return 3;
+      return 4;
+    };
+    const list = symbols.filter((s) => {
+      const meta = catalogBySymbol.get(s.toUpperCase());
+      const st = (meta?.symbol_type ?? '').toLowerCase();
+      const catAliases =
+        st === 'stock'
+          ? 'stock stocks 美股 股票'
+          : st === 'etf'
+            ? 'etf 美股 基金'
+            : st === 'commodity'
+              ? 'commodity 大宗 商品 黄金'
+              : st === 'forex'
+                ? 'forex 外汇'
+                : st;
+      const hay = [
+        cleanSymbol(s, marketAllLabel),
+        meta?.full_name ?? '',
+        meta?.underlying_ticker ?? '',
+        catAliases,
+      ]
+        .join(' ')
+        .toLowerCase();
+      return hay.includes(q);
+    });
+    list.sort((a, b) => scoreOf(a) - scoreOf(b));
     return list.slice(0, 60);
-  }, [symbols, query, marketAllLabel]);
+  }, [symbols, catalogBySymbol, query, marketAllLabel]);
 
   return (
     <div className="relative shrink-0">
@@ -1944,7 +2011,7 @@ function CompareSymbolPicker({
         ? createPortal(
             <div
               ref={popupRef}
-              className="kairos-floating kairos-animate-popover fixed z-[70] w-56 overflow-hidden rounded-[8px]"
+              className="kairos-floating kairos-animate-popover fixed z-[70] w-66 overflow-hidden rounded-[8px]"
               style={{
                 top: `${popupPos.top}px`,
                 left: `${popupPos.left}px`,
@@ -1987,6 +2054,7 @@ function CompareSymbolPicker({
                 ) : (
                   filtered.map((s) => {
                     const active = sameSymbol(s, symbol);
+                    const meta = catalogBySymbol.get(s.toUpperCase());
                     return (
                       <button
                         key={s}
@@ -1997,15 +2065,35 @@ function CompareSymbolPicker({
                           onSelect(s);
                           setOpen(false);
                         }}
-                        className="kairos-press flex w-full items-center justify-between rounded px-2 py-1 text-left font-mono text-xs tabular-nums transition-colors hover:bg-[var(--bg-hover)]"
+                        className="kairos-press flex w-full items-center justify-between gap-2 rounded px-2 py-1 text-left font-mono text-xs tabular-nums transition-colors hover:bg-[var(--bg-hover)]"
                         style={{
                           backgroundColor: active ? 'var(--bg-elevated)' : 'transparent',
                           color: active ? 'var(--accent-brand-text)' : 'var(--text-primary)',
                         }}
                       >
-                        <span>{cleanSymbol(s, marketAllLabel)}</span>
+                        <span className="min-w-0 truncate">
+                          <span>{cleanSymbol(s, marketAllLabel)}</span>
+                          {meta?.full_name ? (
+                            <span
+                              className="ml-1.5 font-sans text-[10px]"
+                              style={{ color: 'var(--text-muted)' }}
+                            >
+                              {meta.full_name}
+                            </span>
+                          ) : null}
+                        </span>
                         {active ? (
-                          <span className="text-[10px]">{t('watch.comparePicker.current')}</span>
+                          <span className="shrink-0 text-[10px]">{t('watch.comparePicker.current')}</span>
+                        ) : meta?.symbol_type && meta.symbol_type !== 'crypto' ? (
+                          <span
+                            className="shrink-0 rounded px-1 py-0.5 font-sans text-[9px]"
+                            style={{
+                              backgroundColor: 'var(--bg-canvas)',
+                              color: 'var(--text-muted)',
+                            }}
+                          >
+                            {meta.symbol_type.toUpperCase()}
+                          </span>
                         ) : null}
                       </button>
                     );

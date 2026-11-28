@@ -21,19 +21,44 @@ import (
 	"github.com/ArchdevilForge/kairos/internal/types"
 )
 
+const (
+	defaultAutoSyncInterval     = 2 * time.Minute
+	defaultAutoSyncInitialDelay = 500 * time.Millisecond
+	defaultBootstrapCatalogWait = 6 * time.Second
+)
+
+type accountSyncCall struct {
+	done chan struct{}
+	resp AccountSyncResponse
+	err  error
+}
+
 // Server exposes the local loopback HTTP & WebSocket API for Kairos Desk.
 type Server struct {
-	pipeline     *engine.Pipeline
-	cache        *cache.Store
-	acctClients  map[string]exchange.AccountClient
-	restFallback exchange.Exchange
-	token        string
+	pipeline      *engine.Pipeline
+	cache         *cache.Store
+	acctClientsMu sync.RWMutex
+	acctClients   map[string]exchange.AccountClient
+	restFallback  exchange.Exchange
+	token         string
 
 	wsHub *wsHub
 
 	bgCtx    context.Context
 	bgCancel context.CancelFunc
 	bgWG     sync.WaitGroup
+
+	bgLoopsMu            sync.Mutex
+	bgLoopsStarted       bool
+	autoSyncInterval     time.Duration
+	autoSyncInitialDelay time.Duration
+
+	catalogWarmMu  sync.Mutex
+	catalogWarming bool
+
+	syncMu       sync.Mutex
+	syncInFlight map[string]*accountSyncCall
+	lastSyncAt   map[string]time.Time
 
 	cycleCacheMu sync.Mutex
 	cycleCache   map[string]cachedCycle
@@ -73,17 +98,227 @@ func NewServer(pipeline *engine.Pipeline, cacheStore *cache.Store, token string)
 			"bybit":   exchange.NewAccountClient("bybit"),
 			"binance": exchange.NewAccountClient("binance"),
 		},
-		restFallback: fb,
-		token:        token,
-		bgCtx:        bgCtx,
-		bgCancel:     bgCancel,
-		cycleCache:   make(map[string]cachedCycle),
-		cycleWarming: make(map[string]bool),
-		barsFetchAt:  make(map[string]time.Time),
-		barsWarming:  make(map[string]bool),
+		restFallback:         fb,
+		token:                token,
+		bgCtx:                bgCtx,
+		bgCancel:             bgCancel,
+		autoSyncInterval:     defaultAutoSyncInterval,
+		autoSyncInitialDelay: defaultAutoSyncInitialDelay,
+		syncInFlight:         make(map[string]*accountSyncCall),
+		lastSyncAt:           make(map[string]time.Time),
+		cycleCache:           make(map[string]cachedCycle),
+		cycleWarming:         make(map[string]bool),
+		barsFetchAt:          make(map[string]time.Time),
+		barsWarming:          make(map[string]bool),
 	}
 	s.wsHub = newWSHub(s)
 	return s
+}
+
+// SetAccountClient overrides the read-only AccountClient for an exchange (used in tests).
+func (s *Server) SetAccountClient(exchangeName string, cli exchange.AccountClient) {
+	if s == nil || cli == nil {
+		return
+	}
+	ex := strings.ToLower(strings.TrimSpace(exchangeName))
+	if ex == "" {
+		ex = "bybit"
+	}
+	s.acctClientsMu.Lock()
+	if s.acctClients == nil {
+		s.acctClients = make(map[string]exchange.AccountClient)
+	}
+	s.acctClients[ex] = cli
+	s.acctClientsMu.Unlock()
+}
+
+// SetAutoSyncInterval configures the periodic account auto-sync interval and initial startup delay.
+func (s *Server) SetAutoSyncInterval(interval, initialDelay time.Duration) {
+	if s == nil {
+		return
+	}
+	s.bgLoopsMu.Lock()
+	if interval > 0 {
+		s.autoSyncInterval = interval
+	}
+	if initialDelay >= 0 {
+		s.autoSyncInitialDelay = initialDelay
+	}
+	s.bgLoopsMu.Unlock()
+}
+
+// StartBackgroundLoops launches background catalog warming and periodic read-only
+// account auto-sync loops for production daemon mode. Safe to call multiple times.
+func (s *Server) StartBackgroundLoops() {
+	if s == nil || s.bgCtx.Err() != nil {
+		return
+	}
+	s.bgLoopsMu.Lock()
+	if s.bgLoopsStarted {
+		s.bgLoopsMu.Unlock()
+		return
+	}
+	s.bgLoopsStarted = true
+	interval := s.autoSyncInterval
+	if interval <= 0 {
+		interval = defaultAutoSyncInterval
+	}
+	initialDelay := s.autoSyncInitialDelay
+	s.bgLoopsMu.Unlock()
+
+	s.warmCatalogAsync()
+
+	if s.cache == nil {
+		return
+	}
+	s.bgWG.Add(1)
+	go func() {
+		defer s.bgWG.Done()
+		if initialDelay > 0 {
+			timer := time.NewTimer(initialDelay)
+			select {
+			case <-s.bgCtx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
+		}
+		if s.bgCtx.Err() != nil {
+			return
+		}
+		initialStale := 15 * time.Second
+		if interval < initialStale {
+			initialStale = interval / 2
+		}
+		_, _, _, _ = s.runAccountSync(s.bgCtx, false, initialStale)
+
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-s.bgCtx.Done():
+				return
+			case <-ticker.C:
+				_, _, _, _ = s.runAccountSync(s.bgCtx, false, interval/2)
+			}
+		}
+	}()
+}
+
+func (s *Server) isBackgroundLoopsRunning() bool {
+	if s == nil {
+		return false
+	}
+	s.bgLoopsMu.Lock()
+	running := s.bgLoopsStarted
+	s.bgLoopsMu.Unlock()
+	return running && s.bgCtx.Err() == nil
+}
+
+func (s *Server) triggerBackgroundAccountSync(minStale time.Duration) {
+	if !s.isBackgroundLoopsRunning() || s.cache == nil {
+		return
+	}
+	if !s.activeAccountClient().HasKeys() {
+		return
+	}
+	s.bgWG.Add(1)
+	go func() {
+		defer s.bgWG.Done()
+		_, _, _, _ = s.runAccountSync(s.bgCtx, false, minStale)
+	}()
+}
+
+func (s *Server) warmCatalogAsync() {
+	if s == nil || s.bgCtx.Err() != nil {
+		return
+	}
+	s.catalogWarmMu.Lock()
+	if s.catalogWarming || s.bgCtx.Err() != nil {
+		s.catalogWarmMu.Unlock()
+		return
+	}
+	s.catalogWarming = true
+	s.bgWG.Add(1)
+	s.catalogWarmMu.Unlock()
+
+	exName := s.activeExchange()
+	go func() {
+		defer func() {
+			s.catalogWarmMu.Lock()
+			s.catalogWarming = false
+			s.catalogWarmMu.Unlock()
+			s.bgWG.Done()
+		}()
+
+		backoffs := []time.Duration{0, 2 * time.Second, 5 * time.Second}
+		for _, wait := range backoffs {
+			if wait > 0 {
+				timer := time.NewTimer(wait)
+				select {
+				case <-s.bgCtx.Done():
+					timer.Stop()
+					return
+				case <-timer.C:
+				}
+			}
+			if s.bgCtx.Err() != nil {
+				return
+			}
+			reqCtx, cancel := context.WithTimeout(s.bgCtx, 15*time.Second)
+			catalog, allow, err := exchange.FetchTradablePerpCatalog(reqCtx, exName)
+			cancel()
+			if err != nil || len(allow) == 0 {
+				continue
+			}
+
+			avail := make([]string, 0, len(catalog))
+			for _, item := range catalog {
+				avail = append(avail, item.Symbol)
+			}
+			avail, catalog = s.appendAccountSymbols(s.bgCtx, exName, avail, catalog)
+			if s.wsHub != nil && s.bgCtx.Err() == nil {
+				s.wsHub.broadcastCatalogUpdated(avail, catalog)
+			}
+			return
+		}
+	}()
+}
+
+func (s *Server) appendAccountSymbols(
+	ctx context.Context,
+	exName string,
+	availableSymbols []string,
+	catalog []exchange.TradableInstrument,
+) ([]string, []exchange.TradableInstrument) {
+	if s.cache == nil {
+		return availableSymbols, catalog
+	}
+	availSet := make(map[string]bool, len(availableSymbols))
+	for _, sym := range availableSymbols {
+		availSet[sym] = true
+	}
+	appendSym := func(sym string) {
+		if sym == "" || availSet[sym] {
+			return
+		}
+		availSet[sym] = true
+		availableSymbols = append(availableSymbols, sym)
+		if len(catalog) > 0 {
+			catalog = append(catalog, exchange.TradableInstrument{Symbol: sym})
+		}
+	}
+	if openPositions, err := s.cache.ListOpenPositionsForExchange(ctx, exName); err == nil {
+		for _, pos := range openPositions {
+			appendSym(pos.Symbol)
+		}
+	}
+	if syncedTrades, err := s.cache.ListSyncedTradesForExchange(ctx, exName, ""); err == nil {
+		for _, st := range syncedTrades {
+			appendSym(st.Symbol)
+		}
+	}
+	return availableSymbols, catalog
 }
 
 func restoreNonSecretSettings(ctx context.Context, cs *cache.Store, p *engine.Pipeline) {
@@ -217,10 +452,15 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 	} else {
 		pulseView.State = types.MarketStateQuiet
 	}
-	availCtx, availCancel := context.WithTimeout(ctx, 4*time.Second)
-	availableSymbols, tradableAllow, availErr := exchange.FetchTradablePerpSymbols(availCtx, exName)
+	availCtx, availCancel := context.WithTimeout(ctx, defaultBootstrapCatalogWait)
+	symbolCatalog, tradableAllow, availErr := exchange.FetchTradablePerpCatalog(availCtx, exName)
 	availCancel()
+	var availableSymbols []string
 	if availErr == nil && len(tradableAllow) > 0 {
+		availableSymbols = make([]string, 0, len(symbolCatalog))
+		for _, item := range symbolCatalog {
+			availableSymbols = append(availableSymbols, item.Symbol)
+		}
 		filtered := make([]string, 0, len(symbols))
 		for _, sym := range symbols {
 			if tradableAllow[sym] {
@@ -231,7 +471,11 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 			symbols = filtered
 		}
 	} else {
-		availableSymbols = symbols
+		availableSymbols = append([]string(nil), symbols...)
+		symbolCatalog = nil
+		if s.isBackgroundLoopsRunning() {
+			s.warmCatalogAsync()
+		}
 	}
 	if anomalies == nil {
 		anomalies = []types.AnomalyEvent{}
@@ -293,17 +537,21 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 	for _, sym := range availableSymbols {
 		availSet[sym] = true
 	}
-	for _, pos := range openPositions {
-		if pos.Symbol != "" && !availSet[pos.Symbol] {
-			availSet[pos.Symbol] = true
-			availableSymbols = append(availableSymbols, pos.Symbol)
+	appendAccountSym := func(sym string) {
+		if sym == "" || availSet[sym] {
+			return
+		}
+		availSet[sym] = true
+		availableSymbols = append(availableSymbols, sym)
+		if len(symbolCatalog) > 0 {
+			symbolCatalog = append(symbolCatalog, exchange.TradableInstrument{Symbol: sym})
 		}
 	}
+	for _, pos := range openPositions {
+		appendAccountSym(pos.Symbol)
+	}
 	for _, st := range syncedTrades {
-		if st.Symbol != "" && !availSet[st.Symbol] {
-			availSet[st.Symbol] = true
-			availableSymbols = append(availableSymbols, st.Symbol)
-		}
+		appendAccountSym(st.Symbol)
 	}
 
 	var mktCycle *types.CycleMap
@@ -325,6 +573,7 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 			Exchange:         exName,
 			Symbols:          symbols,
 			AvailableSymbols: availableSymbols,
+			SymbolCatalog:    symbolCatalog,
 			Timezone:         loc.String(),
 			InLiveWindow:     gcfg.InLiveWindow(now),
 			WindowStartHour:  gcfg.WindowStartHour,
@@ -488,33 +737,155 @@ func (s *Server) handleAccountSync(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "cache store unavailable", "CACHE_UNAVAILABLE")
 		return
 	}
+	var minStale time.Duration
+	force := true
+	if rawStale := strings.TrimSpace(r.URL.Query().Get("if_stale_sec")); rawStale != "" {
+		if sec, err := strconv.Atoi(rawStale); err == nil && sec > 0 {
+			if sec > 3600 {
+				sec = 3600
+			}
+			minStale = time.Duration(sec) * time.Second
+			force = false
+		}
+	}
+
+	resp, errStatus, errCode, err := s.runAccountSync(r.Context(), force, minStale)
+	if err != nil {
+		if errStatus == 0 {
+			errStatus = http.StatusBadGateway
+		}
+		writeError(w, errStatus, err.Error(), errCode)
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) runAccountSync(
+	ctx context.Context,
+	force bool,
+	minStale time.Duration,
+) (AccountSyncResponse, int, string, error) {
+	if s.cache == nil {
+		return AccountSyncResponse{}, http.StatusServiceUnavailable, "CACHE_UNAVAILABLE", errors.New("cache store unavailable")
+	}
 	exName := s.activeExchange()
 	acctClient := s.activeAccountClient()
 	if !acctClient.HasKeys() {
-		writeError(w, http.StatusBadRequest, exName+" read-only API credentials not configured", "NO_API_KEYS")
-		return
+		if !force {
+			return AccountSyncResponse{
+				Ok:      true,
+				Skipped: true,
+				Account: s.accountStatus(ctx),
+			}, 0, "", nil
+		}
+		return AccountSyncResponse{}, http.StatusBadRequest, "NO_API_KEYS", errors.New(exName + " read-only API credentials not configured")
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 45*time.Second)
-	defer cancel()
 
-	out, err := acctClient.SyncToCache(ctx, s.cache, s.journal(), s.trackedSymbols(ctx))
-	if err != nil {
-		writeError(w, http.StatusBadGateway, exName+" account sync failed: "+err.Error(), "ACCOUNT_SYNC_FAILED")
-		return
+	if !force && minStale > 0 {
+		acct := s.accountStatus(ctx)
+		if acct.SyncError == "" && s.isAccountRecentlySynced(exName, acct.LastSyncAt, minStale) {
+			return AccountSyncResponse{
+				Ok:      true,
+				Skipped: true,
+				Account: acct,
+			}, 0, "", nil
+		}
 	}
-	acct := s.accountStatus(ctx)
-	if positions, err := s.cache.ListOpenPositionsForExchange(ctx, exName); err == nil {
-		s.wsHub.broadcastAccountUpdated(acct, positions)
-	} else {
-		s.wsHub.broadcastAccountUpdated(acct, nil)
+
+	s.syncMu.Lock()
+	if s.syncInFlight == nil {
+		s.syncInFlight = make(map[string]*accountSyncCall)
 	}
-	writeJSON(w, http.StatusOK, AccountSyncResponse{
-		Ok:            true,
-		SyncedTrades:  out.SyncedTrades,
-		SyncedFills:   out.SyncedFills,
-		OpenPositions: out.OpenPositions,
-		Account:       acct,
-	})
+	call := s.syncInFlight[exName]
+	if call == nil {
+		// Re-check staleness inside syncMu so a second caller that raced with a just-finished sync skips cleanly.
+		if !force && minStale > 0 {
+			if last, ok := s.lastSyncAt[exName]; ok && time.Since(last) < minStale {
+				s.syncMu.Unlock()
+				return AccountSyncResponse{
+					Ok:      true,
+					Skipped: true,
+					Account: s.accountStatus(ctx),
+				}, 0, "", nil
+			}
+		}
+		call = &accountSyncCall{done: make(chan struct{})}
+		s.syncInFlight[exName] = call
+		s.bgWG.Add(1)
+		go func(c *accountSyncCall, exchangeName string, client exchange.AccountClient) {
+			defer s.bgWG.Done()
+			syncCtx, cancel := context.WithTimeout(s.bgCtx, 45*time.Second)
+			defer cancel()
+
+			out, syncErr := client.SyncToCache(syncCtx, s.cache, s.journal(), s.trackedSymbols(syncCtx))
+			acct := s.accountStatus(syncCtx)
+			if syncErr != nil {
+				c.err = errors.New(exchangeName + " account sync failed: " + syncErr.Error())
+				if s.wsHub != nil {
+					if positions, err := s.cache.ListOpenPositionsForExchange(syncCtx, exchangeName); err == nil {
+						s.wsHub.broadcastAccountUpdated(acct, positions, 0, 0)
+					} else {
+						s.wsHub.broadcastAccountUpdated(acct, nil, 0, 0)
+					}
+				}
+			} else {
+				c.resp = AccountSyncResponse{
+					Ok:            true,
+					SyncedTrades:  out.SyncedTrades,
+					SyncedFills:   out.SyncedFills,
+					OpenPositions: out.OpenPositions,
+					Account:       acct,
+				}
+				if s.wsHub != nil {
+					if positions, err := s.cache.ListOpenPositionsForExchange(syncCtx, exchangeName); err == nil {
+						s.wsHub.broadcastAccountUpdated(acct, positions, out.SyncedTrades, out.SyncedFills)
+					} else {
+						s.wsHub.broadcastAccountUpdated(acct, nil, out.SyncedTrades, out.SyncedFills)
+					}
+				}
+			}
+
+			s.syncMu.Lock()
+			if syncErr == nil {
+				if s.lastSyncAt == nil {
+					s.lastSyncAt = make(map[string]time.Time)
+				}
+				s.lastSyncAt[exchangeName] = time.Now()
+			}
+			if s.syncInFlight[exchangeName] == c {
+				delete(s.syncInFlight, exchangeName)
+			}
+			close(c.done)
+			s.syncMu.Unlock()
+		}(call, exName, acctClient)
+	}
+	s.syncMu.Unlock()
+
+	select {
+	case <-call.done:
+		if call.err != nil {
+			return AccountSyncResponse{}, http.StatusBadGateway, "ACCOUNT_SYNC_FAILED", call.err
+		}
+		return call.resp, 0, "", nil
+	case <-ctx.Done():
+		return AccountSyncResponse{}, http.StatusGatewayTimeout, "REQUEST_CANCELED", ctx.Err()
+	}
+}
+
+func (s *Server) isAccountRecentlySynced(exName string, persistedLastSyncSec int64, minStale time.Duration) bool {
+	if minStale <= 0 {
+		return false
+	}
+	s.syncMu.Lock()
+	memAt := s.lastSyncAt[exName]
+	s.syncMu.Unlock()
+	if !memAt.IsZero() && time.Since(memAt) < minStale {
+		return true
+	}
+	if persistedLastSyncSec > 0 && time.Since(time.Unix(persistedLastSyncSec, 0)) < minStale {
+		return true
+	}
+	return false
 }
 
 func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
@@ -553,6 +924,10 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if proxyChanged {
 		s.clearBarsFetchCache()
+		if s.isBackgroundLoopsRunning() {
+			s.warmCatalogAsync()
+			s.triggerBackgroundAccountSync(0)
+		}
 		if s.pipeline != nil && s.bgCtx.Err() == nil {
 			s.bgWG.Add(1)
 			go func() {
@@ -565,9 +940,13 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if status, code, msg := s.applyReadonlyKeySettings(r.Context(), req); status != 0 {
+	keysUpdated, status, code, msg := s.applyReadonlyKeySettings(r.Context(), req)
+	if status != 0 {
 		writeError(w, status, msg, code)
 		return
+	}
+	if keysUpdated && s.isBackgroundLoopsRunning() {
+		s.triggerBackgroundAccountSync(0)
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
@@ -583,7 +962,7 @@ type readonlyKeySpec struct {
 	client      exchange.AccountClient
 }
 
-func (s *Server) applyReadonlyKeySettings(ctx context.Context, req UpdateSettingsRequest) (int, string, string) {
+func (s *Server) applyReadonlyKeySettings(ctx context.Context, req UpdateSettingsRequest) (bool, int, string, string) {
 	specs := []readonlyKeySpec{
 		{
 			exName:      "bybit",
@@ -616,18 +995,20 @@ func (s *Server) applyReadonlyKeySettings(ctx context.Context, req UpdateSetting
 		}
 		sp.client = s.accountClientFor(sp.exName)
 		if !sp.client.HasKeys() && (sp.key == "") != (sp.sec == "") {
-			return http.StatusBadRequest, "INCOMPLETE_API_KEYS", "请同时填写完整的 " + sp.displayName + " 只读 API Key 和 API Secret"
+			return false, http.StatusBadRequest, "INCOMPLETE_API_KEYS", "请同时填写完整的 " + sp.displayName + " 只读 API Key 和 API Secret"
 		}
 	}
 
+	updated := false
 	for _, sp := range specs {
 		if sp.key == "" && sp.sec == "" {
 			continue
 		}
 		if err := sp.save(sp.key, sp.sec); err != nil {
-			return http.StatusInternalServerError, "SECRETS_SAVE_FAILED", err.Error()
+			return false, http.StatusInternalServerError, "SECRETS_SAVE_FAILED", err.Error()
 		}
 		sp.client.SetKeys(sp.key, sp.sec)
+		updated = true
 		if s.cache != nil {
 			_ = s.cache.SetExchangeMeta(ctx, sp.exName, "sync_error", "")
 			if sp.exName == "binance" {
@@ -635,7 +1016,7 @@ func (s *Server) applyReadonlyKeySettings(ctx context.Context, req UpdateSetting
 			}
 		}
 	}
-	return 0, "", ""
+	return updated, 0, "", ""
 }
 
 func (s *Server) handleSystemWake(w http.ResponseWriter, r *http.Request) {
@@ -643,6 +1024,10 @@ func (s *Server) handleSystemWake(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 		defer cancel()
 		_ = s.pipeline.CatchUpAndBackfill(ctx)
+	}
+	if s.isBackgroundLoopsRunning() {
+		s.warmCatalogAsync()
+		s.triggerBackgroundAccountSync(30 * time.Second)
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
@@ -694,13 +1079,17 @@ func (s *Server) activeExchange() string {
 
 func (s *Server) accountClientFor(exName string) exchange.AccountClient {
 	ex := strings.ToLower(strings.TrimSpace(exName))
-	if s != nil && s.acctClients != nil {
-		if cli, ok := s.acctClients[ex]; ok && cli != nil {
-			return cli
-		}
-		if ex != "binance" {
-			if cli, ok := s.acctClients["bybit"]; ok && cli != nil {
+	if s != nil {
+		s.acctClientsMu.RLock()
+		defer s.acctClientsMu.RUnlock()
+		if s.acctClients != nil {
+			if cli, ok := s.acctClients[ex]; ok && cli != nil {
 				return cli
+			}
+			if ex != "binance" {
+				if cli, ok := s.acctClients["bybit"]; ok && cli != nil {
+					return cli
+				}
 			}
 		}
 	}

@@ -48,7 +48,7 @@ export const watchZh = {
   'watch.queue.switchSymbolTitle': '切换主图至 {symbol}',
 
   'watch.comparePicker.tooltip': '切换对照永续合约（Crypto / 美股）',
-  'watch.comparePicker.searchPlaceholder': '搜索永续合约（如 BTC、NVDA）…',
+  'watch.comparePicker.searchPlaceholder': '搜索永续合约（如 BTC、NVDA、NVIDIA、美股）…',
   'watch.comparePicker.empty': '无匹配永续合约',
   'watch.comparePicker.current': '当前',
 
@@ -106,7 +106,7 @@ export const watchEn: Record<keyof typeof watchZh, string> = {
   'watch.queue.switchSymbolTitle': 'Switch primary chart to {symbol}',
 
   'watch.comparePicker.tooltip': 'Switch comparison perpetual (Crypto & Stocks)',
-  'watch.comparePicker.searchPlaceholder': 'Search perpetuals (e.g. BTC, NVDA)…',
+  'watch.comparePicker.searchPlaceholder': 'Search perpetuals (e.g. BTC, NVDA, NVIDIA, Stock)…',
   'watch.comparePicker.empty': 'No matching perpetuals',
   'watch.comparePicker.current': 'Active',
 

@@ -89,21 +89,22 @@ type AccountStatusView struct {
 
 // DeskStatus is status inside BootstrapPayload.
 type DeskStatus struct {
-	Exchange          string             `json:"exchange"`
-	Symbols           []string           `json:"symbols"`
-	AvailableSymbols  []string           `json:"available_symbols,omitempty"`
-	Timezone          string             `json:"timezone"`
-	InLiveWindow      bool               `json:"in_live_window"`
-	WindowStartHour   int                `json:"window_start_hour"`
-	WindowEndHour     int                `json:"window_end_hour"`
-	Pulse             PulseStatus        `json:"pulse"`
-	SeasonRegime      types.SeasonRegime `json:"season_regime"`
-	WinterDefenseHint string             `json:"winter_defense_hint,omitempty"`
-	MarketCycle       *types.CycleMap    `json:"market_cycle,omitempty"`
-	GateHealth        GateHealth         `json:"gate_health"`
-	RiskConfig        RiskConfigView     `json:"risk_config"`
-	Account           AccountStatusView  `json:"account"`
-	ProxyURL          string             `json:"proxy_url,omitempty"`
+	Exchange          string                        `json:"exchange"`
+	Symbols           []string                      `json:"symbols"`
+	AvailableSymbols  []string                      `json:"available_symbols,omitempty"`
+	SymbolCatalog     []exchange.TradableInstrument `json:"symbol_catalog,omitempty"`
+	Timezone          string                        `json:"timezone"`
+	InLiveWindow      bool                          `json:"in_live_window"`
+	WindowStartHour   int                           `json:"window_start_hour"`
+	WindowEndHour     int                           `json:"window_end_hour"`
+	Pulse             PulseStatus                   `json:"pulse"`
+	SeasonRegime      types.SeasonRegime            `json:"season_regime"`
+	WinterDefenseHint string                        `json:"winter_defense_hint,omitempty"`
+	MarketCycle       *types.CycleMap               `json:"market_cycle,omitempty"`
+	GateHealth        GateHealth                    `json:"gate_health"`
+	RiskConfig        RiskConfigView                `json:"risk_config"`
+	Account           AccountStatusView             `json:"account"`
+	ProxyURL          string                        `json:"proxy_url,omitempty"`
 }
 
 // TicketBundle joins a DecisionTicket with its authoritative journal records and cached execution details.
@@ -170,6 +171,7 @@ type UpdateSettingsRequest struct {
 // AccountSyncResponse is returned by POST /api/v1/account/sync.
 type AccountSyncResponse struct {
 	Ok            bool              `json:"ok"`
+	Skipped       bool              `json:"skipped,omitempty"`
 	SyncedTrades  int               `json:"synced_trades"`
 	SyncedFills   int               `json:"synced_fills"`
 	OpenPositions int               `json:"open_positions"`

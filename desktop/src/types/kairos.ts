@@ -518,10 +518,19 @@ export interface AccountStatusView {
   sync_error?: string;
 }
 
+export interface SymbolCatalogItem {
+  symbol: string;
+  symbol_type?: string;
+  full_name?: string;
+  underlying_ticker?: string;
+  market_region?: string;
+}
+
 export interface DeskStatus {
   exchange: string;
   symbols: string[];
   available_symbols?: string[];
+  symbol_catalog?: SymbolCatalogItem[];
   timezone: string;
   in_live_window: boolean;
   window_start_hour: number;
@@ -617,6 +626,7 @@ export interface UpdateSettingsRequest {
 
 export interface AccountSyncResponse {
   ok: boolean;
+  skipped?: boolean;
   synced_trades: number;
   synced_fills: number;
   open_positions: number;
@@ -816,6 +826,14 @@ export type WsEvent =
       type: 'account_updated';
       account: DeskStatus['account'];
       open_positions?: PositionSnapshot[];
+      synced_trades?: number;
+      synced_fills?: number;
+      synced_at_ms?: number;
+    }
+  | {
+      type: 'catalog_updated';
+      available_symbols: string[];
+      symbol_catalog?: SymbolCatalogItem[];
     }
   | {
       type: 'subscribed';
@@ -848,6 +866,8 @@ export interface ReviewWorkspaceProps {
   initialSubjectId?: string;
   onSelectSymbol: (sym: string) => void;
   onRefreshBootstrap: () => Promise<void>;
+  syncingAccount?: boolean;
+  onSyncAccount?: () => Promise<AccountSyncResponse | undefined>;
 }
 
 export interface StatsWorkspaceProps {
@@ -860,6 +880,8 @@ export interface StatsWorkspaceProps {
     subjectKind?: ReviewSubjectType,
     subjectId?: string,
   ) => void;
+  syncingAccount?: boolean;
+  onSyncAccount?: () => Promise<AccountSyncResponse | undefined>;
 }
 
 export interface KairosDesktopBridge {

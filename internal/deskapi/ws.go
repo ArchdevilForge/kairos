@@ -167,14 +167,33 @@ func (h *wsHub) observer() engine.DesktopObserver {
 	}
 }
 
-func (h *wsHub) broadcastAccountUpdated(acct AccountStatusView, positions []cache.OpenPosition) {
+func (h *wsHub) broadcastAccountUpdated(acct AccountStatusView, positions []cache.OpenPosition, syncedTrades, syncedFills int) {
 	if h.hasNoClients() {
 		return
 	}
-	h.broadcastDiscrete(map[string]any{
+	payload := map[string]any{
 		"type":           "account_updated",
 		"account":        acct,
 		"open_positions": positions,
+		"synced_at_ms":   time.Now().UnixMilli(),
+	}
+	if syncedTrades > 0 {
+		payload["synced_trades"] = syncedTrades
+	}
+	if syncedFills > 0 {
+		payload["synced_fills"] = syncedFills
+	}
+	h.broadcastDiscrete(payload)
+}
+
+func (h *wsHub) broadcastCatalogUpdated(availableSymbols []string, catalog []exchange.TradableInstrument) {
+	if h.hasNoClients() || len(availableSymbols) == 0 {
+		return
+	}
+	h.broadcastDiscrete(map[string]any{
+		"type":              "catalog_updated",
+		"available_symbols": availableSymbols,
+		"symbol_catalog":    catalog,
 	})
 }
 
@@ -261,6 +280,33 @@ func (h *wsHub) setClientSubscriptions(c *wsClient, subs []wsSubSpec) []wsSubSpe
 	newKlines := make(map[klineSubKey]bool, len(subs)*2)
 	applied := make([]wsSubSpec, 0, len(subs))
 
+	var (
+		catalogLoaded bool
+		catalog       []exchange.TradableInstrument
+		allow         map[string]bool
+	)
+	resolveSym := func(sym string) string {
+		if h.server == nil || sym == "" {
+			return sym
+		}
+		if !catalogLoaded {
+			catalogLoaded = true
+			ctx, cancel := context.WithTimeout(h.ctx, 2*time.Second)
+			c, a, err := exchange.FetchTradablePerpCatalog(ctx, h.server.activeExchange())
+			cancel()
+			if err == nil && len(a) > 0 {
+				catalog = c
+				allow = a
+			}
+		}
+		if len(allow) > 0 && !allow[sym] {
+			if resolved, ok := exchange.ResolveTradableSymbol(catalog, sym); ok && allow[resolved] {
+				return resolved
+			}
+		}
+		return sym
+	}
+
 	for _, item := range subs {
 		sym := canonicalSymbol(item.Symbol)
 		if sym == "MARKET" {
@@ -269,6 +315,7 @@ func (h *wsHub) setClientSubscriptions(c *wsClient, subs []wsSubSpec) []wsSubSpe
 		if sym == "" {
 			continue
 		}
+		sym = resolveSym(sym)
 		newSyms[sym] = true
 		normTFs := make([]string, 0, len(item.TFs))
 		for _, rawTF := range item.TFs {

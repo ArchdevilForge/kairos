@@ -230,6 +230,7 @@ export class DeskClient {
         ...data.status,
         symbols: data.status?.symbols ?? [],
         available_symbols: data.status?.available_symbols ?? data.status?.symbols ?? [],
+        symbol_catalog: data.status?.symbol_catalog ?? [],
         gate_health: {
           locked_24h_symbols: data.status?.gate_health?.locked_24h_symbols ?? [],
           active_cooldowns: data.status?.gate_health?.active_cooldowns ?? [],
@@ -341,15 +342,19 @@ export class DeskClient {
     });
   }
 
-  async syncAccount(): Promise<AccountSyncResponse> {
+  async syncAccount(opts?: { ifStaleSec?: number }): Promise<AccountSyncResponse> {
     return this.request<AccountSyncResponse>('/api/v1/account/sync', {
       method: 'POST',
+      params:
+        opts?.ifStaleSec && opts.ifStaleSec > 0
+          ? { if_stale_sec: Math.round(opts.ifStaleSec) }
+          : undefined,
       timeoutMs: 45_000,
     });
   }
 
-  async getStats(): Promise<StatsPayload> {
-    const res = await this.request<StatsPayload>('/api/v1/stats');
+  async getStats(signal?: AbortSignal): Promise<StatsPayload> {
+    const res = await this.request<StatsPayload>('/api/v1/stats', { signal });
     return {
       ...res,
       equity_curve: res.equity_curve ?? [],

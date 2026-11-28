@@ -16,6 +16,7 @@ import type {
   WsEvent,
 } from './types/kairos';
 import { formatExchangeLabel, resolveAccountExchange } from './utils/doctrine';
+import { createCoalescedRunner, type CoalescedRunner } from './utils/asyncGuards';
 import { WatchWorkspace } from './views/WatchWorkspace';
 
 const ReviewWorkspace = lazy(() =>
@@ -192,6 +193,22 @@ function AppShell() {
   const hadWsConnectedRef = useRef(false);
   const pushToastRef = useRef(pushToast);
   pushToastRef.current = pushToast;
+  const tRef = useRef(t);
+  tRef.current = t;
+  const mountedRef = useRef(true);
+  const bootstrapRunnerRef = useRef<CoalescedRunner<DeskClient> | null>(null);
+  const lastSyncAtRef = useRef<number>(0);
+  const lastAccountWsMsRef = useRef<number>(0);
+  const syncInFlightRef = useRef<boolean>(false);
+  const initialAutoSyncDoneRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      bootstrapRunnerRef.current?.reset();
+    };
+  }, []);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -222,12 +239,11 @@ function AppShell() {
     setActiveSymbol((prev) => sanitizeSymbol(sym, prev || 'BTC/USDT:USDT'));
   }, []);
 
-  const refreshBootstrap = useCallback(
-    async (targetClient?: DeskClient) => {
-      const active = targetClient ?? client;
-      if (!active) return;
+  if (!bootstrapRunnerRef.current) {
+    bootstrapRunnerRef.current = createCoalescedRunner<DeskClient>(async (active) => {
       try {
         const data = await active.bootstrap();
+        if (!mountedRef.current) return;
         const visibleNotices = (data.notices ?? []).filter(
           (n) => n.delivery_status !== 'suppressed',
         );
@@ -245,6 +261,9 @@ function AppShell() {
         if (!lastPulseStateRef.current && data.status?.pulse?.state) {
           lastPulseStateRef.current = data.status.pulse.state;
         }
+        if (data.status?.account?.last_sync_at) {
+          lastSyncAtRef.current = data.status.account.last_sync_at;
+        }
         setBootstrap({ ...data, notices: visibleNotices });
         setConnError(null);
         setActiveSymbol((prev) => {
@@ -253,13 +272,24 @@ function AppShell() {
           return sanitizeSymbol(data.status.symbols[0], 'BTC/USDT:USDT');
         });
       } catch (err) {
+        if (!mountedRef.current) return;
         setConnError(
-          err instanceof Error ? err.message : t('app.err.unreachable'),
+          err instanceof Error ? err.message : tRef.current('app.err.unreachable'),
         );
       }
+    });
+  }
+
+  const refreshBootstrap = useCallback(
+    async (targetClient?: DeskClient) => {
+      const active = targetClient ?? client;
+      if (!active || !bootstrapRunnerRef.current) return;
+      await bootstrapRunnerRef.current.run(active);
     },
-    [client, t],
+    [client],
   );
+  const refreshBootstrapRef = useRef(refreshBootstrap);
+  refreshBootstrapRef.current = refreshBootstrap;
 
   useEffect(() => {
     let cancelled = false;
@@ -417,6 +447,36 @@ function AppShell() {
                   }
                 : prev,
             );
+            const nextSyncAt = evt.account?.last_sync_at ?? 0;
+            const nextWsMs = evt.synced_at_ms ?? 0;
+            const hasFreshSync =
+              !evt.account?.sync_error &&
+              ((nextWsMs > 0 && nextWsMs > lastAccountWsMsRef.current) ||
+                (nextSyncAt > 0 && nextSyncAt !== lastSyncAtRef.current));
+            if (hasFreshSync) {
+              if (nextWsMs > 0) lastAccountWsMsRef.current = nextWsMs;
+              if (nextSyncAt > 0) lastSyncAtRef.current = nextSyncAt;
+              void refreshBootstrapRef.current(c);
+            }
+          } else if (evt.type === 'catalog_updated') {
+            setBootstrap((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    status: {
+                      ...prev.status,
+                      available_symbols:
+                        evt.available_symbols?.length > 0
+                          ? evt.available_symbols
+                          : prev.status.available_symbols,
+                      symbol_catalog:
+                        evt.symbol_catalog && evt.symbol_catalog.length > 0
+                          ? evt.symbol_catalog
+                          : prev.status.symbol_catalog,
+                    },
+                  }
+                : prev,
+            );
           }
         });
 
@@ -445,7 +505,8 @@ function AppShell() {
 
   const handleSyncAccount = useCallback(
     async (opts?: { rethrow?: boolean }): Promise<AccountSyncResponse | undefined> => {
-      if (!client || syncingAccount) return undefined;
+      if (!client || syncInFlightRef.current) return undefined;
+      syncInFlightRef.current = true;
       setSyncingAccount(true);
       try {
         const res = await client.syncAccount();
@@ -481,11 +542,62 @@ function AppShell() {
         });
         return undefined;
       } finally {
+        syncInFlightRef.current = false;
         setSyncingAccount(false);
       }
     },
-    [bootstrap?.status, client, locale, pushToast, refreshBootstrap, syncingAccount, t],
+    [bootstrap?.status, client, locale, pushToast, refreshBootstrap, t],
   );
+
+  const triggerAutoSync = useCallback(
+    async (ifStaleSec: number) => {
+      if (!client || !bootstrap?.status?.account?.configured || syncInFlightRef.current) {
+        return;
+      }
+      syncInFlightRef.current = true;
+      setSyncingAccount(true);
+      try {
+        const res = await client.syncAccount({ ifStaleSec });
+        if (res && !res.skipped) {
+          await refreshBootstrap(client);
+        }
+      } catch {
+        // Silent background auto-sync: backend persists account.sync_error without noisy toasts.
+      } finally {
+        syncInFlightRef.current = false;
+        setSyncingAccount(false);
+      }
+    },
+    [bootstrap?.status?.account?.configured, client, refreshBootstrap],
+  );
+
+  // Automatic initial account sync once credentials are detected on startup.
+  useEffect(() => {
+    if (!client || !bootstrap?.status?.account?.configured) return;
+    if (initialAutoSyncDoneRef.current) return;
+    initialAutoSyncDoneRef.current = true;
+    void triggerAutoSync(30);
+  }, [client, bootstrap?.status?.account?.configured, triggerAutoSync]);
+
+  // Automatically sync fresh trades/positions whenever switching into Review or Stats.
+  useEffect(() => {
+    if (activeView !== 'review' && activeView !== 'stats') return;
+    if (!bootstrap?.status?.account?.configured) return;
+    void triggerAutoSync(20);
+  }, [activeView, bootstrap?.status?.account?.configured, triggerAutoSync]);
+
+  // Automatically sync when returning to the window while on Review or Stats.
+  useEffect(() => {
+    if (activeView !== 'review' && activeView !== 'stats') return;
+    if (!bootstrap?.status?.account?.configured) return;
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') {
+        void triggerAutoSync(30);
+      }
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [activeView, bootstrap?.status?.account?.configured, triggerAutoSync]);
 
   useEffect(() => {
     const unsubSync = window.kairosDesktop?.onTriggerSync?.(() => {
@@ -833,6 +945,8 @@ function AppShell() {
                   initialSubjectId={reviewTarget.subjectId}
                   onSelectSymbol={selectTradeableSymbol}
                   onRefreshBootstrap={() => refreshBootstrap()}
+                  syncingAccount={syncingAccount}
+                  onSyncAccount={handleSyncAccount}
                 />
               </Suspense>
             </div>
@@ -857,6 +971,8 @@ function AppShell() {
                   client={client}
                   bootstrap={bootstrap}
                   onDrillDownReview={handleOpenInReview}
+                  syncingAccount={syncingAccount}
+                  onSyncAccount={handleSyncAccount}
                 />
               </Suspense>
             </div>

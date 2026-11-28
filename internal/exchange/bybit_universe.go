@@ -18,12 +18,34 @@ import (
 
 const (
 	bybitExchangeInfoTimeout = 15 * time.Second
+	bybitTickersSortTimeout  = 5 * time.Second
 	bybitSpotInfoTimeout     = 5 * time.Second
 	bybitMaxInstrumentPages  = 50
 )
 
+// TradableInstrument describes an active linear perpetual contract available
+// for charting, symbol search, and trade review (crypto, stock, ETF, commodity, forex).
+type TradableInstrument struct {
+	Symbol           string `json:"symbol"`
+	SymbolType       string `json:"symbol_type,omitempty"`
+	FullName         string `json:"full_name,omitempty"`
+	UnderlyingTicker string `json:"underlying_ticker,omitempty"`
+	MarketRegion     string `json:"market_region,omitempty"`
+}
+
 type bybitPerpMeta struct {
-	launchTimeMs int64
+	launchTimeMs     int64
+	symbolType       string
+	fullName         string
+	underlyingTicker string
+	marketRegion     string
+}
+
+type tradableFetchCall struct {
+	done    chan struct{}
+	catalog []TradableInstrument
+	allow   map[string]bool
+	err     error
 }
 
 var bybitCryptoCache = struct {
@@ -35,9 +57,11 @@ var bybitCryptoCache = struct {
 
 var bybitTradableCache = struct {
 	mu        sync.Mutex
+	gen       uint64
 	fetchedAt time.Time
 	allow     map[string]bool
-	sorted    []string
+	catalog   []TradableInstrument
+	inFlight  *tradableFetchCall
 }{}
 
 var bybitUniverseInfoCache = struct {
@@ -52,6 +76,18 @@ var bybitSpotCache = struct {
 	bases     map[string]bool
 }{}
 
+// ResetTradableCaches clears cached exchange instrument catalogs so subsequent
+// discovery calls re-fetch fresh metadata (e.g. after updating proxy settings).
+func ResetTradableCaches() {
+	bybitTradableCache.mu.Lock()
+	bybitTradableCache.gen++
+	bybitTradableCache.fetchedAt = time.Time{}
+	bybitTradableCache.allow = nil
+	bybitTradableCache.catalog = nil
+	bybitTradableCache.inFlight = nil
+	bybitTradableCache.mu.Unlock()
+}
+
 // FetchCryptoPerpSymbols returns active USDT crypto perpetual symbols for the
 // given exchange ("bybit" or "binance", defaulting to "bybit" when empty/unknown).
 func FetchCryptoPerpSymbols(ctx context.Context, exchangeName string) ([]string, map[string]bool, error) {
@@ -63,52 +99,187 @@ func FetchCryptoPerpSymbols(ctx context.Context, exchangeName string) ([]string,
 	}
 }
 
+// FetchTradablePerpCatalog returns all active USDT linear perpetual instruments
+// with rich metadata (symbol type, company full name, underlying ticker, region)
+// sorted by 24h quote turnover descending, along with an O(1) allowlist map.
+// On Bybit this includes crypto, stock, ETF, commodity, and forex linear perpetuals,
+// while MarketPulse / Top-100 discovery continues to use FetchCryptoPerpSymbols.
+func FetchTradablePerpCatalog(ctx context.Context, exchangeName string) ([]TradableInstrument, map[string]bool, error) {
+	switch strings.ToLower(strings.TrimSpace(exchangeName)) {
+	case "binance":
+		syms, allow, err := FetchBinanceCryptoPerpSymbols(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+		catalog := make([]TradableInstrument, 0, len(syms))
+		for _, sym := range syms {
+			catalog = append(catalog, TradableInstrument{
+				Symbol:     sym,
+				SymbolType: "crypto",
+			})
+		}
+		return catalog, allow, nil
+	default:
+		return FetchBybitTradablePerpCatalog(ctx)
+	}
+}
+
 // FetchTradablePerpSymbols returns all active USDT linear perpetual symbols
 // supported for charting, search, and trade review on the given exchange.
 // On Bybit this includes crypto, stock, ETF, commodity, and forex linear perpetuals,
 // while MarketPulse / Top-100 discovery continues to use FetchCryptoPerpSymbols.
 func FetchTradablePerpSymbols(ctx context.Context, exchangeName string) ([]string, map[string]bool, error) {
-	switch strings.ToLower(strings.TrimSpace(exchangeName)) {
-	case "binance":
-		return FetchBinanceCryptoPerpSymbols(ctx)
-	default:
-		return FetchBybitTradablePerpSymbols(ctx)
+	catalog, allow, err := FetchTradablePerpCatalog(ctx, exchangeName)
+	if err != nil {
+		return nil, nil, err
 	}
+	syms := make([]string, 0, len(catalog))
+	for _, item := range catalog {
+		syms = append(syms, item.Symbol)
+	}
+	return syms, allow, nil
 }
 
 // FetchBybitTradablePerpSymbols returns all active Bybit USDT linear perpetual
 // symbols (including crypto, stock, ETF, commodity, and forex perpetuals) sorted
 // by 24h quote turnover descending, along with an O(1) allowlist map (cached 1h).
 func FetchBybitTradablePerpSymbols(ctx context.Context) ([]string, map[string]bool, error) {
+	catalog, allow, err := FetchBybitTradablePerpCatalog(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	syms := make([]string, 0, len(catalog))
+	for _, item := range catalog {
+		syms = append(syms, item.Symbol)
+	}
+	return syms, allow, nil
+}
+
+func cloneTradableCatalogResult(catalog []TradableInstrument, allow map[string]bool) ([]TradableInstrument, map[string]bool) {
+	allowCopy := make(map[string]bool, len(allow))
+	for k, v := range allow {
+		allowCopy[k] = v
+	}
+	return append([]TradableInstrument(nil), catalog...), allowCopy
+}
+
+// FetchBybitTradablePerpCatalog returns all active Bybit USDT linear perpetual
+// instruments with rich metadata sorted by 24h quote turnover descending (cached 1h).
+// Concurrent callers share a single in-flight fetch; instruments-info and tickers
+// are fetched concurrently so cold discovery completes well within UI bootstrap budgets.
+func FetchBybitTradablePerpCatalog(ctx context.Context) ([]TradableInstrument, map[string]bool, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
 	bybitTradableCache.mu.Lock()
 	if len(bybitTradableCache.allow) > 0 && time.Since(bybitTradableCache.fetchedAt) < cryptoCacheTTL {
-		allowCopy := make(map[string]bool, len(bybitTradableCache.allow))
-		for k, v := range bybitTradableCache.allow {
-			allowCopy[k] = v
-		}
-		sortedCopy := append([]string(nil), bybitTradableCache.sorted...)
+		catalogCopy, allowCopy := cloneTradableCatalogResult(bybitTradableCache.catalog, bybitTradableCache.allow)
 		bybitTradableCache.mu.Unlock()
-		return sortedCopy, allowCopy, nil
+		return catalogCopy, allowCopy, nil
+	}
+	call := bybitTradableCache.inFlight
+	if call == nil {
+		gen := bybitTradableCache.gen
+		call = &tradableFetchCall{done: make(chan struct{})}
+		bybitTradableCache.inFlight = call
+		cli := newBybitPooledHTTPClient(bybitExchangeInfoTimeout)
+		restBase := strings.TrimRight(currentBybitRESTEndpoint(), "/")
+		go func() {
+			fetchCtx, cancel := context.WithTimeout(context.Background(), bybitExchangeInfoTimeout)
+			defer cancel()
+
+			catalog, allow, err := fetchBybitTradableCatalogUpstream(fetchCtx, cli, restBase)
+
+			bybitTradableCache.mu.Lock()
+			if err == nil && bybitTradableCache.gen == gen {
+				bybitTradableCache.allow = allow
+				bybitTradableCache.catalog = catalog
+				bybitTradableCache.fetchedAt = time.Now()
+			}
+			if bybitTradableCache.inFlight == call {
+				bybitTradableCache.inFlight = nil
+			}
+			call.catalog = catalog
+			call.allow = allow
+			call.err = err
+			close(call.done)
+			bybitTradableCache.mu.Unlock()
+		}()
 	}
 	bybitTradableCache.mu.Unlock()
 
-	cli := newBybitPooledHTTPClient(bybitExchangeInfoTimeout)
-	restBase := strings.TrimRight(currentBybitRESTEndpoint(), "/")
-
-	meta, err := fetchBybitPerpMetaFiltered(ctx, cli, restBase, false)
-	if err != nil {
-		return nil, nil, err
+	select {
+	case <-call.done:
+		if call.err != nil {
+			return nil, nil, call.err
+		}
+		catalogCopy, allowCopy := cloneTradableCatalogResult(call.catalog, call.allow)
+		return catalogCopy, allowCopy, nil
+	case <-ctx.Done():
+		return nil, nil, ctx.Err()
 	}
+}
+
+func fetchBybitTradableCatalogUpstream(
+	ctx context.Context,
+	cli *http.Client,
+	restBase string,
+) ([]TradableInstrument, map[string]bool, error) {
+	var (
+		meta    map[string]bybitPerpMeta
+		metaErr error
+		vols    map[string]float64
+		wg      sync.WaitGroup
+	)
+
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		meta, metaErr = fetchBybitPerpMetaFiltered(ctx, cli, restBase, false)
+	}()
+	go func() {
+		defer wg.Done()
+		tickerCtx, cancel := context.WithTimeout(ctx, bybitTickersSortTimeout)
+		defer cancel()
+		vols = fetchBybitLinearTurnovers(tickerCtx, cli, restBase)
+	}()
+	wg.Wait()
+
+	if metaErr != nil {
+		return nil, nil, metaErr
+	}
+
 	allow := make(map[string]bool, len(meta))
+	sorted := make([]string, 0, len(meta))
 	for sym := range meta {
 		allow[sym] = true
+		sorted = append(sorted, sym)
 	}
+	sort.Slice(sorted, func(i, j int) bool {
+		vi, vj := vols[sorted[i]], vols[sorted[j]]
+		if vi != vj {
+			return vi > vj
+		}
+		return sorted[i] < sorted[j]
+	})
 
-	vols := make(map[string]float64, len(allow))
+	catalog := make([]TradableInstrument, 0, len(sorted))
+	for _, sym := range sorted {
+		m := meta[sym]
+		catalog = append(catalog, TradableInstrument{
+			Symbol:           sym,
+			SymbolType:       m.symbolType,
+			FullName:         m.fullName,
+			UnderlyingTicker: m.underlyingTicker,
+			MarketRegion:     m.marketRegion,
+		})
+	}
+	return catalog, allow, nil
+}
+
+func fetchBybitLinearTurnovers(ctx context.Context, cli *http.Client, restBase string) map[string]float64 {
+	vols := make(map[string]float64)
 	var tickerResp struct {
 		RetCode int `json:"retCode"`
 		Result  struct {
@@ -120,35 +291,47 @@ func FetchBybitTradablePerpSymbols(ctx context.Context) ([]string, map[string]bo
 	}
 	if err := httpGetJSON(ctx, cli, restBase+"/v5/market/tickers?category=linear", &tickerResp); err == nil && tickerResp.RetCode == 0 {
 		for _, r := range tickerResp.Result.List {
-			if canon := toCanonicalBybit(r.Symbol); canon != "" && allow[canon] {
+			if canon := toCanonicalBybit(r.Symbol); canon != "" {
 				vols[canon] = parseFloat(r.Turnover24h)
 			}
 		}
 	}
+	return vols
+}
 
-	sorted := make([]string, 0, len(allow))
-	for sym := range allow {
-		sorted = append(sorted, sym)
+// ResolveTradableSymbol resolves an exact underlying ticker (e.g. "AMD" -> "AMDSTOCK/USDT:USDT")
+// or full instrument name (e.g. "NVIDIA" -> "NVDA/USDT:USDT") against a tradable catalog.
+func ResolveTradableSymbol(catalog []TradableInstrument, raw string) (string, bool) {
+	q := strings.TrimSpace(raw)
+	if q == "" || len(catalog) == 0 {
+		return "", false
 	}
-	sort.Slice(sorted, func(i, j int) bool {
-		vi, vj := vols[sorted[i]], vols[sorted[j]]
-		if vi != vj {
-			return vi > vj
+	upper := strings.ToUpper(q)
+	base := upper
+	if idx := strings.Index(base, "/"); idx > 0 {
+		base = base[:idx]
+	} else {
+		base = strings.TrimSuffix(base, "USDT")
+	}
+
+	for _, item := range catalog {
+		if strings.EqualFold(item.Symbol, upper) {
+			return item.Symbol, true
 		}
-		return sorted[i] < sorted[j]
-	})
-
-	bybitTradableCache.mu.Lock()
-	bybitTradableCache.allow = allow
-	bybitTradableCache.sorted = sorted
-	bybitTradableCache.fetchedAt = time.Now()
-	bybitTradableCache.mu.Unlock()
-
-	allowCopy := make(map[string]bool, len(allow))
-	for k, v := range allow {
-		allowCopy[k] = v
 	}
-	return append([]string(nil), sorted...), allowCopy, nil
+	if base != "" {
+		for _, item := range catalog {
+			if item.UnderlyingTicker != "" && strings.EqualFold(item.UnderlyingTicker, base) {
+				return item.Symbol, true
+			}
+		}
+	}
+	for _, item := range catalog {
+		if item.FullName != "" && (strings.EqualFold(item.FullName, q) || (base != "" && strings.EqualFold(item.FullName, base))) {
+			return item.Symbol, true
+		}
+	}
+	return "", false
 }
 
 // FetchBybitCryptoPerpSymbols returns active Bybit USDT linear crypto perpetual
@@ -476,14 +659,17 @@ func fetchBybitPerpMetaFiltered(ctx context.Context, cli *http.Client, restBase 
 			Result  struct {
 				NextPageCursor string `json:"nextPageCursor"`
 				List           []struct {
-					Symbol       string `json:"symbol"`
-					ContractType string `json:"contractType"`
-					Status       string `json:"status"`
-					QuoteCoin    string `json:"quoteCoin"`
-					SettleCoin   string `json:"settleCoin"`
-					LaunchTime   string `json:"launchTime"`
-					SymbolType   string `json:"symbolType"`
-					IsPreListing bool   `json:"isPreListing"`
+					Symbol           string `json:"symbol"`
+					ContractType     string `json:"contractType"`
+					Status           string `json:"status"`
+					QuoteCoin        string `json:"quoteCoin"`
+					SettleCoin       string `json:"settleCoin"`
+					LaunchTime       string `json:"launchTime"`
+					SymbolType       string `json:"symbolType"`
+					IsPreListing     bool   `json:"isPreListing"`
+					FullName         string `json:"fullName"`
+					UnderlyingTicker string `json:"underlyingTicker"`
+					MarketRegion     string `json:"marketRegion"`
 				} `json:"list"`
 			} `json:"result"`
 		}
@@ -507,7 +693,13 @@ func fetchBybitPerpMetaFiltered(ctx context.Context, cli *http.Client, restBase 
 				continue
 			}
 			launchMs, _ := strconv.ParseInt(strings.TrimSpace(inst.LaunchTime), 10, 64)
-			meta[canon] = bybitPerpMeta{launchTimeMs: launchMs}
+			meta[canon] = bybitPerpMeta{
+				launchTimeMs:     launchMs,
+				symbolType:       normalizeBybitSymbolType(inst.SymbolType),
+				fullName:         strings.TrimSpace(inst.FullName),
+				underlyingTicker: strings.ToUpper(strings.TrimSpace(inst.UnderlyingTicker)),
+				marketRegion:     strings.ToUpper(strings.TrimSpace(inst.MarketRegion)),
+			}
 		}
 
 		next := strings.TrimSpace(payload.Result.NextPageCursor)
@@ -530,6 +722,27 @@ func isBybitCryptoSymbolType(symbolType string) bool {
 		return false
 	default:
 		return true
+	}
+}
+
+func normalizeBybitSymbolType(symbolType string) string {
+	switch strings.ToLower(strings.TrimSpace(symbolType)) {
+	case "", "normal", "innovation":
+		return "crypto"
+	case "stock", "stocks", "xstocks", "mstocks", "equity":
+		return "stock"
+	case "etf":
+		return "etf"
+	case "commodity", "commodities":
+		return "commodity"
+	case "forex":
+		return "forex"
+	case "index":
+		return "index"
+	case "tradfi":
+		return "tradfi"
+	default:
+		return strings.ToLower(strings.TrimSpace(symbolType))
 	}
 }
 

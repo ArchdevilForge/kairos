@@ -426,9 +426,10 @@ function createTray() {
     {
       label: 'Sync Account Now',
       click: async () => {
-        await callDaemon('/api/v1/account/sync', 'POST');
         if (mainWindow && !mainWindow.isDestroyed()) {
           mainWindow.webContents.send('kairos:trigger-sync');
+        } else {
+          await callDaemon('/api/v1/account/sync', 'POST');
         }
       },
     },

@@ -90,6 +90,7 @@ func SetProxyURL(raw string) error {
 	sharedWSTransport.CloseIdleConnections()
 	sharedBinanceTransport.CloseIdleConnections()
 	sharedBybitTransport.CloseIdleConnections()
+	ResetTradableCaches()
 	return nil
 }
 

@@ -7,6 +7,7 @@ import {
   ChevronRight,
   ChevronUp,
   List,
+  RefreshCw,
   SkipBack,
   SkipForward,
   X,
@@ -262,6 +263,7 @@ export function ReviewWorkspace({
   initialSubjectKind,
   initialSubjectId,
   onSelectSymbol,
+  syncingAccount = false,
 }: ReviewWorkspaceProps) {
   const { t } = useI18n();
   const [selectorOpen, setSelectorOpen] = useState(false);
@@ -463,6 +465,20 @@ export function ReviewWorkspace({
     bootstrap.tickets,
     allSubjects,
   ]);
+
+  // If Review opened before the first auto-sync finished (empty selectedKey),
+  // automatically bind to the first synced record as soon as records arrive.
+  useEffect(() => {
+    if (selectedKey !== '' || allSubjects.length === 0) return;
+    const first = allSubjects[0];
+    const nextSym = subjectSymbol(first);
+    const bounds = subjectTimeBounds(first, bootstrap);
+    setSelectedKey(`${first.kind}:${first.id}`);
+    setSymbol(nextSym);
+    if (bounds.entrySec > 0) {
+      setCursorTs(bounds.entrySec);
+    }
+  }, [selectedKey, allSubjects, bootstrap]);
 
   const anchorTimestampFor = useCallback(
     (subj: SelectedSubject): number => {
@@ -1207,6 +1223,16 @@ export function ReviewWorkspace({
             <ChevronRight className="h-3.5 w-3.5" />
           </button>
         </div>
+      ) : null}
+
+      {syncingAccount ? (
+        <span
+          className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px]"
+          style={{ color: 'var(--text-muted)' }}
+        >
+          <RefreshCw className="h-3 w-3 animate-spin" />
+          <span>{t('review.toolbar.syncing')}</span>
+        </span>
       ) : null}
 
       {summaryBadge ? (

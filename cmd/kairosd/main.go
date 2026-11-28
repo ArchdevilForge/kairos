@@ -157,6 +157,7 @@ func main() {
 
 		deskSrv = deskapi.NewServer(pipeline, cacheStore, token)
 		pipeline.SetDesktopObserver(deskSrv.Observer())
+		deskSrv.StartBackgroundLoops()
 
 		ln, err := net.Listen("tcp", listenAddr)
 		if err != nil {

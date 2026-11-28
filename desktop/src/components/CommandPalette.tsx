@@ -13,7 +13,7 @@ import {
   SunMoon,
 } from 'lucide-react';
 import { useI18n } from '../i18n';
-import type { BootstrapPayload } from '../types/kairos';
+import type { BootstrapPayload, SymbolCatalogItem } from '../types/kairos';
 import { formatExchangeLabel, resolveAccountExchange } from '../utils/doctrine';
 import type { WorkspaceTab } from './TopStatusBar';
 
@@ -37,6 +37,10 @@ interface PaletteItem {
   group: string;
   label: string;
   hint?: string;
+  searchText?: string;
+  tickerKey?: string;
+  underlyingKey?: string;
+  fullNameKey?: string;
   shortcut?: string;
   icon: React.ReactNode;
   run: () => void;
@@ -44,7 +48,7 @@ interface PaletteItem {
 
 function normalizeManualSymbol(raw: string): string | null {
   const cleaned = raw.trim().toUpperCase();
-  if (!cleaned || cleaned === 'MARKET' || cleaned.length < 2 || /\s/.test(cleaned)) {
+  if (!cleaned || cleaned === 'MARKET' || cleaned.length < 1 || /\s/.test(cleaned)) {
     return null;
   }
   if (cleaned.includes('/') && cleaned.includes(':')) return cleaned;
@@ -54,8 +58,41 @@ function normalizeManualSymbol(raw: string): string | null {
     return `${base}/${quote}:USDT`;
   }
   const base = cleaned.replace(/USDT$/, '');
-  if (!base || base === 'MARKET' || !/^[A-Z0-9]{2,12}$/.test(base)) return null;
+  if (!base || base === 'MARKET' || !/^[A-Z0-9]{1,16}$/.test(base)) return null;
   return `${base}/USDT:USDT`;
+}
+
+function assetTypeAliases(symbolType: string | undefined): string {
+  switch ((symbolType ?? '').toLowerCase()) {
+    case 'stock':
+      return 'stock stocks equity us 美股 股票 科技股';
+    case 'etf':
+      return 'etf fund index 美股 指数 基金';
+    case 'commodity':
+      return 'commodity commodities metal gold oil 大宗 商品 黄金';
+    case 'forex':
+      return 'forex fx currency 外汇 汇率';
+    case 'index':
+      return 'index 指数';
+    case 'tradfi':
+      return 'tradfi 美股 传统金融';
+    default:
+      return '';
+  }
+}
+
+function scorePaletteItem(item: PaletteItem, q: string): number {
+  const ticker = item.tickerKey ?? '';
+  const underlying = item.underlyingKey ?? '';
+  const fullName = item.fullNameKey ?? '';
+  if (ticker === q || underlying === q) return 0;
+  if (fullName === q) return 1;
+  if (ticker.startsWith(q) || underlying.startsWith(q)) return 2;
+  if (fullName.startsWith(q)) return 3;
+  if (fullName.includes(` ${q}`)) return 4;
+  if (item.label.toLowerCase().includes(q)) return 5;
+  if (fullName.includes(q)) return 6;
+  return 7;
 }
 
 export const CommandPalette: React.FC<CommandPaletteProps> = ({
@@ -209,6 +246,34 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
       });
     }
 
+    const catalogList = bootstrap.status.symbol_catalog ?? [];
+    const hasFullCatalog = catalogList.length > 0;
+    const catalogBySymbol = new Map<string, SymbolCatalogItem>();
+    for (const entry of catalogList) {
+      if (entry?.symbol) {
+        catalogBySymbol.set(entry.symbol.toUpperCase(), entry);
+      }
+    }
+
+    const assetLabelFor = (symbolType: string | undefined): string => {
+      switch ((symbolType ?? '').toLowerCase()) {
+        case 'stock':
+          return t('palette.asset.stock');
+        case 'etf':
+          return t('palette.asset.etf');
+        case 'commodity':
+          return t('palette.asset.commodity');
+        case 'forex':
+          return t('palette.asset.forex');
+        case 'index':
+          return t('palette.asset.index');
+        case 'tradfi':
+          return t('palette.asset.tradfi');
+        default:
+          return '';
+      }
+    };
+
     const rawSymbols =
       bootstrap.status.available_symbols && bootstrap.status.available_symbols.length > 0
         ? bootstrap.status.available_symbols
@@ -223,11 +288,36 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
     const allowedSet = new Set(rawSymbols.map((s) => s.toUpperCase()));
     const symbolsGroup = t('palette.group.symbols');
     for (const sym of symbols) {
+      const meta = catalogBySymbol.get(sym.toUpperCase());
+      const assetLabel = assetLabelFor(meta?.symbol_type);
+      const baseTicker = sym.replace(/\/USDT(:USDT)?$/i, '').replace(/:USDT$/i, '');
+      const hintParts: string[] = [];
+      if (meta?.full_name) hintParts.push(meta.full_name);
+      if (assetLabel) hintParts.push(assetLabel);
+      if (sym === activeSymbol) {
+        hintParts.push(t('palette.symbol.current'));
+      } else if (hintParts.length === 0) {
+        hintParts.push(t('palette.symbol.switchWatch'));
+      }
+      const searchParts = [
+        sym,
+        baseTicker,
+        `${baseTicker}usdt`,
+        meta?.full_name ?? '',
+        meta?.underlying_ticker ?? '',
+        meta?.symbol_type ?? '',
+        assetLabel,
+        assetTypeAliases(meta?.symbol_type),
+      ];
       list.push({
         id: `sym:${sym}`,
         group: symbolsGroup,
         label: sym.replace(/:USDT$/, ''),
-        hint: sym === activeSymbol ? t('palette.symbol.current') : t('palette.symbol.switchWatch'),
+        hint: hintParts.join(' · '),
+        searchText: searchParts.filter(Boolean).join(' ').toLowerCase(),
+        tickerKey: baseTicker.toLowerCase(),
+        underlyingKey: (meta?.underlying_ticker ?? '').toLowerCase(),
+        fullNameKey: (meta?.full_name ?? '').toLowerCase(),
         icon: <ArrowRight className="h-3.5 w-3.5" />,
         run: () => {
           onSelectSymbol(sym);
@@ -256,19 +346,24 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
     }
 
     const filtered = q
-      ? list.filter(
-          (item) =>
-            item.label.toLowerCase().includes(q) ||
-            (item.hint && item.hint.toLowerCase().includes(q)) ||
-            item.group.toLowerCase().includes(q),
-        )
+      ? list
+          .filter(
+            (item) =>
+              item.label.toLowerCase().includes(q) ||
+              (item.hint && item.hint.toLowerCase().includes(q)) ||
+              (item.searchText && item.searchText.includes(q)) ||
+              item.group.toLowerCase().includes(q),
+          )
+          .sort((a, b) => scorePaletteItem(a, q) - scorePaletteItem(b, q))
       : list;
 
+    const hasMatchedSymbol = filtered.some((item) => item.id.startsWith('sym:'));
     const customSym = normalizeManualSymbol(query);
     if (
       customSym &&
       !symbols.includes(customSym) &&
-      (allowedSet.size === 0 || allowedSet.has(customSym.toUpperCase()))
+      !hasMatchedSymbol &&
+      (!hasFullCatalog || allowedSet.has(customSym.toUpperCase()))
     ) {
       filtered.unshift({
         id: `custom:${customSym}`,
@@ -288,6 +383,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
   }, [
     activeSymbol,
     bootstrap.status.available_symbols,
+    bootstrap.status.symbol_catalog,
     bootstrap.status.symbols,
     bootstrap.tickets,
     exchangeLabel,

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, ArrowUpRight, RefreshCw } from 'lucide-react';
 import EquityCurve from '../chart/EquityCurve';
 import { StatsSkeleton } from '../components/Skeleton';
@@ -10,6 +10,7 @@ import type {
   StatsWorkspaceProps,
   SymbolStatsRow,
 } from '../types/kairos';
+import { createLatestRequestGuard } from '../utils/asyncGuards';
 import { formatExchangeLabel, resolveAccountExchange, sameSymbol } from '../utils/doctrine';
 import {
   fmtDateTimeSec,
@@ -58,6 +59,8 @@ export function StatsWorkspace({
   client,
   bootstrap,
   onDrillDownReview,
+  syncingAccount = false,
+  onSyncAccount,
 }: StatsWorkspaceProps) {
   const { t, locale } = useI18n();
   const activeExchange = resolveAccountExchange(bootstrap.status);
@@ -66,19 +69,38 @@ export function StatsWorkspace({
   const [loading, setLoading] = useState(true);
   const [errorState, setErrorState] = useState<{ raw: string | null } | null>(null);
   const [hoveredBucket, setHoveredBucket] = useState<string | null>(null);
+  const statsGuardRef = useRef(createLatestRequestGuard());
+
+  useEffect(() => {
+    const guard = statsGuardRef.current;
+    return () => guard.cancelAll();
+  }, []);
 
   const fetchStats = useCallback(async () => {
+    const token = statsGuardRef.current.begin();
     setLoading(true);
     setErrorState(null);
     try {
-      const res = await client.getStats();
+      const res = await client.getStats(token.signal);
+      if (!token.isCurrent()) return;
       setStats(res);
     } catch (err) {
+      if (!token.isCurrent()) return;
+      if (err instanceof Error && err.name === 'AbortError') return;
       setErrorState({ raw: err instanceof Error ? err.message : null });
     } finally {
-      setLoading(false);
+      if (token.isCurrent()) {
+        setLoading(false);
+      }
     }
   }, [client]);
+
+  const handleSyncAndRefresh = useCallback(async () => {
+    if (bootstrap.status.account.configured && onSyncAccount) {
+      await onSyncAccount();
+    }
+    await fetchStats();
+  }, [bootstrap.status.account.configured, onSyncAccount, fetchStats]);
 
   const error = errorState
     ? errorState.raw !== null
@@ -86,9 +108,14 @@ export function StatsWorkspace({
       : t('stats.loadFailed')
     : null;
 
+  const accountSyncAt = bootstrap.status.account.last_sync_at;
+  const tradeCount = bootstrap.unplanned_trades?.length ?? 0;
+  const openPosCount = bootstrap.open_positions?.length ?? 0;
+  const ticketCount = bootstrap.tickets?.length ?? 0;
+
   useEffect(() => {
     void fetchStats();
-  }, [fetchStats]);
+  }, [fetchStats, accountSyncAt, tradeCount, openPosCount, ticketCount]);
 
   const maxBucketCount = useMemo(() => {
     if (!stats?.r_distribution?.buckets?.length) return 1;
@@ -326,16 +353,19 @@ export function StatsWorkspace({
           </div>
           <button
             type="button"
-            onClick={() => void fetchStats()}
-            className="kairos-btn flex items-center gap-1.5 rounded-[6px] border px-3 py-1.5 text-xs font-medium"
+            disabled={syncingAccount}
+            onClick={() => void handleSyncAndRefresh()}
+            className="kairos-btn flex items-center gap-1.5 rounded-[6px] border px-3 py-1.5 text-xs font-medium disabled:opacity-70"
             style={{
               backgroundColor: 'var(--bg-surface)',
               borderColor: 'var(--border-hairline)',
               color: 'var(--text-primary)',
             }}
           >
-            <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
-            <span>{t('stats.refresh')}</span>
+            <RefreshCw
+              className={`h-3.5 w-3.5 ${loading || syncingAccount ? 'animate-spin' : ''}`}
+            />
+            <span>{syncingAccount ? t('stats.syncing') : t('stats.refresh')}</span>
           </button>
         </div>
 

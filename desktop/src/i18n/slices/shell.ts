@@ -131,7 +131,7 @@ export const shellZh = {
 
   // CommandPalette
   'palette.ariaLabel': '快捷指令面板',
-  'palette.searchPlaceholder': '搜索标的（如 BTC、ETH、NVDA）、候选票或指令…',
+  'palette.searchPlaceholder': '搜索标的（如 BTC、NVDA、NVIDIA、美股）、候选票或指令…',
   'palette.empty': '没有匹配的标的、候选票或指令。',
   'palette.group.views': '视图',
   'palette.group.actions': '操作',
@@ -155,6 +155,12 @@ export const shellZh = {
   'palette.symbol.current': '当前',
   'palette.symbol.switchWatch': '切换看盘',
   'palette.symbol.openWatch': '看盘打开',
+  'palette.asset.stock': '美股',
+  'palette.asset.etf': 'ETF',
+  'palette.asset.commodity': '大宗',
+  'palette.asset.forex': '外汇',
+  'palette.asset.index': '指数',
+  'palette.asset.tradfi': 'TradFi',
   'palette.dir.long': '做多',
   'palette.dir.short': '做空',
 
@@ -306,7 +312,7 @@ export const shellEn: Record<keyof typeof shellZh, string> = {
 
   // CommandPalette
   'palette.ariaLabel': 'Command Palette',
-  'palette.searchPlaceholder': 'Search symbol (e.g. BTC, ETH, NVDA), ticket, or command...',
+  'palette.searchPlaceholder': 'Search symbol (e.g. BTC, NVDA, NVIDIA, Stock), ticket, or command...',
   'palette.empty': 'No matching symbols, tickets, or commands.',
   'palette.group.views': 'Views',
   'palette.group.actions': 'Actions',
@@ -330,6 +336,12 @@ export const shellEn: Record<keyof typeof shellZh, string> = {
   'palette.symbol.current': 'Current',
   'palette.symbol.switchWatch': 'Switch Watch',
   'palette.symbol.openWatch': 'Open in Watch',
+  'palette.asset.stock': 'Stock',
+  'palette.asset.etf': 'ETF',
+  'palette.asset.commodity': 'Commodity',
+  'palette.asset.forex': 'Forex',
+  'palette.asset.index': 'Index',
+  'palette.asset.tradfi': 'TradFi',
   'palette.dir.long': 'Long',
   'palette.dir.short': 'Short',
 

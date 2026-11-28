@@ -24,8 +24,10 @@ func (s *Server) handleMarketBars(w http.ResponseWriter, r *http.Request) {
 	beforeTS, _ := strconv.ParseInt(r.URL.Query().Get("before_ts"), 10, 64)
 
 	exName := s.activeExchange()
-	if _, allow, err := exchange.FetchTradablePerpSymbols(ctx, exName); err == nil && len(allow) > 0 && !allow[sym] {
-		if !s.isAccountSymbol(ctx, exName, sym) {
+	if catalog, allow, err := exchange.FetchTradablePerpCatalog(ctx, exName); err == nil && len(allow) > 0 && !allow[sym] {
+		if resolved, ok := exchange.ResolveTradableSymbol(catalog, sym); ok && allow[resolved] {
+			sym = resolved
+		} else if !s.isAccountSymbol(ctx, exName, sym) {
 			writeError(w, http.StatusBadRequest, "不支持的永续合约: "+sym, "UNSUPPORTED_SYMBOL")
 			return
 		}
